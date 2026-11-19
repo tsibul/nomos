@@ -1,3 +1,7 @@
 from django.contrib import admin
 
-# Register your models here.
+from .models import Note, Term, TMSegment
+
+admin.site.register(Note)
+admin.site.register(Term)
+admin.site.register(TMSegment)
