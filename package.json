@@ -1,0 +1,14 @@
+{
+  "name": "nomos",
+  "private": true,
+  "description": "Nomos: front-end build (SCSS to CSS)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "devDependencies": {
+    "sass": "^1.108.2",
+    "vite": "^8.3.8"
+  },
+  "type": "module"
+}

@@ -1,0 +1,18 @@
+Nomos content licence
+
+The translations and markup (annotations, cross-references, translation-doubt
+notes, structure) created by the Nomos project are licensed under the
+Creative Commons Attribution 4.0 International licence (CC BY 4.0):
+https://creativecommons.org/licenses/by/4.0/legalcode
+
+Exclusions:
+
+- Official texts of laws, EU acts, standards and other source documents are
+  NOT covered by this licence. Each has its own legal regime (public domain,
+  reuse decisions, copyright of standard-setting bodies, etc.). Texts are not
+  stored in this repository at all; they live in a separate private repository.
+- Third-party translations (for example official translations of IFRS or
+  translations published by ministries) are not covered and are not included
+  unless their terms explicitly allow it.
+
+Source code is licensed separately under the MIT licence (see LICENSE).

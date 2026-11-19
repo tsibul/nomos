@@ -1,0 +1,8 @@
+.venv/
+.env
+raw/
+.idea/
+__pycache__/
+*.pyc
+node_modules/
+src/nomos/site/static/dist/
