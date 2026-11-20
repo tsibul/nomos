@@ -28,6 +28,41 @@
     {% include 'site/parts/toc_items.html' with items=toc %}
   </nav>
 
+  {% if sources %}
+    <section class="sources">
+      <h2 class="sources__heading">
+        Источник текста
+      </h2>
+      <ul class="sources__list">
+        {% for entry in sources %}
+          <li class="sources__item">
+            {% if entry.source.url %}
+              <a
+                class="sources__link"
+                href="{{ entry.source.url }}"
+                rel="external"
+              >
+                {{ entry.source.name }}
+              </a>
+            {% else %}
+              <span class="sources__name">
+                {{ entry.source.name }}
+              </span>
+            {% endif %}
+            <span class="sources__status">
+              {{ entry.lang }}, {{ entry.status|lower }}
+            </span>
+            {% if entry.source.attribution %}
+              <span class="sources__attribution">
+                {{ entry.source.attribution }}
+              </span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
   {% if amended_by %}
     <section class="related">
       <h2 class="related__heading">

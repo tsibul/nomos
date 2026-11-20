@@ -56,7 +56,12 @@ class ViewerTests(TestCase):
             source=source,
             title='Τροποποιητικός',
         )
-        base = Amendment.objects.create(amending_act=cls.law, kind='base', key='base', marker='base')
+        base = Amendment.objects.create(
+            amending_act=cls.law,
+            kind='base',
+            key='base',
+            marker='base',
+        )
         amending_base = Amendment.objects.create(
             amending_act=cls.amending,
             kind='base',
@@ -181,6 +186,9 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL)
         self.assertContains(response, 'ΜΕΡΟΣ I')
         self.assertContains(response, f'href="{ACT_URL}art_1/"')
+        self.assertContains(response, 'translate="no"')
+        self.assertContains(response, 'Источник текста')
+        self.assertContains(response, 'Тест')
 
     def test_version_by_date(self):
         response = self.client.get(ACT_URL + '@2024-06-01/art_1/')
@@ -247,6 +255,8 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'Сомнительный термин')
         self.assertContains(response, 'unit--with-original')
+        self.assertContains(response, 'Рабочий перевод, не выверен')
+        self.assertContains(response, 'class="fragment__original"\n            lang="el"')
 
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')

@@ -9,7 +9,10 @@
           {{ entry.label }}
         </span>
         {% if entry.title %}
-          <span class="acts__title">
+          <span
+            class="acts__title"
+            lang="{{ entry.title_lang }}"
+          >
             {{ entry.title }}
           </span>
         {% endif %}

@@ -6,7 +6,10 @@
     {{ label }}
   </a>
   {% if title %}
-    <span class="act-head__title">
+    <span
+      class="act-head__title"
+      lang="{{ title_lang }}"
+    >
       {{ title }}
     </span>
   {% endif %}

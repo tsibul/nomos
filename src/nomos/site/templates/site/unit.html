@@ -20,7 +20,10 @@
       Оглавление
     </a>
     {% for crumb in crumbs %}
-      <span class="crumbs__item">
+      <span
+        class="crumbs__item"
+        lang="{{ structure_lang }}"
+      >
         {{ crumb }}
       </span>
     {% endfor %}
@@ -31,6 +34,9 @@
       Перевода нет — показан официальный греческий текст.
     </p>
   {% elif route.lang != 'el' %}
+    <p class="draft-warning">
+      Рабочий перевод, не выверен. Юридическую силу имеет греческий текст.
+    </p>
     <div class="original-switch">
       {% if show_original %}
         <a
