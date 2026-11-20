@@ -1,7 +1,5 @@
 {% extends 'site/base.html' %}
 
-{% load i18n %}
-
 {% block title %}О проекте — Nomos{% endblock %}
 
 {% block main %}
@@ -82,10 +80,8 @@
       Конфиденциальность
     </h2>
     <p class="about__text">
-      {% blocktranslate trimmed %}
-        Cookie используется только для входа. Сайт не загружает ничего со сторонних серверов:
-        шрифты системные, скрипты и стили — свои.
-      {% endblocktranslate %}
+      Сайт не использует cookies и не загружает ничего со сторонних серверов:
+      шрифты системные, скрипты и стили — свои.
     </p>
   </article>
 {% endblock %}

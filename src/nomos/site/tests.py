@@ -1,9 +1,7 @@
 import datetime
 import html
 import re
-from urllib.parse import quote
 
-from django.contrib.auth.models import User
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import translation
 
@@ -28,15 +26,10 @@ ACT_URL = '/cy/law/2000/1_I/'
 class ViewerTests(TestCase):
     """Маленький закон: ст. 1 с п. 1, заменённым с 01.01.2025, и будущей редакцией."""
 
-    def setUp(self):
-        # весь сайт — только после входа
-        self.client.force_login(self.reader)
-
     @classmethod
     def setUpTestData(cls):
         today = datetime.date.today()
         cls.future_day = today + datetime.timedelta(days=100)
-        cls.reader = User.objects.create_user('reader')
         source = Source.objects.create(code='test', name='Тест')
         cls.law = Act.objects.create(
             uid='cy/law/2000/1_I',
@@ -506,7 +499,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Disallow: /')
         self.assertEqual(self.client.get('/admin/').status_code, 404)
         response = self.client.get('/about/')
-        self.assertContains(response, 'Cookie используется только для входа')
+        self.assertContains(response, 'cookies')
         self.assertContains(response, 'CC BY 4.0 — только наши переводы и разметка')
         self.assertContains(response, 'Ilia Tsigelnitskii')
 
@@ -623,51 +616,3 @@ class ViewerTests(TestCase):
             response = self.client.get(page)
             self.assertContains(response, 'class="source-credit"')
             self.assertContains(response, 'Πηγή κειμένου: ενοποιημένο κείμενο του CyLaw')
-
-    def test_every_page_requires_login(self):
-        pages = [
-            '/',
-            '/cy/',
-            ACT_URL,
-            ACT_URL + 'art_1/',
-            ACT_URL + 'art_1.par_1/history/',
-            '/about/',
-            '/about/?lang=el',
-        ]
-        self.client.logout()
-        for page in pages:
-            self.assertRedirects(
-                self.client.get(page),
-                '/login/?next=' + quote(page, safe='/'),
-                fetch_redirect_response=False,
-            )
-        # без входа открыты только вход и robots.txt; меню на входе нет
-        response = self.client.get('/login/')
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, 'id="main-menu"')
-        self.assertEqual(self.client.get('/robots.txt').status_code, 200)
-        self.client.force_login(self.reader)
-        for page in pages:
-            self.assertEqual(self.client.get(page).status_code, 200, page)
-
-    def test_login_returns_only_to_own_address(self):
-        User.objects.create_user('editor', password='test-password-1')
-        self.client.logout()
-        credentials = {'username': 'editor', 'password': 'test-password-1'}
-        response = self.client.post('/login/', {**credentials, 'next': ACT_URL + 'art_1/'})
-        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
-        self.client.logout()
-        response = self.client.post('/login/', {**credentials, 'next': 'https://example.com/'})
-        self.assertRedirects(response, '/', fetch_redirect_response=False)
-
-    def test_logout_from_menu(self):
-        response = self.client.get('/')
-        self.assertContains(response, 'action="/logout/"')
-        response = self.client.post('/logout/')
-        self.assertRedirects(response, '/login/', fetch_redirect_response=False)
-        self.assertEqual(self.client.get('/').status_code, 302)
-
-    def test_login_page_in_greek(self):
-        self.client.logout()
-        response = self.client.get('/login/', {'lang': 'el'})
-        self.assertContains(response, 'Σύνδεση')

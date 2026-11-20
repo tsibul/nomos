@@ -51,16 +51,3 @@
     gap: 1.5rem;
   }
 }
-
-// «Выйти» — кнопка формы (выход только POST), с видом ссылки меню
-.menu__logout {
-  margin: 0;
-}
-
-.menu__button {
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  cursor: pointer;
-}

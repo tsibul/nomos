@@ -60,8 +60,6 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # язык интерфейса из адреса, без cookies
     'nomos.site.ui.InterfaceLanguageMiddleware',
-    # всё, кроме входа, — только после входа (nomos/site/access.py)
-    'nomos.site.access.LoginRequiredMiddleware',
 ]
 
 ROOT_URLCONF = 'nomos.urls'
@@ -149,28 +147,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
-
-
-# Вход: стандартная аутентификация Django; регистрации и восстановления пароля нет
-
-LOGIN_URL = 'site:login'
-
-LOGIN_REDIRECT_URL = 'site:act_list'
-
-LOGOUT_REDIRECT_URL = 'site:login'
-
-# cookie сессии и CSRF: Secure на хостинге (DEBUG выключен), локально — по http
-SESSION_COOKIE_SECURE = not DEBUG
-
-CSRF_COOKIE_SECURE = not DEBUG
-
-SESSION_COOKIE_HTTPONLY = True
-
-CSRF_COOKIE_HTTPONLY = True
-
-SESSION_COOKIE_SAMESITE = 'Lax'
-
-CSRF_COOKIE_SAMESITE = 'Lax'
 
 
 # Email
