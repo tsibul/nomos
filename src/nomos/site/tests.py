@@ -325,6 +325,13 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
         self.assertContains(response, 'toc__link--current')
 
+    def test_empty_section_has_same_layout(self):
+        response = self.client.get('/eu/')
+        self.assertContains(response, 'class="sidenav"')
+        self.assertContains(response, 'Актов пока нет')
+        self.assertContains(response, 'В разделе пока нет актов')
+        self.assertNotContains(response, 'Изменяющие акты')
+
     def test_short_label_of_kdp_is_number_and_date(self):
         kdp = Act.objects.create(
             uid='cy/kdp/2024/95',

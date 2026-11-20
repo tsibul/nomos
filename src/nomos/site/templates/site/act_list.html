@@ -15,17 +15,23 @@
     {% endif %}
   </h1>
 
-  <section class="acts">
-    <h2 class="acts__heading">
-      Основные акты
-    </h2>
-    {% include 'site/parts/act_entries.html' with entries=base %}
-  </section>
+  {% if has_acts %}
+    <section class="acts">
+      <h2 class="acts__heading">
+        Основные акты
+      </h2>
+      {% include 'site/parts/act_entries.html' with entries=base %}
+    </section>
 
-  <section class="acts">
-    <h2 class="acts__heading">
-      Изменяющие акты
-    </h2>
-    {% include 'site/parts/act_entries.html' with entries=amending %}
-  </section>
+    <section class="acts">
+      <h2 class="acts__heading">
+        Изменяющие акты
+      </h2>
+      {% include 'site/parts/act_entries.html' with entries=amending %}
+    </section>
+  {% else %}
+    <p class="acts__empty">
+      В разделе пока нет актов: тексты готовятся.
+    </p>
+  {% endif %}
 {% endblock %}
