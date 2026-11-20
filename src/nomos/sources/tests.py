@@ -1,5 +1,8 @@
 import datetime
+import filecmp
 import os
+import shutil
+import tempfile
 from io import StringIO
 from pathlib import Path
 from unittest import skipUnless
@@ -7,7 +10,7 @@ from unittest import skipUnless
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Fragment
+from nomos.acts.models import Expression, Fragment, FragmentText
 from nomos.translate.models import Note
 
 from .cylaw import history, numbering
@@ -109,9 +112,31 @@ class VatLawTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
+        # сборка пишет файлы — в копию, а не в рабочее дерево Nomos-texts
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
         output = StringIO()
-        call_command('collect_cylaw', LAW, texts_dir=str(TEXTS_DIR), stdout=output)
-        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=output)
+        call_command('collect_cylaw', LAW, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files_and_translation(self):
+        """Пересборка и две загрузки подряд: файлы как в git, русский перевод на месте."""
+        changed = [
+            str(path.relative_to(self.copy))
+            for path in self.copy.rglob('*')
+            if path.is_file()
+            and not filecmp.cmp(path, TEXTS_DIR / path.relative_to(self.copy), shallow=False)
+        ]
+        self.assertEqual(changed, [])
+        self.assertTrue(Expression.objects.filter(act__uid=LAW, lang='ru').exists())
+        self.assertTrue(FragmentText.objects.filter(expression__lang='ru').exists())
 
     def active_eids(self, prefix, day):
         found = set()

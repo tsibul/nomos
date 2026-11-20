@@ -76,8 +76,33 @@ def assign_uids(info, nodes, path):
     return uids
 
 
+# элементы act.xml, которые порождает сборщик; прочие сохраняются как есть
+OWN_TAGS = {'expression', 'relation', 'amendment', 'fragment'}
+
+
+def foreign_parts(path, lang):
+    """Из уже записанного act.xml: чужие атрибуты своего выражения и чужие элементы.
+
+    Выражения других языков (переводы) и элементы, которых сборщик не пишет,
+    переносятся в новый файл без изменений."""
+    if not path.exists():
+        return {}, []
+    root = ET.parse(path).getroot()
+    own_extra = {}
+    kept = []
+    for element in root:
+        element.tail = None
+        if element.tag == 'expression' and element.get('lang') == lang:
+            own_extra = dict(element.attrib)
+            continue
+        if element.tag not in OWN_TAGS or element.tag == 'expression':
+            kept.append(ET.tostring(element, encoding='unicode').strip())
+    return own_extra, kept
+
+
 def write_act(path, info, versions, uids):
     """versions: {node: [history.Version]} в порядке обхода дерева."""
+    own_extra, kept = foreign_parts(path, info.lang)
     lines = ['<?xml version="1.0" encoding="utf-8"?>']
     lines.append('<act %s>' % attrs([
         ('uid', info.uid),
@@ -90,14 +115,19 @@ def write_act(path, info, versions, uids):
         ('in-force-from', info.in_force_from),
         ('structure-lang', info.structure_lang),
     ]))
-    lines.append('  <expression %s />' % attrs([
+    own = [
         ('lang', info.lang),
         ('status', info.status),
         ('source', info.source),
         ('file', '%s.xml' % info.lang),
         ('title', info.title),
         ('short-title', info.short_title),
-    ]))
+    ]
+    names = {name for name, _ in own}
+    own += [(name, value) for name, value in own_extra.items() if name not in names]
+    lines.append('  <expression %s />' % attrs(own))
+    for element in kept:
+        lines.append('  ' + element)
     for kind, target in info.relations:
         lines.append('  <relation %s />' % attrs([('kind', kind), ('to', target)]))
     for amendment in info.amendments:
