@@ -10,6 +10,7 @@ from . import menu, reading
 
 
 def act_list(request, jurisdiction=None):
+    """Раздел (или главная): основные акты карточками, изменяющие — свёрнутыми группами."""
     acts = Act.objects.prefetch_related('expressions').order_by('jurisdiction', 'kind', 'uid')
     section = None
     if jurisdiction is not None:
@@ -17,41 +18,51 @@ def act_list(request, jurisdiction=None):
             raise Http404('Нет такого раздела')
         section = dict(menu.SECTIONS)[jurisdiction]
         acts = acts.filter(jurisdiction=jurisdiction)
+    acts = sorted(acts, key=reading.act_sort_key)
     amending_ids = set(
         ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
     )
+    targets = reading.amendment_targets([act for act in acts if act.id in amending_ids])
     base = []
-    amending = []
+    amending_laws = []
+    regulations = []
     for act in acts:
-        title, title_lang = reading.act_title_lang(act)
-        entry = {
-            'act': act,
-            'label': reading.act_label(act),
-            'short': reading.act_short_label(act, reading.DEFAULT_LANG),
-            'title': title,
-            'title_lang': title_lang,
-            'url': reading.build_url(act),
-        }
-        if act.id in amending_ids:
-            amending.append(entry)
-        else:
+        entry = act_entry(act, targets.get(act.id, ''))
+        if act.id not in amending_ids:
             base.append(entry)
-    amending.sort(key=lambda entry: (entry['act'].published_on or datetime.date.min))
+        elif act.kind == Act.Kind.REGULATION_BY_LAW:
+            regulations.append(entry)
+        else:
+            amending_laws.append(entry)
+    groups = [
+        {'title': 'Изменяющие законы', 'entries': amending_laws},
+        {'title': 'Подзаконные акты (ΚΔΠ)', 'entries': regulations},
+    ]
     return render(
         request,
         'site/act_list.html',
         {
             'base': base,
-            'amending': amending,
+            'groups': [group for group in groups if group['entries']],
             'section': section,
-            'has_acts': bool(base or amending),
-            'sidenav_title': 'Список актов',
-            'nav_groups': [
-                {'title': 'Основные', 'entries': base},
-                {'title': 'Изменяющие', 'entries': amending},
-            ],
+            'is_home': jurisdiction is None,
+            'has_acts': bool(acts),
         },
     )
+
+
+def act_entry(act, changes=''):
+    """Строка списка актов: короткое название, полное — второй строкой, что меняет."""
+    title, title_lang = reading.act_title_lang(act, reading.READER_LANG)
+    return {
+        'act': act,
+        'label': reading.act_label(act),
+        'short': reading.act_short_label(act, reading.READER_LANG),
+        'title': title,
+        'title_lang': title_lang,
+        'changes': changes,
+        'url': reading.build_url(act),
+    }
 
 
 def about(request):
@@ -72,6 +83,17 @@ def robots(request):
 
 def read(request, path):
     route = reading.parse_path(path)
+    if route.explicit_lang and route.lang == reading.default_lang(route.act):
+        # язык по умолчанию в адресе не пишется: /ru/ → адрес без языка
+        url = reading.build_url(
+            route.act,
+            on=route.on,
+            eid=route.eid,
+            lang=route.lang,
+        )
+        if request.GET:
+            url += '?' + request.GET.urlencode()
+        return redirect(url, permanent=True)
     if 'on' in request.GET or 'lang' in request.GET:
         return redirect(form_target(request, route))
     if route.on is not None and route.on < reading.EARLIEST:
@@ -189,10 +211,12 @@ def act_page(request, route, structure):
             'toc': toc,
             'amended_by': [related_entry(other, route) for other in amended_by],
             'amends': [related_entry(other, route) for other in amends],
+            'short': reading.act_short_label(act, route.lang),
             'sources': text_sources(act),
         }
     )
     context.update(nav_context(route, toc))
+    context['sidenav_wide_only'] = True
     return render(request, 'site/act_detail.html', context)
 
 
@@ -212,6 +236,7 @@ def related_entry(act, route):
     title, title_lang = reading.act_title_lang(act, route.lang)
     return {
         'label': reading.act_label(act),
+        'short': reading.act_short_label(act, route.lang),
         'title': title,
         'title_lang': title_lang,
         'url': reading.build_url(act),
@@ -334,12 +359,29 @@ def history_page(request, route, structure, fragment):
     context.update(
         {
             'fragment': fragment,
-            'fragment_label': reading.fragment_label(fragment, current or fragment.versions.last()),
+            'fragment_label': history_label(structure, fragment, route),
+            'has_changes': any(entry['introduced'] for entry in versions),
             'versions': versions,
             'fragment_url': reading.build_url(route.act, on=route.on, eid=fragment.eid),
         }
     )
     return render(request, 'site/history.html', context)
+
+
+def history_label(structure, fragment, route):
+    """«Статья 5. Заголовок перевода» (без перевода — «Статья 5»), у пункта — «Статья 5, 1»."""
+    unit = structure.unit_of(fragment) or fragment
+    version = unit.version_on(route.date) or unit.versions.last()
+    headings = reading.translated_headings([version], route.lang)
+    label = reading.fragment_label(unit, version, headings, route.lang)
+    prefix = reading.KIND_PREFIX.get(route.lang, {}).get(unit.kind)
+    if label.lang != route.lang and prefix and version is not None and version.num:
+        label = reading.Label(f'{prefix} {version.num}', route.lang)
+    if fragment.id != unit.id:
+        own = fragment.version_on(route.date) or fragment.versions.last()
+        if own is not None and own.num:
+            label = reading.Label(f'{label.text}, {own.num}', label.lang)
+    return label
 
 
 def amendment_url(amendment):

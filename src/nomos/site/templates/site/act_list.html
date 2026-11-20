@@ -2,11 +2,33 @@
 
 {% block title %}{{ section|default:'Акты' }} — Nomos{% endblock %}
 
-{% block aside %}
-  {% include 'site/parts/sidenav.html' %}
-{% endblock %}
-
 {% block main %}
+  {% if is_home %}
+    <section class="hero">
+      <p class="hero__text">
+        Законы Кипра об НДС для тех, кто читает по-русски: официальный греческий текст,
+        русский перевод, редакции на любую дату с 01.01.2024, оригинал рядом.
+      </p>
+      <div class="hero__actions">
+        {% if base %}
+          <a
+            class="hero__button hero__button--primary"
+            href="{{ base.0.url }}"
+            lang="{{ base.0.short.lang }}"
+          >
+            {{ base.0.short }}
+          </a>
+        {% endif %}
+        <a
+          class="hero__button"
+          href="/about/"
+        >
+          О проекте
+        </a>
+      </div>
+    </section>
+  {% endif %}
+
   <h1 class="page__title">
     {% if section %}
       {{ section }}: акты
@@ -16,19 +38,24 @@
   </h1>
 
   {% if has_acts %}
-    <section class="acts">
-      <h2 class="acts__heading">
-        Основные акты
-      </h2>
-      {% include 'site/parts/act_entries.html' with entries=base %}
-    </section>
+    {% if base %}
+      <ul class="acts__cards">
+        {% for entry in base %}
+          <li class="acts__card">
+            {% include 'site/parts/act_entry.html' %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
 
-    <section class="acts">
-      <h2 class="acts__heading">
-        Изменяющие акты
-      </h2>
-      {% include 'site/parts/act_entries.html' with entries=amending %}
-    </section>
+    {% for group in groups %}
+      <details class="acts__group">
+        <summary class="acts__summary">
+          {{ group.title }}, {{ group.entries|length }}
+        </summary>
+        {% include 'site/parts/act_entries.html' with entries=group.entries %}
+      </details>
+    {% endfor %}
   {% else %}
     <p class="acts__empty">
       В разделе пока нет актов: тексты готовятся.

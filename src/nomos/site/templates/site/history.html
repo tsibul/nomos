@@ -1,6 +1,6 @@
 {% extends 'site/base.html' %}
 
-{% block title %}Редакции {{ fragment.eid }} — {{ label }} — Nomos{% endblock %}
+{% block title %}Редакции: {{ fragment_label }} — {{ label }} — Nomos{% endblock %}
 
 {% block header %}
   {% include 'site/parts/act_header.html' %}
@@ -27,9 +27,18 @@
     </a>
   </nav>
 
-  <h1 class="page__title">
-    Редакции {{ fragment.eid }}
+  <h1
+    class="page__title"
+    lang="{{ fragment_label.lang }}"
+  >
+    Редакции: {{ fragment_label }}
   </h1>
+
+  {% if not has_changes %}
+    <p class="history__none">
+      Изменений с 01.01.2024 нет.
+    </p>
+  {% endif %}
 
   <ol class="history">
     {% for entry in versions %}

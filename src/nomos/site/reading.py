@@ -7,15 +7,26 @@ import datetime
 import re
 from dataclasses import dataclass, field
 
+from django.db import models
 from django.http import Http404
 from django.utils.html import escape
 
-from nomos.acts.models import Act, Expression, Fragment, FragmentAlias, FragmentText
+from nomos.acts.models import (
+    Act,
+    ActRelation,
+    Expression,
+    Fragment,
+    FragmentAlias,
+    FragmentText,
+    FragmentVersion,
+)
 from nomos.translate.models import Note
 
 EARLIEST = datetime.date(2024, 1, 1)
 LANGS = ('el', 'en', 'ru')
+# язык оригинала (официального текста); язык показа по умолчанию — default_lang(act)
 DEFAULT_LANG = 'el'
+READER_LANG = 'ru'
 HISTORY = 'history'
 
 # Фрагменты-разделы: не страница, а заголовок в оглавлении
@@ -50,6 +61,8 @@ class Route:
     eid: str | None = None
     lang: str = DEFAULT_LANG
     history: bool = False
+    # язык задан в адресе явно (/el/, /ru/), а не взят по умолчанию
+    explicit_lang: bool = False
 
     @property
     def date(self):
@@ -79,7 +92,7 @@ def parse_path(path):
             break
     if act is None:
         raise Http404('Акт не найден')
-    route = Route(act=act)
+    route = Route(act=act, lang=default_lang(act))
     rest = segments[size:]
     if rest and rest[0].startswith('@'):
         route.on = parse_date(rest[0][1:])
@@ -91,6 +104,7 @@ def parse_path(path):
         rest = rest[1:]
     if rest and rest[0] in LANGS:
         route.lang = rest[0]
+        route.explicit_lang = True
         rest = rest[1:]
     elif rest and rest[0] == HISTORY and route.eid:
         route.history = True
@@ -100,8 +114,18 @@ def parse_path(path):
     return route
 
 
-def build_url(act, on=None, eid=None, lang=DEFAULT_LANG, history=False):
-    """Адрес страницы; без даты — действующая сегодня редакция."""
+def default_lang(act):
+    """Язык адреса без языка: русский, если у акта есть русский текст, иначе язык оригинала."""
+    cached = getattr(act, '_default_lang', None)
+    if cached is None:
+        langs = {expression.lang for expression in act.expressions.all()}
+        cached = READER_LANG if READER_LANG in langs else act.structure_lang or DEFAULT_LANG
+        act._default_lang = cached
+    return cached
+
+
+def build_url(act, on=None, eid=None, lang=None, history=False):
+    """Адрес страницы; без даты — действующая сегодня редакция, без языка — default_lang."""
     parts = [act.uid]
     if on is not None:
         parts.append('@' + on.isoformat())
@@ -109,7 +133,7 @@ def build_url(act, on=None, eid=None, lang=DEFAULT_LANG, history=False):
         parts.append(eid)
     if history:
         parts.append(HISTORY)
-    elif lang != DEFAULT_LANG:
+    elif lang is not None and lang != default_lang(act):
         parts.append(lang)
     return '/' + '/'.join(parts) + '/'
 
@@ -150,15 +174,104 @@ def act_short_label(act, lang=DEFAULT_LANG):
         if day is not None:
             text = f'{text} от {day:%d.%m.%Y}'
         return Label(text, 'ru')
-    expressions = list(act.expressions.all())
-    for wanted in (lang, structure_lang):
-        for expression in expressions:
-            if expression.lang == wanted and expression.short_title:
-                return Label(expression.short_title, expression.lang)
+    stored = stored_short_label(act, lang)
+    if stored is not None:
+        return stored
+    amending = amending_short_label(act, lang)
+    if amending is not None:
+        return amending
     title, title_lang = act_title_lang(act, lang)
     if title:
         return Label(title, title_lang)
     return Label(act_label(act), 'ru')
+
+
+def stored_short_label(act, lang):
+    """short_title выражения на языке чтения, иначе на опорном; нет — None."""
+    expressions = list(act.expressions.all())
+    for wanted in (lang, act.structure_lang or DEFAULT_LANG):
+        for expression in expressions:
+            if expression.lang == wanted and expression.short_title:
+                return Label(expression.short_title, expression.lang)
+    return None
+
+
+AMENDING_SUFFIX = {
+    'ru': '(изм.)',
+    'el': '(Τροποποιητικός)',
+}
+EL_SHORT_RE = re.compile(r'^Ο περί (.+) Νόμος$')
+
+
+def amending_short_label(act, lang):
+    """Изменяющий закон: короткое название основного + «(изм.)» + номер.
+
+    «Закон о НДС (изм.) 10(I)/2024», «ΦΠΑ (Τροποποιητικός) 10(I)/2024».
+    Вычисляется, не хранится; у основного нет короткого названия — None.
+    """
+    relation = (
+        act.relations_out.filter(kind=ActRelation.Kind.AMENDS)
+        .select_related('to_act')
+        .order_by('to_act__uid')
+        .first()
+    )
+    if relation is None:
+        return None
+    base = stored_short_label(relation.to_act, lang)
+    if base is None or base.lang not in AMENDING_SUFFIX:
+        return None
+    text = base.text
+    if base.lang == 'el':
+        match = EL_SHORT_RE.match(text)
+        if match:
+            text = match.group(1)
+    number = f'{act.number}/{act.year}' if act.year else act.number
+    return Label(f'{text} {AMENDING_SUFFIX[base.lang]} {number}', base.lang)
+
+
+def act_sort_key(act):
+    """Год, затем номер числом: 82/2026 раньше 102/2026."""
+    match = re.match(r'\d+', act.number or '')
+    number = int(match.group()) if match else 0
+    return (int(act.year or 0), number, act.number or '')
+
+
+TARGET_LABELS = {
+    'art': 'ст.',
+    'sch': 'прил.',
+}
+
+
+def amendment_targets(acts):
+    """Что меняют изменяющие акты: {id акта: «ст. 45, 61; прил. 12»} по данным изменений.
+
+    Берутся статьи и приложения других актов, чьи редакции введены актом; нет данных —
+    нет подписи.
+    """
+    rows = (
+        FragmentVersion.objects.filter(amendment__amending_act__in=acts)
+        .exclude(fragment__act=models.F('amendment__amending_act'))
+        .values_list('amendment__amending_act_id', 'fragment__eid')
+    )
+    found = {}
+    for act_id, eid in rows:
+        kind, _, number = eid.split('.')[0].partition('_')
+        if kind in TARGET_LABELS and number:
+            found.setdefault(act_id, {}).setdefault(kind, set()).add(number)
+    result = {}
+    for act_id, kinds in found.items():
+        parts = []
+        for kind, prefix in TARGET_LABELS.items():
+            numbers = sorted(kinds.get(kind, ()), key=number_sort_key)
+            if numbers:
+                parts.append(f'{prefix} {", ".join(numbers)}')
+        result[act_id] = '; '.join(parts)
+    return result
+
+
+def number_sort_key(number):
+    match = re.match(r'\d+', number)
+    return (int(match.group()) if match else 0, number)
 
 
 def act_langs(act):
@@ -217,13 +330,13 @@ def translated_headings(versions, lang):
 
 
 def translated_units(structure, lang):
-    """id страниц, где есть хоть один текст перевода (любой редакции)."""
+    """id страниц, где переведён хоть один текст (любой редакции); один заголовок не в счёт."""
     if lang == DEFAULT_LANG:
         return None
     fragment_ids = FragmentText.objects.filter(
         version__fragment__act=structure.act,
         expression__lang=lang,
-    ).values_list('version__fragment_id', flat=True)
+    ).exclude(body='').values_list('version__fragment_id', flat=True)
     units = set()
     for fragment_id in set(fragment_ids):
         unit = structure.unit_of(structure.by_id[fragment_id])
@@ -425,6 +538,9 @@ def pick_text(texts, lang):
     return found[0] if found else None
 
 
+HIDDEN_NOTES = (Note.Kind.SOURCE_COMMENT, Note.Kind.EDITOR_COMMENT)
+
+
 REF_RE = re.compile(r'<ref\b([^>]*)>(.*?)</ref>', re.S)
 REF_ID_RE = re.compile(r'\bid="([^"]*)"')
 
@@ -458,7 +574,7 @@ def reference_url(reference, route):
     elif reference.mode == reference.Mode.VERSION and reference.to_version:
         on = reference.to_version.start(Fragment.Axis.APPLIES)
     eid = reference.to_fragment.eid if reference.to_fragment else None
-    lang = route.lang if route.lang in act_langs(reference.to_act) else DEFAULT_LANG
+    lang = route.lang if route.lang in act_langs(reference.to_act) else None
     return build_url(reference.to_act, on=on, eid=eid, lang=lang)
 
 
@@ -492,8 +608,9 @@ def build_nodes(structure, unit, route):
 
 
 def has_translation(node):
-    """Есть ли на странице хоть один переведённый фрагмент (хотя бы заголовок)."""
-    if node.text is not None and node.text.expression.lang != DEFAULT_LANG:
+    """Есть ли на странице хоть один переведённый текст (одного заголовка мало)."""
+    text = node.text
+    if text is not None and text.expression.lang != DEFAULT_LANG and text.body:
         return True
     return any(has_translation(child) for child in node.children)
 
@@ -546,8 +663,9 @@ def attach_texts(nodes, route):
         notes = []
         for text in (node.text, node.original):
             if text is not None:
-                # комментарии источника (сноски CyLaw) на сайте не показываются
+                # на сайте — только сомнения перевода: сноски источника и рабочие
+                # заметки редактора не показываются
                 notes.extend(
-                    note for note in text.notes.all() if note.kind != Note.Kind.SOURCE_COMMENT
+                    note for note in text.notes.all() if note.kind not in HIDDEN_NOTES
                 )
         node.notes = notes

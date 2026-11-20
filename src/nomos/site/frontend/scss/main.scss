@@ -5,13 +5,14 @@
 @use 'blocks/header';
 @use 'blocks/menu';
 @use 'blocks/about';
+@use 'blocks/hero';
 @use 'blocks/acts';
 @use 'blocks/act-head';
 @use 'blocks/toolbar';
 @use 'blocks/crumbs';
 @use 'blocks/toc';
 @use 'blocks/sidenav';
-@use 'blocks/related';
+@use 'blocks/act-info';
 @use 'blocks/sources';
 @use 'blocks/draft-warning';
 @use 'blocks/original-switch';
