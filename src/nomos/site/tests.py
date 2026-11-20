@@ -56,10 +56,11 @@ class ViewerTests(TestCase):
             source=source,
             title='Τροποποιητικός',
         )
-        base = Amendment.objects.create(amending_act=cls.law, kind='base', marker='base')
+        base = Amendment.objects.create(amending_act=cls.law, kind='base', key='base', marker='base')
         amending_base = Amendment.objects.create(
             amending_act=cls.amending,
             kind='base',
+            key='base',
             marker='base',
         )
         provision = Fragment.objects.create(
@@ -73,6 +74,7 @@ class ViewerTests(TestCase):
             amending_act=cls.amending,
             amending_fragment=provision,
             kind='replace',
+            key='art_2:replace',
             marker='art_2:replace',
             published_on=datetime.date(2024, 12, 1),
             in_force_from=datetime.date(2025, 1, 1),
@@ -81,6 +83,7 @@ class ViewerTests(TestCase):
             amending_act=cls.amending,
             amending_fragment=provision,
             kind='replace',
+            key='art_2:replace@future',
             marker='art_2:replace@future',
             published_on=datetime.date(2024, 12, 1),
             in_force_from=cls.future_day,
