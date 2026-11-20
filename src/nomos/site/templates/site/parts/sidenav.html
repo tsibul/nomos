@@ -1,6 +1,6 @@
-{# Левая колонка: на телефоне — раскрывающийся блок, на широком экране — всегда открыта #}
+{# Оглавление открытого акта: на телефоне — шторка над текстом, на широком — колонка #}
 <aside
-  class="sidenav"
+  class="sidenav{% if sidenav_wide_only %} sidenav--wide-only{% endif %}"
   aria-label="{{ sidenav_title }}"
   data-sidenav
 >
@@ -19,11 +19,7 @@
         </a>
       {% endif %}
 
-      {% if nav_toc %}
-        {% include 'site/parts/toc_items.html' with items=nav_toc %}
-      {% else %}
-        {% include 'site/parts/sidenav_acts.html' %}
-      {% endif %}
+      {% include 'site/parts/toc_items.html' with items=nav_toc %}
     </div>
   </details>
 </aside>

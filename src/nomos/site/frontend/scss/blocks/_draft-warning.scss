@@ -1,12 +1,8 @@
 .draft-warning {
-  margin: 0 0 1rem;
-  padding: 0.375rem 0.75rem;
+  margin: 0 0 0.5rem;
+  padding: 0.25rem 0.75rem;
   border-left: 3px solid var(--color-secondary-900);
   color: var(--color-secondary-900);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   background: var(--color-secondary-50);
-}
-
-.draft-warning__source {
-  color: var(--color-neutral-500);
 }

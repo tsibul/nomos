@@ -33,6 +33,6 @@
   }
 
   .page__layout:has(.sidenav) {
-    grid-template-columns: 20rem minmax(0, 1fr);
+    grid-template-columns: 16.25rem minmax(0, 1fr);
   }
 }

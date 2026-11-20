@@ -179,9 +179,12 @@ class ViewerTests(TestCase):
     def test_act_list_separates_amending_acts(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        base, amending = response.context['base'], response.context['amending']
+        base, groups = response.context['base'], response.context['groups']
         self.assertEqual([entry['act'] for entry in base], [self.law])
-        self.assertEqual([entry['act'] for entry in amending], [self.amending])
+        self.assertEqual(groups[0]['title'], 'Изменяющие законы')
+        self.assertEqual([entry['act'] for entry in groups[0]['entries']], [self.amending])
+        self.assertContains(response, 'class="acts__group"')
+        self.assertContains(response, 'Что меняет: ст. 1')
 
     def test_menu_sections_follow_data(self):
         response = self.client.get('/')
@@ -274,7 +277,7 @@ class ViewerTests(TestCase):
             origin='llm',
             body='Сноска источника',
         )
-        response = self.client.get(ACT_URL + 'art_1/ru/', {'orig': '1'})
+        response = self.client.get(ACT_URL + 'art_1/', {'orig': '1'})
         self.assertContains(response, 'Новый текст')
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'Сомнительный термин')
@@ -298,10 +301,16 @@ class ViewerTests(TestCase):
             heading='Толкование',
             text_hash='ru-heading',
         )
-        response = self.client.get(ACT_URL + 'ru/')
+        FragmentText.objects.create(
+            version=self.new,
+            expression=ru,
+            body='<p>Новый текст</p>',
+            text_hash='ru-body',
+        )
+        response = self.client.get(ACT_URL)
         self.assertRegex(response.content.decode(), r'lang="ru"\s*>\s*Статья 1\. Толкование')
         self.assertNotContains(response, 'перевод готовится')
-        response = self.client.get(ACT_URL + 'art_1/ru/')
+        response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'Статья 1. Толкование — Закон 1(I)/2000 — Nomos')
         self.assertContains(response, 'Неофициальный перевод. Перевод выполнен ИИ')
         self.assertNotContains(response, 'Текст неизвестен</p>')
@@ -315,17 +324,21 @@ class ViewerTests(TestCase):
             status='our_translation',
             source=Source.objects.get(code='test'),
         )
-        response = self.client.get(ACT_URL + 'ru/')
+        response = self.client.get(ACT_URL)
         self.assertContains(response, 'перевод готовится')
+        self.assertContains(response, 'toc__link--pending')
         self.assertRegex(response.content.decode(), r'lang="el"\s*>\s*Άρθρο 1\. Ερμηνεία')
-        response = self.client.get(ACT_URL + 'art_1/ru/')
+        response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'Перевод готовится — показан официальный греческий текст.')
 
     def test_side_column(self):
         response = self.client.get('/cy/')
-        self.assertContains(response, 'Список актов')
-        self.assertContains(response, 'class="sidenav__link"')
+        self.assertNotContains(response, 'sidenav')
+        response = self.client.get(ACT_URL)
+        self.assertContains(response, 'sidenav--wide-only')
+        self.assertContains(response, 'toc--main')
         response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'pager__link--toc')
         self.assertContains(response, 'Оглавление акта')
         self.assertContains(response, 'href="/cy/"')
         self.assertRegex(response.content.decode(), r'toc__link--current"[^>]*art_1/"')
@@ -334,8 +347,6 @@ class ViewerTests(TestCase):
 
     def test_empty_section_has_same_layout(self):
         response = self.client.get('/eu/')
-        self.assertContains(response, 'class="sidenav"')
-        self.assertContains(response, 'Актов пока нет')
         self.assertContains(response, 'В разделе пока нет актов')
         self.assertNotContains(response, 'Изменяющие акты')
 
@@ -364,6 +375,69 @@ class ViewerTests(TestCase):
             published_on=datetime.date(2024, 3, 15),
         )
         self.assertEqual(str(reading.act_short_label(kdp)), 'ΚΔΠ 95/2024 от 15.03.2024')
+
+    def test_short_label_of_amending_law(self):
+        Expression.objects.filter(act=self.law).update(short_title='Ο περί Δοκιμής Νόμος')
+        self.assertEqual(
+            str(reading.act_short_label(self.amending, 'el')),
+            'Δοκιμής (Τροποποιητικός) 2(I)/2024',
+        )
+        Expression.objects.create(
+            act=self.law,
+            lang='ru',
+            status='our_translation',
+            source=Source.objects.get(code='test'),
+            short_title='Закон об испытании',
+        )
+        self.assertEqual(
+            str(reading.act_short_label(self.amending, 'ru')),
+            'Закон об испытании (изм.) 2(I)/2024',
+        )
+
+    def test_acts_sorted_by_year_and_number(self):
+        acts = [
+            Act(number='363', year='2026'),
+            Act(number='82', year='2026'),
+            Act(number='102', year='2025'),
+        ]
+        acts.sort(key=reading.act_sort_key)
+        self.assertEqual([act.number for act in acts], ['102', '82', '363'])
+
+    def test_home_has_first_screen(self):
+        response = self.client.get('/')
+        self.assertContains(response, 'class="hero"')
+        self.assertContains(response, f'href="{ACT_URL}"')
+        self.assertContains(response, 'href="/about/"')
+        self.assertNotContains(self.client.get('/cy/'), 'class="hero"')
+
+    def test_russian_is_default_where_translated(self):
+        # без русского текста адрес без языка — греческий, /ru/ — явный выбор
+        self.assertContains(self.client.get(ACT_URL), 'lang="el"')
+        self.assertEqual(self.client.get(ACT_URL + 'el/').status_code, 301)
+        Expression.objects.create(
+            act=self.law,
+            lang='ru',
+            status='our_translation',
+            source=Source.objects.get(code='test'),
+        )
+        response = self.client.get(ACT_URL + 'art_1/ru/', {'orig': '1'})
+        self.assertRedirects(
+            response,
+            ACT_URL + 'art_1/?orig=1',
+            status_code=301,
+            fetch_redirect_response=False,
+        )
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertEqual(response.context['route'].lang, 'ru')
+        response = self.client.get(ACT_URL + 'el/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['route'].lang, 'el')
+        self.assertContains(response, f'href="{ACT_URL}art_1/el/"')
+
+    def test_history_has_human_label(self):
+        response = self.client.get(ACT_URL + 'art_1.par_1/history/')
+        self.assertRegex(response.content.decode(), r'Редакции: Άρθρο 1\. Ερμηνεία, \(?1')
+        self.assertNotContains(response, 'Редакции art_1')
 
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')

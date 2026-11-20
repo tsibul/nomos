@@ -13,66 +13,102 @@
 {% block main %}
   {% include 'site/parts/toolbar.html' %}
 
-  {% if amends %}
-    <section class="related">
-      <h2 class="related__heading">
-        Изменяет
-      </h2>
-      {% include 'site/parts/act_entries.html' with entries=amends %}
-    </section>
-  {% endif %}
+  <section class="act-info">
+    <h1
+      class="act-info__title"
+      lang="{{ title_lang }}"
+    >
+      {{ title|default:label }}
+    </h1>
+    <p class="act-info__label">
+      {{ label }}
+      {% if short.text != title %}
+        · <span lang="{{ short.lang }}">{{ short }}</span>
+      {% endif %}
+    </p>
 
+    <div class="act-info__row">
+      <span class="act-info__caption">
+        Языки:
+      </span>
+      {% for lang in langs %}
+        {% if lang.current %}
+          <span class="act-info__lang act-info__lang--current">
+            {{ lang.code|upper }}
+          </span>
+        {% else %}
+          <a
+            class="act-info__lang"
+            href="{{ lang.url }}"
+          >
+            {{ lang.code|upper }}
+          </a>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {% if sources %}
+      <div class="act-info__row">
+        <span class="act-info__caption">
+          Источник текста:
+        </span>
+        <ul class="sources__list">
+          {% for entry in sources %}
+            <li class="sources__item">
+              <span class="sources__status">
+                {{ entry.lang }}
+              </span>
+              {% if entry.source.url %}
+                <a
+                  class="sources__link"
+                  href="{{ entry.source.url }}"
+                  rel="external"
+                >
+                  {{ entry.source.name }}
+                </a>
+              {% else %}
+                <span class="sources__name">
+                  {{ entry.source.name }}
+                </span>
+              {% endif %}
+              {% if entry.source.attribution %}
+                <span class="sources__attribution">
+                  {{ entry.source.attribution }}
+                </span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+
+    {% if amends %}
+      <div class="act-info__row">
+        <span class="act-info__caption">
+          Изменяет:
+        </span>
+        {% include 'site/parts/act_entries.html' with entries=amends %}
+      </div>
+    {% endif %}
+
+    {% if amended_by %}
+      <details class="acts__group">
+        <summary class="acts__summary">
+          Редакции: изменяющие акты, {{ amended_by|length }}
+        </summary>
+        {% include 'site/parts/act_entries.html' with entries=amended_by %}
+      </details>
+    {% endif %}
+  </section>
+
+  {# на широком экране оглавление — в левой колонке, здесь только на телефоне #}
   <nav
-    class="toc"
+    class="toc toc--main"
     aria-label="Оглавление"
   >
-    <h1 class="toc__heading">
+    <h2 class="toc__heading">
       Оглавление
-    </h1>
+    </h2>
     {% include 'site/parts/toc_items.html' with items=toc %}
   </nav>
-
-  {% if sources %}
-    <section class="sources">
-      <h2 class="sources__heading">
-        Источник текста
-      </h2>
-      <ul class="sources__list">
-        {% for entry in sources %}
-          <li class="sources__item">
-            {% if entry.source.url %}
-              <a
-                class="sources__link"
-                href="{{ entry.source.url }}"
-                rel="external"
-              >
-                {{ entry.source.name }}
-              </a>
-            {% else %}
-              <span class="sources__name">
-                {{ entry.source.name }}
-              </span>
-            {% endif %}
-            <span class="sources__status">
-              {{ entry.lang }}
-            </span>
-            {% if entry.source.attribution %}
-              <span class="sources__attribution">
-                {{ entry.source.attribution }}
-              </span>
-            {% endif %}
-          </li>
-        {% endfor %}
-      </ul>
-    </section>
-  {% endif %}
-
-  {% if amended_by %}
-    <section class="related">
-      <h2 class="related__heading">
-        Изменяющие акты
-      </h2>
-      {% include 'site/parts/act_entries.html' with entries=amended_by %}
-    </section>
-  {% endif %}
 {% endblock %}

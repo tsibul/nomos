@@ -1,3 +1,11 @@
+@use '../base';
+
+@media (min-width: base.$break-desktop) {
+  .toc--main {
+    display: none;
+  }
+}
+
 .toc__heading {
   margin: 0 0 0.75rem;
   font-size: 1.25rem;
@@ -23,6 +31,10 @@
 .toc__link {
   display: block;
   padding: 0.25rem 0;
+}
+
+.toc__link--pending {
+  color: var(--color-neutral-500);
 }
 
 .toc__pending {

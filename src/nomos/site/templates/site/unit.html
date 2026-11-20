@@ -40,11 +40,6 @@
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
       {{ translation_notice }}
-      {% if translation.source.attribution %}
-        <span class="draft-warning__source">
-          {{ translation.source.attribution }}
-        </span>
-      {% endif %}
     </p>
     <div class="original-switch">
       {% if show_original %}
@@ -87,7 +82,15 @@
       >
         ← {{ previous.label }}
       </a>
+    {% else %}
+      <span class="pager__link pager__link--previous"></span>
     {% endif %}
+    <a
+      class="pager__link pager__link--toc"
+      href="{{ act_url }}"
+    >
+      Оглавление
+    </a>
     {% if next %}
       <a
         class="pager__link pager__link--next"
@@ -97,6 +100,8 @@
       >
         {{ next.label }} →
       </a>
+    {% else %}
+      <span class="pager__link pager__link--next"></span>
     {% endif %}
   </nav>
 {% endblock %}
