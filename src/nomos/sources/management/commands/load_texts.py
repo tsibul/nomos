@@ -124,6 +124,7 @@ class Loader:
                 title=item.get('title', ''),
                 short_title=item.get('short-title', ''),
                 file=item.get('file', ''),
+                public=item.get('public') == 'true',
             )
         for item in element.iter('fragment'):
             parent = item.get('parent')

@@ -13,7 +13,7 @@ from django.test import SimpleTestCase, TestCase
 from nomos.acts.models import Amendment, Expression, Fragment, FragmentText, Reference
 from nomos.translate.models import Note
 
-from .cylaw import history, numbering, refs
+from .cylaw import history, numbering, refs, texts_xml
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
 
@@ -169,6 +169,9 @@ class VatLawTests(TestCase):
             from_text__version__key=history.BASE_KEY,
         ).to_fragment.eid
         self.assertEqual(eid, 'sch_7')
+
+    def test_expressions_not_public_by_default(self):
+        self.assertFalse(Expression.objects.filter(public=True).exists())
 
     def active_eids(self, prefix, day):
         found = set()
@@ -455,3 +458,36 @@ class RefsTests(SimpleTestCase):
             self.assertEqual(refs.strip_own_refs(result), source)
             refs.mark_translation(path, refs.Targets(REF_EIDS), {'u1': 'art_1'}, {})
             self.assertEqual(path.read_text(encoding='utf-8'), result)
+
+
+class PublicAttributeTests(TestCase):
+    """Атрибут public у <expression>: читается загрузчиком, сохраняется при пересборке."""
+
+    def test_public_kept_and_loaded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / 'cy/law/2000/1_I/act.xml'
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<act uid="cy/law/2000/1_I" jurisdiction="cy" kind="law">\n'
+                '  <expression lang="el" status="official_text" source="cylaw" file="el.xml"'
+                ' public="true" />\n'
+                '  <expression lang="ru" status="our_translation" source="nomos" file="ru.xml"'
+                ' public="true" />\n'
+                '</act>\n',
+                encoding='utf-8',
+            )
+            info = texts_xml.ActInfo(
+                uid='cy/law/2000/1_I', jurisdiction='cy', kind='law', source='cylaw',
+            )
+            texts_xml.write_act(path, info, {}, {})
+            public = {
+                item.get('lang'): item.get('public')
+                for item in texts_xml.read_act(path).iter('expression')
+            }
+            self.assertEqual(public, {'el': 'true', 'ru': 'true'})
+            call_command('load_texts', texts_dir=folder, stdout=StringIO())
+        self.assertEqual(
+            dict(Expression.objects.values_list('lang', 'public')), {'el': True, 'ru': True},
+        )
