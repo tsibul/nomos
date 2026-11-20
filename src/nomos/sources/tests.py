@@ -135,7 +135,9 @@ class VatLawTests(TestCase):
             and not filecmp.cmp(path, TEXTS_DIR / path.relative_to(self.copy), shallow=False)
         ]
         self.assertEqual(changed, [])
-        self.assertTrue(Expression.objects.filter(act__uid=LAW, lang='ru').exists())
+        russian = Expression.objects.get(act__uid=LAW, lang='ru')
+        self.assertEqual(russian.source.code, 'nomos')
+        self.assertEqual(russian.source.name, 'Неофициальный перевод')
         self.assertTrue(FragmentText.objects.filter(expression__lang='ru').exists())
 
     def active_eids(self, prefix, day):
