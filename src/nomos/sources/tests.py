@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
 from nomos.acts.models import Fragment
+from nomos.translate.models import Note
 
 from .cylaw import history, numbering
 from .management.commands import collect_cylaw
@@ -144,6 +145,19 @@ class VatLawTests(TestCase):
         self.assertEqual(self.version(eid, datetime.date(2024, 5, 30)).state, 'active')
         self.assertIsNone(self.version(eid, datetime.date(2024, 5, 31)))
 
+    def test_order_keys_unique_among_siblings(self):
+        pairs = Fragment.objects.filter(act__uid=LAW).values_list('parent_id', 'order_key')
+        self.assertEqual(len(pairs), len(set(pairs)))
+
+    def test_table_a_item_14_doubt_note(self):
+        """Пункт 14 Πίνακας Α: 167/2026 против 337/2025 и 362/2026 — примечание о сомнении."""
+        notes = Note.objects.filter(
+            target__version__fragment__act__uid=LAW,
+            target__version__fragment__eid='sch_5.tbl_A.par_14',
+            body__contains='1.5–31.12.2026',
+        )
+        self.assertTrue(notes.exists())
+
     def test_nested_lists(self):
         """Списки внутри пунктов Пятого и Седьмого Παραρτήματος не всплывают наверх."""
         found = set(
@@ -245,3 +259,15 @@ class SplitNotesTests(SimpleTestCase):
         )
         self.assertEqual(list(own), ['cy/law/2025/104_I'])
         self.assertEqual(other, ['Σημείωση 2 του Ν. 1/2001'])
+
+
+class OrderKeyTests(SimpleTestCase):
+    def test_siblings_of_different_kinds_keep_document_order(self):
+        """art_2 и prt_II под одним родителем не получают один ключ."""
+        root = Node(kind='act')
+        keys = [
+            root.add(Node(kind=kind, num=num)).order_key
+            for kind, num in (('art', '1'), ('art', '2'), ('prt', 'II'), ('art', '3'), ('sch', '1'))
+        ]
+        self.assertEqual(keys, sorted(set(keys)))
+        self.assertEqual(len(keys), 5)

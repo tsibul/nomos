@@ -54,7 +54,7 @@ class GazetteParser:
     def __init__(self, act_uid):
         self.act_uid = act_uid
         self.root = Node(kind='act')
-        self.preamble = self.root.add(Node(kind='cit', token='cit_1', order_key='0000'))
+        self.preamble = self.root.add(Node(kind='cit', token='cit_1'))
         self.article = None
         self.point = None
         self.heading_open = False

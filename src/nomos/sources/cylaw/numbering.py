@@ -161,30 +161,6 @@ def eid_token(num):
     return translit_upper(upper)
 
 
-def order_key(num):
-    """Ключ сортировки: «7Γ» → «0007.03»; None, если номер не разобран."""
-    match = ARABIC_RE.match(num)
-    if match:
-        key = '%04d' % int(match.group(1))
-        letters = split_letters(match.group(2))
-        for letter in letters:
-            if letter not in GREEK_UPPER:
-                return None
-            key += '.%02d' % (GREEK_UPPER.index(letter) + 1)
-        return key
-    if ROMAN_RE.match(num):
-        return '%04d' % roman_value(num)
-    if GREEK_LOWER_RE.match(num):
-        value = greek_value(num)
-        return None if value is None else '%04d' % value
-    upper = num.upper().translate(str.maketrans('ΙΧ', 'IX'))
-    if UPPER_ROMAN_RE.match(upper):
-        return '%04d' % roman_value(upper)
-    if len(num) == 1 and num.upper() in GREEK_UPPER:
-        return '%04d' % (GREEK_UPPER.index(num.upper()) + 1)
-    return None
-
-
 def make_uid(act_uid, eid):
     """10 знаков base32. Выводится из адреса при первом появлении фрагмента;
     дальше берётся из уже записанного act.xml и не меняется."""

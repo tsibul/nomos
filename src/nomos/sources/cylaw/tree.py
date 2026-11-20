@@ -32,8 +32,8 @@ class Node:
         child.in_schedule = self.in_schedule or child.kind == 'sch'
         if not child.token:
             child.token = self.free_token(child)
-        if not child.order_key:
-            child.order_key = self.next_order_key(child)
+        # порядок в документе среди детей одного родителя, независимо от вида
+        child.order_key = '%04d' % (len(self.children) + 1)
         self.children.append(child)
         return child
 
@@ -50,21 +50,6 @@ class Node:
             token = '%s_%d' % (base, suffix)
             suffix += 1
         return token
-
-    def next_order_key(self, child):
-        if not child.unnumbered:
-            key = numbering.order_key(child.num_plain())
-            if key:
-                return key
-        # после ближайшего нумерованного соседа: «0007~1», «0007~2»
-        base = '0000'
-        count = 1
-        for node in reversed(self.children):
-            if not node.unnumbered:
-                base = node.order_key
-                break
-            count += 1
-        return '%s~%03d' % (base, count)
 
     def num_plain(self):
         return numbering.normalize_number(self.num)
