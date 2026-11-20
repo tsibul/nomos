@@ -70,7 +70,7 @@ def law_info(manifest):
     return info
 
 
-def amending_info(act, law_uid, title, note=''):
+def amending_info(act, law_uid, title):
     info = texts_xml.ActInfo(
         uid=act.uid,
         jurisdiction='cy',
@@ -84,7 +84,7 @@ def amending_info(act, law_uid, title, note=''):
         title=title,
         relations=[('amends', law_uid)],
     )
-    info.amendments.append(base_amendment(info, note))
+    info.amendments.append(base_amendment(info))
     seen = set()
     for op in act.ops:
         if op.key in seen:
@@ -130,11 +130,25 @@ def expired_version(day, base_ref):
     )
 
 
-def write(folder, info, versions):
+def write(folder, info, versions, notes=()):
+    """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
     texts_xml.write_act(act_path, info, versions, uids)
-    texts_xml.write_texts(folder / 'el.xml', info, versions, uids, layout.inline_markup)
+    inline = []
+    for node, node_versions in versions.items():
+        for version in node_versions:
+            for paragraph in version.paragraphs or []:
+                found = []
+                layout.strip_notes(paragraph, found)
+                inline.extend((uids[node], version.key, note) for note in found)
+    texts_xml.write_texts(
+        folder / 'el.xml', info, versions, uids,
+        lambda paragraph: layout.strip_notes(paragraph, []),
+    )
+    if notes or inline:
+        texts_xml.write_notes(folder / 'cylaw-notes.xml', info, notes, inline)
+    return len(inline)
 
 
 class Command(BaseCommand):
@@ -159,14 +173,14 @@ class Command(BaseCommand):
         info = law_info(manifest)
         tree, _, notes = consolidated.parse(root_dir / manifest['file'], info.uid)
         act_notes, other_notes = split_notes(notes, acts)
-        texts_xml.write_notes(folder / 'cylaw-notes.xml', info, other_notes)
-        report.append('примечаний CyLaw: %d у изменяющих актов, %d в cylaw-notes.xml' % (
-            len(act_notes), len(other_notes)))
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
-        write(folder, info, versions)
+        inline = write(folder, info, versions, other_notes)
         self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
+        report.append('примечаний CyLaw в cylaw-notes.xml: %d к закону, %d [Σ.Σ.], %d у '
+                      'изменяющих актов (в их папках)' % (
+                          len(other_notes), inline, len(act_notes)))
 
         for amending in acts:
             amending_tree, title = gazette.parse(root_dir / amending.file, amending.uid)
@@ -181,8 +195,9 @@ class Command(BaseCommand):
                 amending_versions[node] = [version]
             write(
                 root_dir / amending.uid,
-                amending_info(amending, info.uid, title, act_notes.get(amending.uid, '')),
+                amending_info(amending, info.uid, title),
                 amending_versions,
+                [act_notes[amending.uid]] if amending.uid in act_notes else [],
             )
             provisions = {node.eid for node in amending_versions}
             for op in amending.ops:
