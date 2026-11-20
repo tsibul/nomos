@@ -11,17 +11,19 @@
 {% endblock %}
 
 {% block main %}
+  {% include 'site/parts/back_ref.html' %}
+
   {% include 'site/parts/toolbar.html' %}
 
   <nav
     class="crumbs"
-    aria-label="Положение в акте"
+    aria-label="{{ t.position_in_act }}"
   >
     <a
       class="crumbs__link"
       href="{{ act_url }}"
     >
-      Оглавление
+      {{ t.toc }}
     </a>
     {% for crumb in crumbs %}
       <span
@@ -35,11 +37,11 @@
 
   {% if untranslated %}
     <p class="untranslated">
-      Перевод готовится — показан официальный греческий текст.
+      {{ t.pending_notice }}
     </p>
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
-      {{ translation_notice }}
+      {{ t.translation_notice }}
     </p>
     <div class="original-switch">
       {% if show_original %}
@@ -48,7 +50,7 @@
           href="?"
           data-original-toggle
         >
-          Скрыть греческий текст
+          {{ t.hide_greek }}
         </a>
       {% else %}
         <a
@@ -56,7 +58,7 @@
           href="?orig=1"
           data-original-toggle
         >
-          Показать греческий текст рядом
+          {{ t.show_greek }}
         </a>
       {% endif %}
     </div>
@@ -71,7 +73,7 @@
 
   <nav
     class="pager"
-    aria-label="Соседние положения"
+    aria-label="{{ t.neighbours }}"
   >
     {% if previous %}
       <a
@@ -89,7 +91,7 @@
       class="pager__link pager__link--toc"
       href="{{ act_url }}"
     >
-      Оглавление
+      {{ t.toc }}
     </a>
     {% if next %}
       <a

@@ -36,8 +36,8 @@
           <a
             class="fragment__anchor"
             href="#{{ node.fragment.eid }}"
-            title="Ссылка на этот пункт"
-            aria-label="Ссылка на этот пункт"
+            title="{{ t.anchor_link }}"
+            aria-label="{{ t.anchor_link }}"
           >
             #
           </a>
@@ -45,16 +45,16 @@
         <a
           class="fragment__history"
           href="{{ node.history_url }}"
-          title="Редакции фрагмента"
+          title="{{ t.fragment_versions }}"
         >
-          редакции
+          {{ t.versions_link }}
         </a>
       </span>
     </div>
 
     {% if node.unknown %}
       <p class="fragment__flag fragment__flag--unknown">
-        Текст неизвестен
+        {{ t.text_unknown }}
       </p>
     {% elif node.body %}
       <div class="fragment__texts">
@@ -77,19 +77,19 @@
 
     {% if node.no_translation and not node.unknown and not untranslated %}
       <p class="fragment__flag">
-        Перевода нет — показан греческий текст
+        {{ t.no_translation }}
       </p>
     {% endif %}
 
     {% if node.text.stale %}
       <p class="fragment__flag">
-        Перевод сделан с прежнего текста
+        {{ t.stale_translation }}
       </p>
     {% endif %}
 
     {% if node.introduced %}
       <p class="fragment__meta">
-        Редакция{% if node.start %} с {{ node.start|date:'d.m.Y' }}{% endif %}:
+        {{ t.version }}{% if node.start %} {{ t.since }} {{ node.start|date:'d.m.Y' }}{% endif %}:
         <a
           class="fragment__meta-link"
           href="{{ node.introduced_url }}"
@@ -104,12 +104,15 @@
 
     {% if node.future %}
       <p class="fragment__future">
-        С {{ node.future_start|date:'d.m.Y' }}
+        {{ t.since_cap }} {{ node.future_start|date:'d.m.Y' }}
         <a
           class="fragment__future-link"
           href="{{ node.future_url }}"
         >
-          новая редакция{% if node.future.state == 'repealed' %} (исключается){% endif %}
+          {{ t.new_version }}
+          {% if node.future.state == 'repealed' %}
+            {{ t.being_repealed }}
+          {% endif %}
         </a>
       </p>
     {% endif %}
@@ -127,7 +130,7 @@
             {{ note.body }}
             {% if note.suggestion %}
               <span class="notes__suggestion">
-                Вариант: {{ note.suggestion }}
+                {{ t.suggestion }} {{ note.suggestion }}
               </span>
             {% endif %}
           </li>
@@ -144,12 +147,12 @@
     {% endif %}
   {% else %}
     <p class="fragment__future">
-      Фрагмент вводится
+      {{ t.fragment_introduced }}
       <a
         class="fragment__future-link"
         href="{{ node.future_url }}"
       >
-        новой редакцией
+        {{ t.by_new_version }}
       </a>
     </p>
   {% endif %}

@@ -2,9 +2,11 @@
 
 from nomos.acts.models import Act
 
+from . import strings, ui
+
 SECTIONS = [
-    (Act.Jurisdiction.CY, 'Кипр'),
-    (Act.Jurisdiction.EU, 'ЕС'),
+    (Act.Jurisdiction.CY, 'section_cy'),
+    (Act.Jurisdiction.EU, 'section_eu'),
 ]
 
 
@@ -12,19 +14,25 @@ def section_codes():
     return [code for code, _label in SECTIONS]
 
 
+def section_label(code, lang):
+    """Название раздела на языке интерфейса."""
+    return strings.text(dict(SECTIONS)[code], lang)
+
+
 def menu(request):
     """Контекстный процессор: пункты меню для шапки всех страниц."""
+    lang = ui.ui_lang(request)
     present = set(Act.objects.values_list('jurisdiction', flat=True).distinct())
     first_segment = request.path.strip('/').split('/')[0]
     sections = [
         {
             'code': code,
-            'label': label,
+            'label': strings.text(key, lang),
             'url': f'/{code}/',
             'active': code in present,
             'current': code == first_segment,
         }
-        for code, label in SECTIONS
+        for code, key in SECTIONS
     ]
     return {
         'menu_sections': sections,

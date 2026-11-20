@@ -1,12 +1,14 @@
 import datetime
+import re
 
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.utils.http import urlencode
 
 from nomos.acts.models import Act, ActRelation, Fragment
 from nomos.sources.models import Source
 
-from . import menu, reading, ui
+from . import menu, reading, strings, ui
 
 
 def act_list(request, jurisdiction=None):
@@ -16,14 +18,18 @@ def act_list(request, jurisdiction=None):
     if jurisdiction is not None:
         if jurisdiction not in menu.section_codes():
             raise Http404('Нет такого раздела')
-        section = dict(menu.SECTIONS)[jurisdiction]
         acts = acts.filter(jurisdiction=jurisdiction)
     acts = sorted(acts, key=reading.act_sort_key)
     lang = ui.ui_lang(request)
+    if jurisdiction is not None:
+        section = menu.section_label(jurisdiction, lang)
     amending_ids = set(
         ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
     )
-    targets = reading.amendment_targets([act for act in acts if act.id in amending_ids])
+    targets = reading.amendment_targets(
+        [act for act in acts if act.id in amending_ids],
+        lang,
+    )
     base = []
     amending_laws = []
     regulations = []
@@ -36,8 +42,8 @@ def act_list(request, jurisdiction=None):
         else:
             amending_laws.append(entry)
     groups = [
-        {'title': 'Изменяющие законы', 'entries': amending_laws},
-        {'title': 'Подзаконные акты (ΚΔΠ)', 'entries': regulations},
+        {'title': strings.text('group_amending_laws', lang), 'entries': amending_laws},
+        {'title': strings.text('group_regulations', lang), 'entries': regulations},
     ]
     return render(
         request,
@@ -61,7 +67,7 @@ def act_entry(act, changes='', lang=reading.READER_LANG):
     link_lang = lang if lang in reading.act_langs(act) else None
     return {
         'act': act,
-        'label': reading.act_label(act),
+        'label': reading.act_label(act, lang),
         'short': reading.act_short_label(act, lang),
         'title': title,
         'title_lang': title_lang,
@@ -153,7 +159,8 @@ def base_context(request, route):
     on = route.on
     # переключатель ведёт на ту же страницу, дату и режим «оригинал рядом»;
     # якорь добавляет JS (data-keep-hash)
-    query = '?orig=1' if request.GET.get('orig') else ''
+    kept = {key: request.GET[key] for key in ('orig', 'from', 'at') if request.GET.get(key)}
+    query = '?' + urlencode(kept) if kept else ''
     langs = [
         {
             'code': lang,
@@ -173,7 +180,7 @@ def base_context(request, route):
     return {
         'act': act,
         'route': route,
-        'label': reading.act_label(act),
+        'label': reading.act_label(act, route.lang),
         'title': title,
         'title_lang': title_lang,
         'structure_lang': act.structure_lang or reading.DEFAULT_LANG,
@@ -184,26 +191,61 @@ def base_context(request, route):
         'is_today': route.on is None or route.on == datetime.date.today(),
         'earliest': reading.EARLIEST,
         'show_original': bool(request.GET.get('orig')),
+        'back': back_link(request, route.lang),
     }
+
+
+BACK_AT_RE = re.compile(r'^[\w.-]+$')
+
+
+def back_link(request, lang):
+    """«← Назад к статье 2»: возврат на страницу, откуда пришли по ссылке (`?from=&at=`).
+
+    Адрес возврата собирается заново из разобранного `from` — только страницы актов сайта.
+    """
+    origin = request.GET.get('from', '')
+    if not origin.startswith('/') or origin.startswith('//'):
+        return None
+    try:
+        route = reading.parse_path(origin)
+    except Http404:
+        return None
+    url = reading.page_url(route)
+    at = request.GET.get('at', '')
+    if BACK_AT_RE.match(at):
+        url += '#' + at
+    return {
+        'url': url,
+        'label': back_label(route.eid, strings.interface_lang(lang)),
+    }
+
+
+def back_label(eid, lang):
+    """«← Назад к статье 2», иначе «← Назад к тексту»."""
+    kind, _, number = (eid or '').split('.')[0].partition('_')
+    if kind == 'art' and number:
+        return f"{strings.text('back', lang)} {strings.text('to_article', lang)} {number}"
+    return f"{strings.text('back', lang)} {strings.text('to_text', lang)}"
 
 
 def nav_context(route, toc, current=None):
     """Левая колонка открытого акта: оглавление, текущая страница, путь к списку актов."""
     jurisdiction = route.act.jurisdiction
     sections = dict(menu.SECTIONS)
+    lang = strings.interface_lang(route.lang)
     query = ui.lang_query(route.lang)
     if jurisdiction in sections:
         section_url = f'/{jurisdiction}/{query}'
-        section_label = sections[jurisdiction]
+        section_label = menu.section_label(jurisdiction, lang)
     else:
         section_url = '/' + query
-        section_label = 'Акты'
+        section_label = strings.text('acts', lang)
     if current is not None:
         for item in reading.toc_units(toc):
             item.current = item.fragment.id == current.id
     return {
         'nav_toc': toc,
-        'sidenav_title': 'Оглавление акта',
+        'sidenav_title': strings.text('act_toc', lang),
         'section_url': section_url,
         'section_label': section_label,
     }
@@ -230,7 +272,7 @@ def act_page(request, route, structure):
             'amended_by': [related_entry(other, route) for other in amended_by],
             'amends': [related_entry(other, route) for other in amends],
             'short': reading.act_short_label(act, route.lang),
-            'sources': text_sources(act),
+            'sources': text_sources(act, route.lang),
         }
     )
     context.update(nav_context(route, toc))
@@ -240,12 +282,12 @@ def act_page(request, route, structure):
     return render(request, 'site/act_detail.html', context)
 
 
-def text_sources(act):
+def text_sources(act, lang):
     """Откуда тексты акта: источник и статус каждого выражения."""
     return [
         {
             'lang': expression.lang,
-            'status': expression.get_status_display(),
+            'status': strings.text('status_' + expression.status, lang),
             'source': expression.source,
         }
         for expression in act.expressions.select_related('source').order_by('lang')
@@ -255,7 +297,7 @@ def text_sources(act):
 def related_entry(act, route):
     title, title_lang = reading.act_title_lang(act, route.lang)
     return {
-        'label': reading.act_label(act),
+        'label': reading.act_label(act, route.lang),
         'short': reading.act_short_label(act, route.lang),
         'title': title,
         'title_lang': title_lang,
@@ -355,7 +397,7 @@ def history_page(request, route, structure, fragment):
         start = version.start(Fragment.Axis.APPLIES)
         introduced = None
         if amendment.kind != amendment.Kind.BASE:
-            label = reading.act_label(amendment.amending_act)
+            label = reading.act_label(amendment.amending_act, route.lang)
             if amendment.amending_fragment is not None:
                 label += ', ' + amendment.amending_fragment.eid
             introduced = {

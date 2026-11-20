@@ -4,7 +4,8 @@
       {% if item.is_unit %}
         {% if item.current %}
           <span
-            class="toc__link toc__link--current{% if not item.translated %} toc__link--pending{% endif %}"
+            class="toc__link toc__link--current
+              {% if not item.translated %}toc__link--pending{% endif %}"
             lang="{{ item.label.lang }}"
             aria-current="page"
           >
@@ -21,7 +22,7 @@
         {% endif %}
         {% if not item.translated %}
           <span class="toc__pending">
-            перевод готовится
+            {{ t.translation_pending }}
           </span>
         {% endif %}
       {% else %}

@@ -1,6 +1,6 @@
 {% extends 'site/base.html' %}
 
-{% block title %}Редакции: {{ fragment_label }} — {{ label }} — Nomos{% endblock %}
+{% block title %}{{ t.versions }} {{ fragment_label }} — {{ label }} — Nomos{% endblock %}
 
 {% block header %}
   {% include 'site/parts/act_header.html' %}
@@ -16,7 +16,7 @@
       class="crumbs__link"
       href="{{ act_url }}"
     >
-      Оглавление
+      {{ t.toc }}
     </a>
     <a
       class="crumbs__link"
@@ -32,14 +32,14 @@
       class="history__back-link"
       href="{{ current_url }}"
     >
-      ← К действующему тексту
+      {{ t.back_to_current }}
     </a>
     {% if dated_url %}
       <a
         class="history__back-link"
         href="{{ dated_url }}"
       >
-        ← К редакции на {{ date|date:'d.m.Y' }}
+        {{ t.back_to_dated }} {{ date|date:'d.m.Y' }}
       </a>
     {% endif %}
   </p>
@@ -48,12 +48,12 @@
     class="page__title"
     lang="{{ fragment_label.lang }}"
   >
-    Редакции: {{ fragment_label }}
+    {{ t.versions }} {{ fragment_label }}
   </h1>
 
   {% if not has_changes %}
     <p class="history__none">
-      Изменений с 01.01.2024 нет.
+      {{ t.no_changes }}
     </p>
   {% endif %}
 
@@ -66,19 +66,19 @@
             href="{{ entry.url }}"
           >
             {% if entry.start %}
-              с {{ entry.start|date:'d.m.Y' }}
+              {{ t.since }} {{ entry.start|date:'d.m.Y' }}
             {% else %}
-              до 01.01.2024
+              {{ t.until_2024 }}
             {% endif %}
           </a>
           {% if entry.version.state == 'repealed' %}
             <span class="history__state">
-              исключён
+              {{ t.repealed }}
             </span>
           {% endif %}
           {% if entry.current %}
             <span class="history__state">
-              действует на {{ date|date:'d.m.Y' }}
+              {{ t.in_force_on }} {{ date|date:'d.m.Y' }}
             </span>
           {% endif %}
         </div>
@@ -94,16 +94,16 @@
               — {{ entry.introduced.note }}
             {% endif %}
           {% else %}
-            Базовый текст
+            {{ t.base_text }}
           {% endif %}
         </div>
         <div class="history__known">
-          Опубликовано {{ entry.version.known_from|date:'d.m.Y' }}
+          {{ t.published }} {{ entry.version.known_from|date:'d.m.Y' }}
           {% if entry.version.valid_from %}
-            · в силе с {{ entry.version.valid_from|date:'d.m.Y' }}
+            · {{ t.valid_from }} {{ entry.version.valid_from|date:'d.m.Y' }}
           {% endif %}
           {% if entry.version.applies_from %}
-            · применяется с {{ entry.version.applies_from|date:'d.m.Y' }}
+            · {{ t.applies_from }} {{ entry.version.applies_from|date:'d.m.Y' }}
           {% endif %}
         </div>
       </li>

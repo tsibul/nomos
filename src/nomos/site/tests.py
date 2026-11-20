@@ -1,4 +1,6 @@
 import datetime
+import html
+import re
 
 from django.test import TestCase, override_settings
 
@@ -10,6 +12,7 @@ from nomos.acts.models import (
     Fragment,
     FragmentText,
     FragmentVersion,
+    Reference,
 )
 from nomos.site import reading
 from nomos.sources.models import Source
@@ -208,7 +211,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'ΜΕΡΟΣ I')
         self.assertContains(response, f'href="{ACT_URL}art_1/"')
         self.assertContains(response, 'translate="no"')
-        self.assertContains(response, 'Источник текста')
+        self.assertContains(response, 'Πηγή κειμένου')
         self.assertContains(response, 'Тест')
 
     def test_version_by_date(self):
@@ -291,10 +294,10 @@ class ViewerTests(TestCase):
 
     def test_dated_page_shows_way_back(self):
         response = self.client.get(ACT_URL + '@2024-06-01/art_1/')
-        self.assertContains(response, 'Вы смотрите редакцию на 01.06.2024')
+        self.assertContains(response, 'Βλέπετε την έκδοση της 01.06.2024')
         self.assertContains(response, f'href="{ACT_URL}art_1/"')
         response = self.client.get(ACT_URL + 'art_1/')
-        self.assertNotContains(response, 'Вы смотрите редакцию')
+        self.assertNotContains(response, 'Βλέπετε την έκδοση')
         self.assertContains(response, f'href="{ACT_URL}art_1.par_1/history/"')
 
     def test_page_does_not_link_to_itself(self):
@@ -314,6 +317,50 @@ class ViewerTests(TestCase):
         self.assertContains(response, f'href="{ACT_URL}el/"')
         response = self.client.get('/cy/')
         self.assertContains(response, f'href="{ACT_URL}"')
+
+    def test_interface_follows_page_language(self):
+        self.add_ru()
+        response = self.client.get(ACT_URL + 'art_1/el/')
+        self.assertContains(response, 'lang="el"')
+        self.assertContains(response, 'Κύπρος')
+        self.assertContains(response, 'Περιεχόμενα')
+        self.assertContains(response, 'Έκδοση κατά ημερομηνία')
+        self.assertNotContains(response, 'Оглавление')
+        self.assertNotContains(response, 'Редакция на дату')
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'Оглавление')
+        self.assertContains(response, 'Кипр')
+
+    def test_interface_language_on_list(self):
+        response = self.client.get('/cy/', {'lang': 'el'})
+        self.assertContains(response, 'Κύπρος: πράξεις')
+        response = self.client.get('/cy/')
+        self.assertContains(response, 'Кипр: акты')
+
+    def test_reference_leads_there_and_back(self):
+        text = FragmentText.objects.get(version=self.new)
+        text.body = '<p>Βλ. <ref id="r1">άρθρο 2</ref>.</p>'
+        text.save()
+        Reference.objects.create(
+            from_text=text,
+            anchor='r1',
+            to_act=self.amending,
+            to_fragment=self.amending.fragments.get(eid='art_2'),
+            resolved=True,
+        )
+        page = ACT_URL + '@2025-06-01/art_1/'
+        response = self.client.get(page)
+        self.assertContains(response, 'id="ref-art_1.par_1-r1"')
+        found = re.search(r'<a class="ref" id="[^"]*" href="([^"]*)"', response.content.decode())
+        href = html.unescape(found.group(1))
+        self.assertTrue(href.startswith('/cy/law/2024/2_I/@2025-06-01/art_2/?'))
+        # на странице цели — путь назад к месту ссылки, той же дате и языку
+        response = self.client.get(href)
+        self.assertContains(response, '← Πίσω στο άρθρο 1')
+        self.assertContains(response, f'href="{page}#ref-art_1.par_1-r1"')
+        # чужой адрес возврата не принимается
+        response = self.client.get('/cy/law/2024/2_I/art_2/', {'from': '//example.com/'})
+        self.assertNotContains(response, 'back-ref')
 
     def test_language_switch_keeps_original_mode(self):
         self.add_ru()
@@ -417,7 +464,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'toc--main')
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'pager__link--toc')
-        self.assertContains(response, 'Оглавление акта')
+        self.assertContains(response, 'Περιεχόμενα της πράξης')
         self.assertContains(response, 'href="/cy/?lang=el"')
         self.assertContains(response, 'toc__link toc__link--current')
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
@@ -435,7 +482,7 @@ class ViewerTests(TestCase):
         self.assertNotContains(response, 'МСФО')
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'lang="el"\n    >\n      Το Nomos είναι')
-        self.assertContains(response, 'Редакция восстановлена проектом')
+        self.assertContains(response, 'Η έκδοση ανασυντέθηκε')
         response = self.client.get('/robots.txt')
         self.assertContains(response, 'Disallow: /')
         self.assertEqual(self.client.get('/admin/').status_code, 404)
@@ -453,7 +500,8 @@ class ViewerTests(TestCase):
             year='2024',
             published_on=datetime.date(2024, 3, 15),
         )
-        self.assertEqual(str(reading.act_short_label(kdp)), 'ΚΔΠ 95/2024 от 15.03.2024')
+        self.assertEqual(str(reading.act_short_label(kdp, 'ru')), 'ΚΔΠ 95/2024 от 15.03.2024')
+        self.assertEqual(str(reading.act_short_label(kdp, 'el')), 'ΚΔΠ 95/2024 της 15.03.2024')
 
     def test_short_label_of_amending_law(self):
         Expression.objects.filter(act=self.law).update(short_title='Ο περί Δοκιμής Νόμος')
@@ -515,17 +563,17 @@ class ViewerTests(TestCase):
 
     def test_history_has_human_label(self):
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
-        self.assertRegex(response.content.decode(), r'Редакции: Άρθρο 1\. Ερμηνεία, \(?1')
-        self.assertNotContains(response, 'Редакции art_1')
+        self.assertRegex(response.content.decode(), r'Εκδόσεις: Άρθρο 1\. Ερμηνεία, \(?1')
+        self.assertNotContains(response, 'Εκδόσεις art_1')
 
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')
-        self.assertContains(response, 'Текст неизвестен')
+        self.assertContains(response, 'Άγνωστο κείμενο')
         # рабочая заметка редактора на сайте не выводится
         self.assertNotContains(response, 'Текст этой редакции неизвестен.')
 
     def test_history_lists_versions(self):
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
         self.assertEqual(len(response.context['versions']), 3)
-        self.assertContains(response, 'до 01.01.2024')
-        self.assertContains(response, 'с 01.01.2025')
+        self.assertContains(response, 'έως 01.01.2024')
+        self.assertContains(response, 'από 01.01.2025')

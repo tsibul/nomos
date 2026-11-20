@@ -5,14 +5,14 @@
 <div class="toolbar">
   {% if not is_today %}
     <p class="toolbar__dated">
-      Вы смотрите редакцию на {{ date|date:'d.m.Y' }}
+      {{ t.dated_view }} {{ date|date:'d.m.Y' }}
       ·
       <a
         class="toolbar__dated-link"
         href="{{ today_url }}"
         data-keep-hash
       >
-        Действующая редакция →
+        {{ t.in_force_link }}
       </a>
     </p>
   {% endif %}
@@ -27,7 +27,7 @@
       class="toolbar__caption"
       for="toolbar-on"
     >
-      Редакция на дату
+      {{ t.on_date }}
     </label>
     <input
       class="toolbar__input"
@@ -49,25 +49,25 @@
       class="toolbar__button"
       type="submit"
     >
-      Показать
+      {{ t.show }}
     </button>
   </form>
 
   <p class="toolbar__notice">
-    {{ reconstruction_notice }}
+    {{ t.reconstruction_notice }}
   </p>
 
   {% if future_dates %}
     <div class="toolbar__future">
       <span class="toolbar__caption">
-        Будущая принятая:
+        {{ t.future_adopted }}
       </span>
       {% for day in future_dates %}
         <a
           class="toolbar__link"
           href="?on={{ day|date:'Y-m-d' }}"
         >
-          с {{ day|date:'d.m.Y' }}
+          {{ t.since }} {{ day|date:'d.m.Y' }}
         </a>
       {% endfor %}
     </div>

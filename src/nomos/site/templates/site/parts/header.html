@@ -21,13 +21,13 @@
     data-menu-toggle
     hidden
   >
-    Меню
+    {{ t.menu }}
   </button>
 
   <nav
     class="menu"
     id="main-menu"
-    aria-label="Разделы"
+    aria-label="{{ t.sections }}"
   >
     <ul class="menu__list">
       {% for section in menu_sections %}
@@ -44,7 +44,7 @@
             <span class="menu__link menu__link--disabled">
               {{ section.label }}
               <span class="menu__soon">
-                скоро
+                {{ t.soon }}
               </span>
             </span>
           {% endif %}
@@ -56,7 +56,7 @@
           href="/about/{{ lang_query }}"
           {% if menu_about_current %}aria-current="page"{% endif %}
         >
-          О проекте
+          {{ t.about }}
         </a>
       </li>
     </ul>
@@ -65,7 +65,7 @@
   {% if langs %}
     <nav
       class="header__langs"
-      aria-label="Язык текста"
+      aria-label="{{ t.text_lang }}"
     >
       {% for lang in langs %}
         {% if lang.current %}

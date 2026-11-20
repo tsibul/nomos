@@ -10,7 +10,7 @@
   </span>
   {% if entry.changes %}
     <span class="acts__changes">
-      Что меняет: {{ entry.changes }}
+      {{ t.what_changes }} {{ entry.changes }}
     </span>
   {% endif %}
   {% if entry.title and entry.title != entry.short.text %}

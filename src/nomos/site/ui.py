@@ -1,9 +1,8 @@
 """Язык интерфейса: следует за языком страницы; вне акта — параметр `?lang=` (без cookies)."""
 
-from . import reading
+from . import reading, strings
 
-# языки, на которые переведён интерфейс; прочие показываются по-русски
-UI_LANGS = ('ru', 'el')
+UI_LANGS = strings.UI_LANGS
 
 
 def ui_lang(request):
@@ -27,4 +26,5 @@ def ui(request):
     return {
         'ui_lang': lang,
         'lang_query': lang_query(lang),
+        't': strings.strings_for(lang),
     }
