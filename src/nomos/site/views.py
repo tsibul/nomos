@@ -44,6 +44,7 @@ def act_list(request, jurisdiction=None):
             'base': base,
             'amending': amending,
             'section': section,
+            'has_acts': bool(base or amending),
             'sidenav_title': 'Список актов',
             'nav_groups': [
                 {'title': 'Основные', 'entries': base},

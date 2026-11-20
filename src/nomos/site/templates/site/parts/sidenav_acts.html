@@ -1,20 +1,26 @@
-{% for group in nav_groups %}
-  {% if group.entries %}
-    <p class="sidenav__group">
-      {{ group.title }}
-    </p>
-    <ul class="sidenav__list">
-      {% for entry in group.entries %}
-        <li class="sidenav__item">
-          <a
-            class="sidenav__link"
-            href="{{ entry.url }}"
-            lang="{{ entry.short.lang }}"
-          >
-            {{ entry.short }}
-          </a>
-        </li>
-      {% endfor %}
-    </ul>
-  {% endif %}
-{% endfor %}
+{% if has_acts %}
+  {% for group in nav_groups %}
+    {% if group.entries %}
+      <p class="sidenav__group">
+        {{ group.title }}
+      </p>
+      <ul class="sidenav__list">
+        {% for entry in group.entries %}
+          <li class="sidenav__item">
+            <a
+              class="sidenav__link"
+              href="{{ entry.url }}"
+              lang="{{ entry.short.lang }}"
+            >
+              {{ entry.short }}
+            </a>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endfor %}
+{% else %}
+  <p class="sidenav__empty">
+    Актов пока нет
+  </p>
+{% endif %}

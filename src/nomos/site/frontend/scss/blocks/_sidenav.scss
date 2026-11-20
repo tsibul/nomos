@@ -34,6 +34,11 @@
   color: var(--color-neutral-500);
 }
 
+.sidenav__empty {
+  margin: 0.5rem 0;
+  color: var(--color-neutral-500);
+}
+
 .sidenav__list {
   display: flex;
   flex-direction: column;
