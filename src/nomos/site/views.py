@@ -11,7 +11,7 @@ from django.utils.translation import gettext_lazy
 from nomos.acts.models import Act, ActRelation, Expression, Fragment
 from nomos.sources.models import Source
 
-from . import menu, reading, ui
+from . import menu, notices, reading, ui
 
 
 def act_list(request, jurisdiction=None):
@@ -192,7 +192,15 @@ def base_context(request, route):
         'earliest': reading.EARLIEST,
         'show_original': bool(request.GET.get('orig')),
         'back': back_link(request, route.lang),
+        'source_credit': source_credit(act),
     }
+
+
+def source_credit(act):
+    """Подпись об источнике текста — у акта, текст которого взят из сводной редакции CyLaw."""
+    if act.expressions.filter(source__code='cylaw').exists():
+        return notices.CYLAW_CREDIT
+    return None
 
 
 BACK_AT_RE = re.compile(r'^[\w.-]+$')

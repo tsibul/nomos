@@ -604,3 +604,15 @@ class ViewerTests(TestCase):
         self.assertEqual(len(response.context['versions']), 3)
         self.assertContains(response, 'έως 01.01.2024')
         self.assertContains(response, 'από 01.01.2025')
+
+    def test_cylaw_credit_only_on_cylaw_texts(self):
+        pages = [ACT_URL, ACT_URL + 'art_1/', ACT_URL + 'art_1.par_1/history/']
+        # источник «test» — как акт из Официальной газеты: подписи CyLaw нет
+        for page in pages:
+            self.assertNotContains(self.client.get(page), 'www.cylaw.org')
+        self.el.source = Source.objects.create(code='cylaw', name='CyLaw')
+        self.el.save()
+        for page in pages:
+            response = self.client.get(page)
+            self.assertContains(response, 'class="source-credit"')
+            self.assertContains(response, 'Πηγή κειμένου: ενοποιημένο κείμενο του CyLaw')

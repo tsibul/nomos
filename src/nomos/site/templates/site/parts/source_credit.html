@@ -1,0 +1,8 @@
+{% comment %}
+  Подпись об источнике текста (CyLaw) — только у актов из сводной редакции.
+{% endcomment %}
+{% if source_credit %}
+  <p class="source-credit">
+    {{ source_credit }}
+  </p>
+{% endif %}
