@@ -68,16 +68,16 @@
                   href="{{ entry.source.url }}"
                   rel="external"
                 >
-                  {{ entry.source.name }}
+                  {{ entry.name }}
                 </a>
               {% else %}
                 <span class="sources__name">
-                  {{ entry.source.name }}
+                  {{ entry.name }}
                 </span>
               {% endif %}
-              {% if entry.source.attribution %}
+              {% if entry.attribution %}
                 <span class="sources__attribution">
-                  {{ entry.source.attribution }}
+                  {{ entry.attribution }}
                 </span>
               {% endif %}
             </li>

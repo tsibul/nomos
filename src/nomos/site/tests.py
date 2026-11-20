@@ -16,6 +16,7 @@ from nomos.acts.models import (
     Reference,
 )
 from nomos.site import notices, reading, views
+from nomos.sources.management.commands import load_texts
 from nomos.sources.models import Source
 from nomos.translate.models import Note
 
@@ -630,3 +631,26 @@ class ViewerTests(TestCase):
             response = self.client.get(page)
             self.assertContains(response, 'class="source-credit"')
             self.assertContains(response, 'Πηγή κειμένου: ενοποιημένο κείμενο του CyLaw')
+
+    def test_source_labels_follow_interface_language(self):
+        fields = load_texts.SOURCES['cylaw']
+        self.el.source = Source.objects.create(code='cylaw', **fields)
+        self.el.save()
+        response = self.client.get(ACT_URL)
+        self.assertContains(response, 'CyLaw — ανεπίσημο ενοποιημένο κείμενο')
+        self.assertContains(response, 'Ενοποιημένο κείμενο του CyLaw (www.cylaw.org, ΚΙΝΟΠ)')
+        self.assertNotContains(response, fields['name'])
+        self.assertNotContains(response, fields['attribution'])
+
+    def test_preamble_label_follows_interface_language(self):
+        preamble = Fragment.objects.create(
+            uid='lw00000099',
+            act=self.law,
+            kind='cit',
+            eid='cit_1',
+            order_key='0000',
+        )
+        base = self.old.amendment
+        self.add_version(preamble, 'base', base, '', self.el, 'Η Βουλή των Αντιπροσώπων')
+        self.assertContains(self.client.get(ACT_URL), 'Προοίμιο')
+        self.assertNotContains(self.client.get(ACT_URL), 'Преамбула')

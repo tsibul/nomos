@@ -6,7 +6,7 @@ from django.shortcuts import redirect, render
 from django.utils import translation
 from django.utils.http import urlencode
 from django.utils.translation import gettext as _
-from django.utils.translation import gettext_lazy
+from django.utils.translation import gettext_lazy, gettext_noop
 
 from nomos.acts.models import Act, ActRelation, Expression, Fragment
 from nomos.sources.models import Source
@@ -316,13 +316,31 @@ STATUS_NAMES = {
 }
 
 
+# названия и указания источников хранятся в данных по-русски (load_texts.SOURCES) и
+# переводятся как msgid; список — чтобы makemessages их нашёл
+SOURCE_TEXTS = (
+    gettext_noop('CyLaw — неофициальная сводная редакция'),
+    gettext_noop('Сводная редакция CyLaw (www.cylaw.org, ΚΙΝΟΠ), неофициальная'),
+    gettext_noop('Официальная газета Республики Кипр'),
+    gettext_noop('Неофициальный перевод'),
+    gettext_noop('Неофициальный перевод проекта Nomos, CC BY 4.0'),
+)
+
+
+def source_text(text):
+    """Строка источника из данных на языке интерфейса; пустая — пустой (не заголовок каталога)."""
+    return _(text) if text else ''
+
+
 def text_sources(act):
-    """Откуда тексты акта: источник и статус каждого выражения."""
+    """Откуда тексты акта: источник и статус каждого выражения, на языке интерфейса."""
     return [
         {
             'lang': expression.lang,
             'status': STATUS_NAMES.get(expression.status) or expression.get_status_display(),
             'source': expression.source,
+            'name': source_text(expression.source.name),
+            'attribution': source_text(expression.source.attribution),
         }
         for expression in act.expressions.select_related('source').order_by('lang')
     ]
