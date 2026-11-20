@@ -280,6 +280,23 @@ class ViewerTests(TestCase):
             fetch_redirect_response=False,
         )
 
+    def test_history_leads_back_to_current_text(self):
+        self.add_ru()
+        response = self.client.get(ACT_URL + '@2024-06-01/art_1.par_1/history/el/')
+        self.assertContains(response, f'href="{ACT_URL}art_1/el/#art_1.par_1"')
+        self.assertContains(response, f'href="{ACT_URL}@2024-06-01/art_1/el/#art_1.par_1"')
+        urls = [entry['url'] for entry in response.context['versions']]
+        self.assertTrue(all(url.endswith('/el/#art_1.par_1') for url in urls))
+        self.assertIn(f'{ACT_URL}art_1/el/#art_1.par_1', urls)
+
+    def test_dated_page_shows_way_back(self):
+        response = self.client.get(ACT_URL + '@2024-06-01/art_1/')
+        self.assertContains(response, 'Вы смотрите редакцию на 01.06.2024')
+        self.assertContains(response, f'href="{ACT_URL}art_1/"')
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertNotContains(response, 'Вы смотрите редакцию')
+        self.assertContains(response, f'href="{ACT_URL}art_1.par_1/history/"')
+
     def test_page_does_not_link_to_itself(self):
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertNotContains(response, f'href="{ACT_URL}art_1/"')

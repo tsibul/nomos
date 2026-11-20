@@ -624,7 +624,7 @@ def link_node(node, route):
     """Адреса у фрагмента: история редакций, будущая редакция, вводящее положение."""
     act = route.act
     eid = node.fragment.eid
-    node.history_url = build_url(act, on=route.on, eid=eid, history=True)
+    node.history_url = build_url(act, on=route.on, eid=eid, lang=route.lang, history=True)
     if node.future is not None:
         node.future_url = build_url(
             act,

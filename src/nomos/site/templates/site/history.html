@@ -20,12 +20,29 @@
     </a>
     <a
       class="crumbs__link"
-      href="{{ fragment_url }}"
+      href="{{ current_url }}"
       lang="{{ fragment_label.lang }}"
     >
       {{ fragment_label }}
     </a>
   </nav>
+
+  <p class="history__back">
+    <a
+      class="history__back-link"
+      href="{{ current_url }}"
+    >
+      ← К действующему тексту
+    </a>
+    {% if dated_url %}
+      <a
+        class="history__back-link"
+        href="{{ dated_url }}"
+      >
+        ← К редакции на {{ date|date:'d.m.Y' }}
+      </a>
+    {% endif %}
+  </p>
 
   <h1
     class="page__title"

@@ -3,6 +3,20 @@
   с JS — отправка по изменению даты.
 {% endcomment %}
 <div class="toolbar">
+  {% if not is_today %}
+    <p class="toolbar__dated">
+      Вы смотрите редакцию на {{ date|date:'d.m.Y' }}
+      ·
+      <a
+        class="toolbar__dated-link"
+        href="{{ today_url }}"
+        data-keep-hash
+      >
+        Действующая редакция →
+      </a>
+    </p>
+  {% endif %}
+
   <form
     class="toolbar__date"
     method="get"
@@ -37,14 +51,6 @@
     >
       Показать
     </button>
-    {% if not is_today %}
-      <a
-        class="toolbar__link"
-        href="{{ today_url }}"
-      >
-        Сегодня
-      </a>
-    {% endif %}
   </form>
 
   <p class="toolbar__notice">

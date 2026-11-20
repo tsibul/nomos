@@ -343,6 +343,9 @@ def future_dates(root):
 
 def history_page(request, route, structure, fragment):
     current = fragment.version_on(route.date)
+    in_force = fragment.version_on(datetime.date.today())
+    unit = structure.unit_of(fragment) or fragment
+    anchor = '' if unit.id == fragment.id else '#' + fragment.eid
     versions = []
     for version in fragment.versions.select_related(
         'amendment__amending_act',
@@ -361,13 +364,22 @@ def history_page(request, route, structure, fragment):
                 'note': amendment.note,
             }
         read_on = start if start is not None and start >= reading.EARLIEST else None
+        if in_force is not None and version.id == in_force.id:
+            # действующая сегодня редакция — адрес без даты
+            read_on = None
         versions.append(
             {
                 'version': version,
                 'start': start,
                 'introduced': introduced,
                 'current': current is not None and version.id == current.id,
-                'url': reading.build_url(route.act, on=read_on, eid=fragment.eid),
+                'url': reading.build_url(
+                    route.act,
+                    on=read_on,
+                    eid=unit.eid,
+                    lang=route.lang,
+                )
+                + anchor,
             }
         )
     versions.sort(
@@ -375,14 +387,21 @@ def history_page(request, route, structure, fragment):
     )
     context = base_context(request, route)
     toc = reading.build_toc(structure, route)
-    context.update(nav_context(route, toc, structure.unit_of(fragment)))
+    context.update(nav_context(route, toc, unit))
     context.update(
         {
             'fragment': fragment,
             'fragment_label': history_label(structure, fragment, route),
             'has_changes': any(entry['introduced'] for entry in versions),
             'versions': versions,
-            'fragment_url': reading.build_url(route.act, on=route.on, eid=fragment.eid),
+            # путь назад: к действующему тексту того же пункта на том же языке
+            'current_url': reading.build_url(route.act, eid=unit.eid, lang=route.lang) + anchor,
+            # и к редакции на дату, с которой пришли в историю
+            'dated_url': (
+                reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang) + anchor
+                if route.on is not None
+                else ''
+            ),
         }
     )
     return render(request, 'site/history.html', context)
