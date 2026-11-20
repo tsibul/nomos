@@ -1,0 +1,29 @@
+{# Левая колонка: на телефоне — раскрывающийся блок, на широком экране — всегда открыта #}
+<aside
+  class="sidenav"
+  aria-label="{{ sidenav_title }}"
+  data-sidenav
+>
+  <details class="sidenav__details">
+    <summary class="sidenav__summary">
+      {{ sidenav_title }}
+    </summary>
+
+    <div class="sidenav__body">
+      {% if section_url %}
+        <a
+          class="sidenav__back"
+          href="{{ section_url }}"
+        >
+          ← {{ section_label }}
+        </a>
+      {% endif %}
+
+      {% if nav_toc %}
+        {% include 'site/parts/toc_items.html' with items=nav_toc %}
+      {% else %}
+        {% include 'site/parts/sidenav_acts.html' %}
+      {% endif %}
+    </div>
+  </details>
+</aside>

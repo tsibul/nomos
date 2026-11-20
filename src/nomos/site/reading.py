@@ -136,6 +136,30 @@ def act_title_lang(act, lang=DEFAULT_LANG):
     return '', wanted
 
 
+def act_short_label(act, lang=DEFAULT_LANG):
+    """Короткое название для списков: «Закон о НДС»; у ΚΔΠ — «ΚΔΠ 95/2024 от 15.03.2024».
+
+    Законы: short_title выражения на языке чтения, иначе на опорном; пока его нет —
+    полное название. ΚΔΠ: вычисляется из номера и даты публикации, не хранится.
+    """
+    structure_lang = act.structure_lang or DEFAULT_LANG
+    if act.kind == Act.Kind.REGULATION_BY_LAW:
+        text = f'ΚΔΠ {act.number}/{act.year}'
+        day = act.published_on or act.date_adopted
+        if day is not None:
+            text = f'{text} от {day:%d.%m.%Y}'
+        return Label(text, 'ru')
+    expressions = list(act.expressions.all())
+    for wanted in (lang, structure_lang):
+        for expression in expressions:
+            if expression.lang == wanted and expression.short_title:
+                return Label(expression.short_title, expression.lang)
+    title, title_lang = act_title_lang(act, lang)
+    if title:
+        return Label(title, title_lang)
+    return Label(act_label(act), 'ru')
+
+
 def act_langs(act):
     """Языки переключателя: греческий и русский всегда, прочие — если тексты есть."""
     present = set(act.expressions.values_list('lang', flat=True))
@@ -271,6 +295,7 @@ class TocItem:
     label: Label | None = None
     url: str = ''
     translated: bool = True
+    current: bool = False
     children: list = field(default_factory=list)
 
 

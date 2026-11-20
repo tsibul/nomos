@@ -2,6 +2,10 @@
 
 {% block title %}{{ section|default:'Акты' }} — Nomos{% endblock %}
 
+{% block aside %}
+  {% include 'site/parts/sidenav.html' %}
+{% endblock %}
+
 {% block main %}
   <h1 class="page__title">
     {% if section %}
