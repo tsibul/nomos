@@ -538,6 +538,9 @@ def pick_text(texts, lang):
     return found[0] if found else None
 
 
+HIDDEN_NOTES = (Note.Kind.SOURCE_COMMENT, Note.Kind.EDITOR_COMMENT)
+
+
 REF_RE = re.compile(r'<ref\b([^>]*)>(.*?)</ref>', re.S)
 REF_ID_RE = re.compile(r'\bid="([^"]*)"')
 
@@ -660,8 +663,9 @@ def attach_texts(nodes, route):
         notes = []
         for text in (node.text, node.original):
             if text is not None:
-                # комментарии источника (сноски CyLaw) на сайте не показываются
+                # на сайте — только сомнения перевода: сноски источника и рабочие
+                # заметки редактора не показываются
                 notes.extend(
-                    note for note in text.notes.all() if note.kind != Note.Kind.SOURCE_COMMENT
+                    note for note in text.notes.all() if note.kind not in HIDDEN_NOTES
                 )
         node.notes = notes

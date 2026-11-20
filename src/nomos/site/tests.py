@@ -277,6 +277,12 @@ class ViewerTests(TestCase):
             origin='llm',
             body='Сноска источника',
         )
+        Note.objects.create(
+            target=text,
+            kind='editor_comment',
+            origin='llm',
+            body='Заметка редактора',
+        )
         response = self.client.get(ACT_URL + 'art_1/', {'orig': '1'})
         self.assertContains(response, 'Новый текст')
         self.assertContains(response, 'Νέο κείμενο')
@@ -284,6 +290,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'unit--with-original')
         self.assertContains(response, 'Перевод выполнен ИИ, человеком не выверен')
         self.assertNotContains(response, 'Сноска источника')
+        self.assertNotContains(response, 'Заметка редактора')
         self.assertContains(response, 'class="fragment__original"\n            lang="el"')
 
     def test_translated_heading(self):
@@ -364,6 +371,7 @@ class ViewerTests(TestCase):
         response = self.client.get('/about/')
         self.assertContains(response, 'cookies')
         self.assertContains(response, 'CC BY 4.0 — только наши переводы и разметка')
+        self.assertContains(response, 'Ilia Tsigelnitskii')
 
     def test_short_label_of_kdp_is_number_and_date(self):
         kdp = Act.objects.create(
@@ -442,7 +450,8 @@ class ViewerTests(TestCase):
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'Текст неизвестен')
-        self.assertContains(response, 'Текст этой редакции неизвестен.')
+        # рабочая заметка редактора на сайте не выводится
+        self.assertNotContains(response, 'Текст этой редакции неизвестен.')
 
     def test_history_lists_versions(self):
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
