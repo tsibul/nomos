@@ -123,6 +123,8 @@ def write_act(path, info, versions, uids):
         ('title', info.title),
         ('short-title', info.short_title),
     ]
+    # чего сборщик не знает (например short-title), берётся из прежнего файла
+    own = [(name, value or own_extra.get(name, '')) for name, value in own]
     names = {name for name, _ in own}
     own += [(name, value) for name, value in own_extra.items() if name not in names]
     lines.append('  <expression %s />' % attrs(own))
@@ -193,12 +195,19 @@ def write_texts(path, info, versions, uids, markup):
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
-def write_notes(path, info, notes):
-    """Примечания CyLaw к закону, не привязанные к фрагментам: хранятся, в БД не грузятся."""
+def write_notes(path, info, notes, inline=()):
+    """Примечания редакции CyLaw: хранятся, в БД не грузятся.
+
+    notes — тексты без привязки; inline — (uid фрагмента, редакция, текст) из [Σ.Σ.: …]."""
     lines = ['<?xml version="1.0" encoding="utf-8"?>']
     lines.append('<notes %s>' % attrs([('act', info.uid), ('lang', info.lang)]))
     for note in notes:
         lines.append('  <note kind="source_comment">%s</note>' % escape(note))
+    for uid, key, note in inline:
+        lines.append('  <note %s>%s</note>' % (
+            attrs([('kind', 'source_comment'), ('fragment', uid), ('version', key)]),
+            escape(note),
+        ))
     lines.append('</notes>')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 

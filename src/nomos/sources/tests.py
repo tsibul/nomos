@@ -10,7 +10,7 @@ from unittest import skipUnless
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Expression, Fragment, FragmentText
+from nomos.acts.models import Amendment, Expression, Fragment, FragmentText
 from nomos.translate.models import Note
 
 from .cylaw import history, numbering
@@ -139,6 +139,26 @@ class VatLawTests(TestCase):
         self.assertEqual(russian.source.code, 'nomos')
         self.assertEqual(russian.source.name, 'Неофициальный перевод')
         self.assertTrue(FragmentText.objects.filter(expression__lang='ru').exists())
+
+    def test_short_titles_kept(self):
+        short = dict(
+            Expression.objects.filter(act__uid=LAW).values_list('lang', 'short_title')
+        )
+        self.assertEqual(short, {'el': 'Ο περί ΦΠΑ Νόμος', 'ru': 'Закон о НДС'})
+
+    def test_no_cylaw_editorial_notes_loaded(self):
+        """Тексты редакции CyLaw («Σημείωση…», [Σ.Σ.: …]) остаются в cylaw-notes.xml."""
+        self.assertFalse(Amendment.objects.filter(note__contains='Σημείωση').exists())
+        self.assertFalse(FragmentText.objects.filter(body__contains='source_comment').exists())
+        greek = Note.objects.filter(
+            kind=Note.Kind.SOURCE_COMMENT,
+            target__expression__lang='el',
+        )
+        self.assertFalse(greek.exists())
+
+    def test_titles_without_hyphen_breaks(self):
+        titles = Expression.objects.filter(title__regex=r'[α-ω]- [α-ω]')
+        self.assertEqual(list(titles.values_list('title', flat=True)), [])
 
     def active_eids(self, prefix, day):
         found = set()
