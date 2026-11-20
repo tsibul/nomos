@@ -1,5 +1,6 @@
 {% comment %}
-  Выбор даты и языка. Без JS — обычная форма GET и ссылки; с JS — отправка по изменению даты.
+  Выбор даты (язык — в шапке). Без JS — обычная форма GET и ссылки;
+  с JS — отправка по изменению даты.
 {% endcomment %}
 <div class="toolbar">
   <form
@@ -60,22 +61,5 @@
         </a>
       {% endfor %}
     </div>
-  {% endif %}
-
-  {% if not hide_langs %}
-    <nav
-      class="toolbar__langs"
-      aria-label="Язык"
-    >
-      {% for lang in langs %}
-        <a
-          class="toolbar__lang{% if lang.current %} toolbar__lang--current{% endif %}"
-          href="{{ lang.url }}"
-          {% if lang.current %}aria-current="true"{% endif %}
-        >
-          {{ lang.code }}
-        </a>
-      {% endfor %}
-    </nav>
   {% endif %}
 </div>

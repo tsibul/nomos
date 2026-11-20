@@ -182,6 +182,23 @@ class ViewerTests(TestCase):
         self.assertEqual([entry['act'] for entry in base], [self.law])
         self.assertEqual([entry['act'] for entry in amending], [self.amending])
 
+    def test_menu_sections_follow_data(self):
+        response = self.client.get('/')
+        self.assertContains(response, 'href="/cy/"')
+        self.assertNotContains(response, 'href="/eu/"')
+        self.assertContains(response, 'скоро')
+        self.assertContains(response, 'href="/about/"')
+
+    def test_section_lists_its_acts(self):
+        response = self.client.get('/cy/')
+        self.assertEqual(len(response.context['base']), 1)
+        self.assertEqual(self.client.get('/xx/').status_code, 404)
+
+    def test_about_lists_sources(self):
+        response = self.client.get('/about/')
+        self.assertContains(response, 'Тест')
+        self.assertContains(response, 'CC BY 4.0')
+
     def test_act_page_has_toc(self):
         response = self.client.get(ACT_URL)
         self.assertContains(response, 'ΜΕΡΟΣ I')

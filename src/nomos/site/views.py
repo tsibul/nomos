@@ -4,12 +4,19 @@ from django.http import Http404
 from django.shortcuts import redirect, render
 
 from nomos.acts.models import Act, ActRelation, Fragment
+from nomos.sources.models import Source
 
-from . import reading
+from . import menu, reading
 
 
-def act_list(request):
+def act_list(request, jurisdiction=None):
     acts = Act.objects.prefetch_related('expressions').order_by('jurisdiction', 'kind', 'uid')
+    section = None
+    if jurisdiction is not None:
+        if jurisdiction not in menu.section_codes():
+            raise Http404('Нет такого раздела')
+        section = dict(menu.SECTIONS)[jurisdiction]
+        acts = acts.filter(jurisdiction=jurisdiction)
     amending_ids = set(
         ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
     )
@@ -34,8 +41,25 @@ def act_list(request):
         {
             'base': base,
             'amending': amending,
+            'section': section,
         },
     )
+
+
+def about(request):
+    sources = []
+    for source in Source.objects.prefetch_related('expressions').order_by('name'):
+        statuses = sorted(
+            {expression.get_status_display().lower() for expression in source.expressions.all()}
+        )
+        sources.append(
+            {
+                'source': source,
+                'statuses': statuses,
+                'count': len(source.expressions.all()),
+            }
+        )
+    return render(request, 'site/about.html', {'sources': sources})
 
 
 def read(request, path):

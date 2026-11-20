@@ -1,0 +1,53 @@
+@use '../base';
+
+.menu {
+  order: 1;
+  flex: 1 0 100%;
+}
+
+.menu__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu__link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.5rem;
+  color: var(--color-primary-50);
+  text-decoration: none;
+}
+
+.menu__link:visited {
+  color: var(--color-primary-50);
+}
+
+.menu__link--current {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.menu__link--disabled {
+  color: var(--color-primary-50);
+  opacity: 0.6;
+}
+
+.menu__soon {
+  font-size: 0.75rem;
+}
+
+@media (min-width: base.$break-tablet) {
+  .menu {
+    order: 0;
+    flex: 0 1 auto;
+  }
+
+  .menu__list {
+    flex-direction: row;
+    gap: 1.5rem;
+  }
+}

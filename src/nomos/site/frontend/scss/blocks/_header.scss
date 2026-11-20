@@ -1,0 +1,92 @@
+@use '../base';
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.header__brand {
+  margin-right: auto;
+  font-weight: 700;
+  color: var(--color-primary-50);
+  text-decoration: none;
+}
+
+.header__brand:visited {
+  color: var(--color-primary-50);
+}
+
+.header__toggle {
+  min-height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--color-primary-50);
+  border-radius: 0.25rem;
+  font: inherit;
+  color: var(--color-primary-50);
+  background: transparent;
+}
+
+.header__langs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.header__lang {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  min-height: 2.5rem;
+  border: 1px solid var(--color-primary-50);
+  border-radius: 0.25rem;
+  color: var(--color-primary-50);
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.header__lang:visited {
+  color: var(--color-primary-50);
+}
+
+.header__lang--current {
+  color: var(--color-primary-900);
+  background: var(--color-primary-50);
+}
+
+.header__lang--current:visited {
+  color: var(--color-primary-900);
+}
+
+/* с JS на телефоне меню свёрнуто, пока не нажата кнопка */
+.header--collapsible .menu {
+  display: none;
+}
+
+.header--collapsible.header--open .menu {
+  display: block;
+}
+
+@media (min-width: base.$break-tablet) {
+  .header {
+    flex-wrap: nowrap;
+  }
+
+  .header__brand {
+    margin-right: 0;
+  }
+
+  .header__toggle {
+    display: none;
+  }
+
+  .header--collapsible .menu {
+    display: block;
+  }
+
+  .header__langs {
+    margin-left: auto;
+  }
+}

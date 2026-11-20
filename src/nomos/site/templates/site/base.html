@@ -23,15 +23,7 @@
 
   <body class="page">
     <header class="page__header">
-      <div class="page__bar">
-        <a
-          class="page__brand"
-          href="/"
-        >
-          Nomos
-        </a>
-        {# место под главное меню #}
-      </div>
+      {% include 'site/parts/header.html' %}
       {% block header %}{% endblock %}
     </header>
 
