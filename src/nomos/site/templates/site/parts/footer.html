@@ -1,0 +1,22 @@
+{# Подвал: отказ от ответственности на языке страницы (тексты — nomos/site/notices.py) #}
+<footer class="footer">
+  {% if route.lang == 'el' %}
+    <p
+      class="footer__disclaimer"
+      lang="el"
+    >
+      {{ disclaimer_el }}
+    </p>
+  {% elif route.lang == 'en' %}
+    <p
+      class="footer__disclaimer"
+      lang="en"
+    >
+      {{ disclaimer_en }}
+    </p>
+  {% else %}
+    <p class="footer__disclaimer">
+      {{ disclaimer_ru }}
+    </p>
+  {% endif %}
+</footer>

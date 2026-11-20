@@ -39,11 +39,10 @@
     </p>
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
-      Рабочий перевод, не выверен. Юридическую силу имеет греческий текст.
-      {% if translation.source %}
+      {{ translation_notice }}
+      {% if translation.source.attribution %}
         <span class="draft-warning__source">
-          Источник перевода: {{ translation.source.name }}
-          ({{ translation.get_status_display|lower }})
+          {{ translation.source.attribution }}
         </span>
       {% endif %}
     </p>

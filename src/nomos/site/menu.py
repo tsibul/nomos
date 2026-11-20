@@ -5,7 +5,6 @@ from nomos.acts.models import Act
 SECTIONS = [
     (Act.Jurisdiction.CY, 'Кипр'),
     (Act.Jurisdiction.EU, 'ЕС'),
-    (Act.Jurisdiction.IFRS, 'МСФО'),
 ]
 
 

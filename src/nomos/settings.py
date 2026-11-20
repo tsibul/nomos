@@ -73,6 +73,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'nomos.site.menu.menu',
+                'nomos.site.notices.notices',
             ],
         },
     },

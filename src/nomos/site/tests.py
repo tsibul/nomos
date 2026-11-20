@@ -268,12 +268,19 @@ class ViewerTests(TestCase):
             text_hash='ru',
         )
         Note.objects.create(target=text, kind='doubt', origin='llm', body='Сомнительный термин')
+        Note.objects.create(
+            target=text,
+            kind='source_comment',
+            origin='llm',
+            body='Сноска источника',
+        )
         response = self.client.get(ACT_URL + 'art_1/ru/', {'orig': '1'})
         self.assertContains(response, 'Новый текст')
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'Сомнительный термин')
         self.assertContains(response, 'unit--with-original')
-        self.assertContains(response, 'Рабочий перевод, не выверен')
+        self.assertContains(response, 'Перевод выполнен ИИ, человеком не выверен')
+        self.assertNotContains(response, 'Сноска источника')
         self.assertContains(response, 'class="fragment__original"\n            lang="el"')
 
     def test_translated_heading(self):
@@ -296,7 +303,7 @@ class ViewerTests(TestCase):
         self.assertNotContains(response, 'перевод готовится')
         response = self.client.get(ACT_URL + 'art_1/ru/')
         self.assertContains(response, 'Статья 1. Толкование — Закон 1(I)/2000 — Nomos')
-        self.assertContains(response, 'Источник перевода: Неофициальный перевод')
+        self.assertContains(response, 'Неофициальный перевод. Перевод выполнен ИИ')
         self.assertNotContains(response, 'Текст неизвестен</p>')
         self.assertNotContains(response, 'Перевод готовится')
         self.assertContains(response, 'class="crumbs__item"\n        lang="el"')
@@ -331,6 +338,21 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Актов пока нет')
         self.assertContains(response, 'В разделе пока нет актов')
         self.assertNotContains(response, 'Изменяющие акты')
+
+    def test_legal_minimum(self):
+        response = self.client.get('/cy/')
+        self.assertContains(response, 'name="robots"')
+        self.assertContains(response, 'Сайт не даёт юридических и налоговых консультаций')
+        self.assertNotContains(response, 'МСФО')
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'lang="el"\n    >\n      Το Nomos είναι')
+        self.assertContains(response, 'Редакция восстановлена проектом')
+        response = self.client.get('/robots.txt')
+        self.assertContains(response, 'Disallow: /')
+        self.assertEqual(self.client.get('/admin/').status_code, 404)
+        response = self.client.get('/about/')
+        self.assertContains(response, 'cookies')
+        self.assertContains(response, 'CC BY 4.0 — только наши переводы и разметка')
 
     def test_short_label_of_kdp_is_number_and_date(self):
         kdp = Act.objects.create(
