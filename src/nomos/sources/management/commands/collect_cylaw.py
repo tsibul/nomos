@@ -11,7 +11,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from nomos.sources.cylaw import consolidated, gazette, history, layout, texts_xml
+from nomos.sources.cylaw import consolidated, gazette, history, layout, refs, texts_xml
 
 BASE_KEY = history.BASE_KEY
 
@@ -130,8 +130,10 @@ def expired_version(day, base_ref):
     )
 
 
-def write(folder, info, versions, notes=()):
-    """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут."""
+def write(folder, info, versions, notes=(), marker=None):
+    """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут.
+
+    marker — разметка ссылок (только у закона); его found: {(uid, редакция): [цели]}."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
     texts_xml.write_act(act_path, info, versions, uids)
@@ -142,13 +144,43 @@ def write(folder, info, versions, notes=()):
                 found = []
                 layout.strip_notes(paragraph, found)
                 inline.extend((uids[node], version.key, note) for note in found)
+    mark = None
+    if marker is not None:
+        def mark(node, version, paragraphs):
+            marked, found = marker.mark_text(paragraphs, node.eid)
+            marker.found[(uids[node], version.key)] = found
+            return marked
     texts_xml.write_texts(
         folder / 'el.xml', info, versions, uids,
         lambda paragraph: layout.strip_notes(paragraph, []),
+        mark,
     )
     if notes or inline:
         texts_xml.write_notes(folder / 'cylaw-notes.xml', info, notes, inline)
     return len(inline)
+
+
+def mark_translation(folder, marker):
+    """Ссылки в ru.xml закона теми же правилами; строки отчёта."""
+    lines = ['ссылок el: %d; не размечено el: %s' % (
+        sum(len(found) for found in marker.found.values()), skipped_text(marker.skipped),
+    )]
+    path = folder / 'ru.xml'
+    if not path.exists():
+        return lines
+    eid_by_uid = {uid: eid for eid, uid in texts_xml.existing_uids(folder / 'act.xml').items()}
+    skipped, differences, total = refs.mark_translation(
+        path, marker.targets, eid_by_uid, marker.found,
+    )
+    lines.append('ссылок ru: %d; не размечено ru: %s' % (total, skipped_text(skipped)))
+    lines.append('текстов, где цели el и ru расходятся: %d' % len(differences))
+    for eid, key, el_targets, ru_targets in differences[:5]:
+        lines.append('  %s (%s): el %s, ru %s' % (eid, key, el_targets, ru_targets))
+    return lines
+
+
+def skipped_text(skipped):
+    return ', '.join('%s — %d' % item for item in sorted(skipped.items())) or 'нет'
 
 
 class Command(BaseCommand):
@@ -176,7 +208,9 @@ class Command(BaseCommand):
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
-        inline = write(folder, info, versions, other_notes)
+        marker = refs.Marker(refs.Targets(node.eid for node in versions), refs.EL)
+        inline = write(folder, info, versions, other_notes, marker)
+        report.extend(mark_translation(folder, marker))
         self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
         report.append('примечаний CyLaw в cylaw-notes.xml: %d к закону, %d [Σ.Σ.], %d у '
                       'изменяющих актов (в их папках)' % (
