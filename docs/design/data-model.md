@@ -77,7 +77,7 @@
 | uid | строка, уник., вечная | 10 знаков base32, не меняется никогда |
 | act | FK Act | |
 | parent | FK Fragment? | |
-| kind | выбор | `prt`, `tis`, `cpt`, `sct`, `art`, `par`, `sub`, `pnt`, `ind`, `anx`, `tbl`, `rct`, `cit`, `fnt`, `sch` (Παράρτημα кипрского закона) |
+| kind | выбор | `prt`, `tis`, `cpt`, `sct`, `art`, `par`, `sub`, `pnt`, `ind`, `anx`, `tbl`, `rct`, `cit`, `fnt`, `sch` (Παράρτημα кипрского закона), `def` |
 | eid | строка | текущий читаемый адрес внутри акта (`art_45.par_7G`) |
 | order_key | строка | ключ сортировки среди братьев (см. 2.3) |
 
@@ -109,6 +109,7 @@
 | in_force_from | дата | вступление в силу этого положения |
 | applies_from | дата? | применение, если отличается (директивы, отсроченные пункты) |
 | retroactive | да/нет | вычисляется: `in_force_from < published_on` |
+| key | строка | ключ изменения внутри изменяющего акта: `<положение>:<вид>[@<дата>]` (`art_2:insert@2026-10-12`); у базового текста — `base`; уникален в пределах акта |
 | marker | строка? | метка источника: `M32` EUR-Lex, номер сноски cylaw |
 | note | текст? | |
 
@@ -291,6 +292,12 @@ XML с отступом 2 пробела, внутри текста — подм
   <note kind="doubt" status="open" segment="2">«exemption with deductibility» — …</note>
 </text>
 ```
+
+Изменения, которые вносит акт, перечисляются в его `act.xml` элементами
+`<amendment key=… kind=… provision=… published-on=… in-force-from=… applies-from=… marker=…>
+примечание</amendment>`. `provision` — eid положения изменяющего акта. Редакция ссылается
+на изменение как `amendment="<uid акта>#<key>"`. Базовый текст акта —
+`<amendment key="base" kind="base">` в его собственном `act.xml`.
 
 Разметка внутри текста: `<p>`, `<ref to=… mode=… date=…>`, `<em>`, `<strong>`, `<sup>`, `<sub>`, `<fn id>`, `<margin>` (маргиналии кипрских законов), `<table>` с `colspan`/`rowspan`, `<q>` (цитата вставляемого текста в изменяющем акте). Нумерованные пункты — не разметка, а отдельные фрагменты.
 
