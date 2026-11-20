@@ -86,6 +86,21 @@ def is_history(text):
     return bool(tokens) and all(LAW_NUMBER_RE.match(token) for token in tokens)
 
 
+def split_history(block):
+    """«95(I)/2000 … 223(I)/2025 Έννοια του όρου επιχείρηση»: заголовок на полях следующей
+    статьи, склеенный со списком изменяющих законов, — отдельный блок."""
+    tokens = block.text.split()
+    count = 0
+    while count < len(tokens) and LAW_NUMBER_RE.match(tokens[count]):
+        count += 1
+    if count < 2 or count == len(tokens):
+        return [block]
+    return [
+        layout.Block(block.line, block.indent, ' '.join(tokens[:count])),
+        layout.Block(block.line, block.indent, ' '.join(tokens[count:])),
+    ]
+
+
 def is_group_heading(text):
     """Заголовок группы статей по центру: короткий, без конечной пунктуации."""
     if len(text) > HEADING_MAX or text[-1] in '.:;·∙˙,—-':
@@ -173,7 +188,9 @@ class Parser:
         start = next(
             index for index, block in enumerate(all_blocks) if block.text == 'Προοίμιο'
         )
-        all_blocks = all_blocks[start + 1:]
+        all_blocks = [
+            part for block in all_blocks[start + 1:] for part in split_history(block)
+        ]
         preamble = Node('cit', token='cit_1', heading='Προοίμιο')
         self.root.add(preamble)
         self.stack = [preamble]
@@ -442,8 +459,13 @@ class Parser:
             # пункт после безномерного абзаца продолжает список родителя
             self.stack.pop()
         while len(self.stack) > 1 and self.stack[-1].level >= level:
-            if self.stack[-1].unnumbered and opens_list(self.stack[-1]):
-                # «Νοείται περαιτέρω ότι …:» и пункты под ним: список внутри абзаца
+            if (
+                self.stack[-1].unnumbered
+                and opens_list(self.stack[-1])
+                and level > self.stack[-1].parent.level
+            ):
+                # «Νοείται περαιτέρω ότι …:» и пункты под ним: список внутри абзаца;
+                # пункт уровня владельца абзаца или выше в этот список не входит
                 break
             self.stack.pop()
         parent = self.stack[-1]

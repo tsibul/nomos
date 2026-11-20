@@ -183,6 +183,16 @@ class VatLawTests(TestCase):
         )
         self.assertTrue(notes.exists())
 
+    def test_items_after_list_in_unnumbered_paragraph(self):
+        """Пункт уровня владельца безномерного абзаца не входит в его список;
+        заголовок на полях не склеивается со списком изменяющих законов."""
+        found = set(Fragment.objects.filter(act__uid=LAW).values_list('eid', flat=True))
+        for eid in ('art_9.par_14D', 'art_9.par_15', 'art_13ST.par_2', 'art_13ST.par_9'):
+            self.assertIn(eid, found)
+        self.assertNotIn('art_2.par_7.sub_1', found)
+        heading = Fragment.objects.get(act__uid=LAW, eid='art_3').versions.first().heading
+        self.assertEqual(heading, 'Έννοια του όρου επιχείρηση')
+
     def test_nested_lists(self):
         """Списки внутри пунктов Пятого и Седьмого Παραρτήματος не всплывают наверх."""
         found = set(
