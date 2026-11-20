@@ -21,10 +21,18 @@ from nomos.sources.cylaw import history, texts_xml
 from nomos.sources.models import Source
 from nomos.translate.models import Note
 
+# код → поля Source
 SOURCES = {
-    'cylaw': 'CyLaw — сводные тексты законов Кипра',
-    'cy-gazette': 'Επίσημη Εφημερίδα της Δημοκρατίας',
-    'nomos': 'Неофициальный перевод',
+    'cylaw': {'name': 'CyLaw — сводные тексты законов Кипра'},
+    'cy-gazette': {'name': 'Επίσημη Εφημερίδα της Δημοκρατίας'},
+    # собственный перевод проекта, не внешний сайт (LICENSE-CONTENT)
+    'nomos': {
+        'name': 'Неофициальный перевод',
+        'publisher': 'Nomos',
+        'license': 'CC BY 4.0',
+        'terms_url': 'https://creativecommons.org/licenses/by/4.0/',
+        'attribution': 'Неофициальный перевод проекта Nomos, CC BY 4.0',
+    },
 }
 
 
@@ -53,8 +61,8 @@ class Loader:
             if 'sources' not in path.relative_to(self.root_dir).parts
         )
         sources = {
-            code: Source.objects.get_or_create(code=code, defaults={'name': name})[0]
-            for code, name in SOURCES.items()
+            code: Source.objects.update_or_create(code=code, defaults=fields)[0]
+            for code, fields in SOURCES.items()
         }
         for path in paths:
             self.load_act(path, sources)
