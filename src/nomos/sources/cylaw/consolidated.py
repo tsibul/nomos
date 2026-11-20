@@ -233,7 +233,6 @@ class Parser:
                 num=str(number),
                 token='sch_%d' % number,
                 heading=text,
-                order_key='%04d' % number,
             )
             self.root.add(self.schedule)
             self.container = self.schedule
@@ -568,11 +567,9 @@ def mark_definitions(article):
         after_list = current is not None and current.text().rstrip().endswith('και')
         if current is None or after_list or closing is not None:
             node.token = ''
-            node.order_key = ''
             closing = owner.add(node)
             continue
         node.token = ''
-        node.order_key = ''
         current.add(node)
 
 
