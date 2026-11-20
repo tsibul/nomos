@@ -163,6 +163,11 @@ KIND_NAMES = {
     Act.Kind.DECISION: gettext_lazy('Решение'),
 }
 
+# виды фрагментов без номера и заголовка — на языке интерфейса (в модели — русские названия)
+FRAGMENT_KIND_NAMES = {
+    Fragment.Kind.CITATION: gettext_lazy('Преамбула'),
+}
+
 
 def interface_lang():
     """Язык, на котором выходят строки интерфейса (включённый, если он переведён)."""
@@ -347,7 +352,12 @@ def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
         return Label(text, label_lang)
     if heading:
         return Label(heading, label_lang)
-    return Label(version.num or fragment.get_kind_display(), structure_lang)
+    if version.num:
+        return Label(version.num, structure_lang)
+    name = FRAGMENT_KIND_NAMES.get(fragment.kind)
+    if name:
+        return Label(str(name), interface_lang())
+    return Label(fragment.get_kind_display(), structure_lang)
 
 
 def translated_headings(versions, lang):
