@@ -1,5 +1,8 @@
 import datetime
+import filecmp
 import os
+import shutil
+import tempfile
 from io import StringIO
 from pathlib import Path
 from unittest import skipUnless
@@ -7,7 +10,7 @@ from unittest import skipUnless
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Fragment
+from nomos.acts.models import Expression, Fragment, FragmentText
 from nomos.translate.models import Note
 
 from .cylaw import history, numbering
@@ -109,9 +112,31 @@ class VatLawTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
+        # сборка пишет файлы — в копию, а не в рабочее дерево Nomos-texts
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
         output = StringIO()
-        call_command('collect_cylaw', LAW, texts_dir=str(TEXTS_DIR), stdout=output)
-        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=output)
+        call_command('collect_cylaw', LAW, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files_and_translation(self):
+        """Пересборка и две загрузки подряд: файлы как в git, русский перевод на месте."""
+        changed = [
+            str(path.relative_to(self.copy))
+            for path in self.copy.rglob('*')
+            if path.is_file()
+            and not filecmp.cmp(path, TEXTS_DIR / path.relative_to(self.copy), shallow=False)
+        ]
+        self.assertEqual(changed, [])
+        self.assertTrue(Expression.objects.filter(act__uid=LAW, lang='ru').exists())
+        self.assertTrue(FragmentText.objects.filter(expression__lang='ru').exists())
 
     def active_eids(self, prefix, day):
         found = set()
@@ -157,6 +182,16 @@ class VatLawTests(TestCase):
             body__contains='1.5–31.12.2026',
         )
         self.assertTrue(notes.exists())
+
+    def test_items_after_list_in_unnumbered_paragraph(self):
+        """Пункт уровня владельца безномерного абзаца не входит в его список;
+        заголовок на полях не склеивается со списком изменяющих законов."""
+        found = set(Fragment.objects.filter(act__uid=LAW).values_list('eid', flat=True))
+        for eid in ('art_9.par_14D', 'art_9.par_15', 'art_13ST.par_2', 'art_13ST.par_9'):
+            self.assertIn(eid, found)
+        self.assertNotIn('art_2.par_7.sub_1', found)
+        heading = Fragment.objects.get(act__uid=LAW, eid='art_3').versions.first().heading
+        self.assertEqual(heading, 'Έννοια του όρου επιχείρηση')
 
     def test_nested_lists(self):
         """Списки внутри пунктов Пятого и Седьмого Παραρτήματος не всплывают наверх."""
