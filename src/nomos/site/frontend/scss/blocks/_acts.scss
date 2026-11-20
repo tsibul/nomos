@@ -1,0 +1,36 @@
+.acts {
+  margin: 0 0 1.5rem;
+}
+
+.acts__heading {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+
+.acts__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.acts__link {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--color-primary-500);
+  background: var(--color-primary-50);
+  text-decoration: none;
+}
+
+.acts__label {
+  font-weight: 600;
+}
+
+.acts__title {
+  color: var(--color-neutral-900);
+  font-size: 0.875rem;
+}
+
+.acts__item--empty {
+  color: var(--color-neutral-500);
+}

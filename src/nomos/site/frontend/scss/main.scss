@@ -1,2 +1,17 @@
 // Точка входа стилей. БЭМ: блок__элемент--модификатор. Mobile-first.
 @use 'tokens';
+@use 'base';
+@use 'blocks/page';
+@use 'blocks/acts';
+@use 'blocks/act-head';
+@use 'blocks/toolbar';
+@use 'blocks/crumbs';
+@use 'blocks/toc';
+@use 'blocks/related';
+@use 'blocks/original-switch';
+@use 'blocks/untranslated';
+@use 'blocks/unit';
+@use 'blocks/fragment';
+@use 'blocks/notes';
+@use 'blocks/history';
+@use 'blocks/pager';

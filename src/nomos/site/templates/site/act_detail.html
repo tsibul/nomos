@@ -1,0 +1,39 @@
+{% extends 'site/base.html' %}
+
+{% block title %}{{ label }} — Nomos{% endblock %}
+
+{% block header %}
+  {% include 'site/parts/act_header.html' %}
+{% endblock %}
+
+{% block main %}
+  {% include 'site/parts/toolbar.html' %}
+
+  {% if amends %}
+    <section class="related">
+      <h2 class="related__heading">
+        Изменяет
+      </h2>
+      {% include 'site/parts/act_entries.html' with entries=amends %}
+    </section>
+  {% endif %}
+
+  <nav
+    class="toc"
+    aria-label="Оглавление"
+  >
+    <h1 class="toc__heading">
+      Оглавление
+    </h1>
+    {% include 'site/parts/toc_items.html' with items=toc %}
+  </nav>
+
+  {% if amended_by %}
+    <section class="related">
+      <h2 class="related__heading">
+        Изменяющие акты
+      </h2>
+      {% include 'site/parts/act_entries.html' with entries=amended_by %}
+    </section>
+  {% endif %}
+{% endblock %}

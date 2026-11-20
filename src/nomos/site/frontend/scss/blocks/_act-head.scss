@@ -1,0 +1,19 @@
+.act-head {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.act-head__label {
+  font-weight: 600;
+  color: var(--color-primary-50);
+}
+
+.act-head__label:visited {
+  color: var(--color-primary-50);
+}
+
+.act-head__title {
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}

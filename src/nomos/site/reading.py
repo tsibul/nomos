@@ -1,0 +1,429 @@
+"""Чтение актов: разбор адреса страницы и сборка дерева фрагментов для шаблонов.
+
+Выбор редакции — только методами моделей (`Fragment.version_on`, `Fragment.future_version`);
+здесь лишь обход дерева, подбор текстов по языку и подписи.
+"""
+import datetime
+import re
+from dataclasses import dataclass, field
+
+from django.http import Http404
+from django.utils.html import escape
+
+from nomos.acts.models import Act, Expression, Fragment, FragmentAlias, FragmentText
+
+EARLIEST = datetime.date(2024, 1, 1)
+LANGS = ('el', 'en', 'ru')
+DEFAULT_LANG = 'el'
+HISTORY = 'history'
+
+# Фрагменты-разделы: не страница, а заголовок в оглавлении
+CONTAINER_KINDS = {
+    Fragment.Kind.PART,
+    Fragment.Kind.TITLE,
+    Fragment.Kind.CHAPTER,
+    Fragment.Kind.SECTION,
+}
+
+# Порядок предпочтения текстов одного языка
+STATUS_ORDER = (
+    Expression.Status.OFFICIAL_TEXT,
+    Expression.Status.OFFICIAL_TRANSLATION,
+    Expression.Status.OUR_TRANSLATION,
+    Expression.Status.UNOFFICIAL_TRANSLATION,
+)
+
+KIND_PREFIX = {
+    Fragment.Kind.ARTICLE: 'Άρθρο',
+}
+
+
+@dataclass
+class Route:
+    """Разобранный адрес: /<акт>/[@<дата>/][<eid>/][<язык>/ | history/]."""
+
+    act: Act
+    on: datetime.date | None = None
+    eid: str | None = None
+    lang: str = DEFAULT_LANG
+    history: bool = False
+
+    @property
+    def date(self):
+        return self.on or datetime.date.today()
+
+
+def parse_date(text):
+    """`2024-06-01` — эта дата; `2024` — конец года (текущий год — сегодня)."""
+    today = datetime.date.today()
+    try:
+        if re.fullmatch(r'\d{4}', text):
+            year = int(text)
+            if year == today.year:
+                return today
+            return datetime.date(year, 12, 31)
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def parse_path(path):
+    segments = [segment for segment in path.strip('/').split('/') if segment]
+    act = None
+    for size in (4, 3):
+        act = Act.objects.filter(uid='/'.join(segments[:size])).first()
+        if act is not None:
+            break
+    if act is None:
+        raise Http404('Акт не найден')
+    route = Route(act=act)
+    rest = segments[size:]
+    if rest and rest[0].startswith('@'):
+        route.on = parse_date(rest[0][1:])
+        if route.on is None:
+            raise Http404('Неверная дата')
+        rest = rest[1:]
+    if rest and rest[0] not in LANGS and rest[0] != HISTORY:
+        route.eid = rest[0]
+        rest = rest[1:]
+    if rest and rest[0] in LANGS:
+        route.lang = rest[0]
+        rest = rest[1:]
+    elif rest and rest[0] == HISTORY and route.eid:
+        route.history = True
+        rest = rest[1:]
+    if rest:
+        raise Http404('Неверный адрес')
+    return route
+
+
+def build_url(act, on=None, eid=None, lang=DEFAULT_LANG, history=False):
+    """Адрес страницы; без даты — действующая сегодня редакция."""
+    parts = [act.uid]
+    if on is not None:
+        parts.append('@' + on.isoformat())
+    if eid:
+        parts.append(eid)
+    if history:
+        parts.append(HISTORY)
+    elif lang != DEFAULT_LANG:
+        parts.append(lang)
+    return '/' + '/'.join(parts) + '/'
+
+
+def act_label(act):
+    """«Закон 95(I)/2000», «Подзаконный акт (ΚΔΠ) 95/2024»."""
+    number = act.number
+    if act.year:
+        number = f'{number}/{act.year}' if number else act.year
+    return f'{act.get_kind_display()} {number}'.strip()
+
+
+def act_title(act, lang=DEFAULT_LANG):
+    """Название на языке чтения, иначе на опорном."""
+    expressions = list(act.expressions.all())
+    for wanted in (lang, act.structure_lang or DEFAULT_LANG, DEFAULT_LANG):
+        for expression in expressions:
+            if expression.lang == wanted and expression.title:
+                return expression.title
+    return ''
+
+
+def act_langs(act):
+    """Языки переключателя: греческий и русский всегда, прочие — если тексты есть."""
+    present = set(act.expressions.values_list('lang', flat=True))
+    return [lang for lang in LANGS if lang in ('el', 'ru') or lang in present]
+
+
+def fragment_label(fragment, version):
+    if version is None:
+        return fragment.eid
+    prefix = KIND_PREFIX.get(fragment.kind)
+    if prefix and version.num:
+        label = f'{prefix} {version.num}'
+        if version.heading:
+            label = f'{label}. {version.heading}'
+        return label
+    return version.heading or version.num or fragment.get_kind_display()
+
+
+class Structure:
+    """Дерево фрагментов акта одним запросом: дети по порядку, предки, страницы."""
+
+    def __init__(self, act):
+        self.act = act
+        # Порядок загрузки = порядок в act.xml. order_key не годится: у братьев разных
+        # видов ключи совпадают (art_2 и prt_II — оба 0002).
+        fragments = list(act.fragments.order_by('id'))
+        self.by_id = {fragment.id: fragment for fragment in fragments}
+        self.by_eid = {fragment.eid: fragment for fragment in fragments}
+        self.children = {}
+        for fragment in fragments:
+            self.children.setdefault(fragment.parent_id, []).append(fragment)
+
+    def roots(self):
+        return self.children.get(None, [])
+
+    def kids(self, fragment):
+        return self.children.get(fragment.id, [])
+
+    def parent(self, fragment):
+        return self.by_id.get(fragment.parent_id)
+
+    def is_unit(self, fragment):
+        """Страница — статья, приложение и т. п.: не раздел и не внутри не-раздела."""
+        if fragment.kind in CONTAINER_KINDS:
+            return False
+        parent = self.parent(fragment)
+        return parent is None or parent.kind in CONTAINER_KINDS
+
+    def unit_of(self, fragment):
+        while fragment is not None and not self.is_unit(fragment):
+            fragment = self.parent(fragment)
+        return fragment
+
+    def ancestors(self, fragment):
+        chain = []
+        parent = self.parent(fragment)
+        while parent is not None:
+            chain.insert(0, parent)
+            parent = self.parent(parent)
+        return chain
+
+    def find(self, eid):
+        """Фрагмент по eid или по прежнему адресу (FragmentAlias)."""
+        fragment = self.by_eid.get(eid)
+        if fragment is not None:
+            return fragment
+        alias = (
+            FragmentAlias.objects.filter(fragment__act=self.act, eid=eid)
+            .select_related('fragment')
+            .first()
+        )
+        return alias.fragment if alias else None
+
+
+@dataclass
+class TocItem:
+    fragment: Fragment
+    label: str
+    is_unit: bool
+    url: str = ''
+    children: list = field(default_factory=list)
+
+
+def build_toc(structure, route):
+    """Оглавление на дату: разделы и страницы, отсутствующие на дату — не показываются."""
+    on = route.date
+
+    def walk(fragments):
+        items = []
+        for fragment in fragments:
+            if fragment.kind not in CONTAINER_KINDS and not structure.is_unit(fragment):
+                continue
+            version = fragment.version_on(on)
+            if version is None:
+                continue
+            item = TocItem(
+                fragment=fragment,
+                label=fragment_label(fragment, version),
+                is_unit=structure.is_unit(fragment),
+            )
+            if item.is_unit:
+                item.url = build_url(
+                    structure.act,
+                    on=route.on,
+                    eid=fragment.eid,
+                    lang=route.lang,
+                )
+            else:
+                item.children = walk(structure.kids(fragment))
+            items.append(item)
+        return items
+
+    return walk(structure.roots())
+
+
+def toc_units(items):
+    """Страницы оглавления подряд — для «предыдущая / следующая»."""
+    units = []
+    for item in items:
+        if item.is_unit:
+            units.append(item)
+        units.extend(toc_units(item.children))
+    return units
+
+
+@dataclass
+class Node:
+    """Фрагмент страницы на дату и язык."""
+
+    fragment: Fragment
+    version: object
+    text: FragmentText | None = None
+    original: FragmentText | None = None
+    no_translation: bool = False
+    future: object = None
+    body: str = ''
+    original_body: str = ''
+    notes: list = field(default_factory=list)
+    children: list = field(default_factory=list)
+    history_url: str = ''
+    future_url: str = ''
+    introduced_url: str = ''
+    introduced_label: str = ''
+
+    @property
+    def unknown(self):
+        """Текст неизвестен: текст редакции записан пустым (у разделов текста нет вовсе)."""
+        shown = self.text or self.original
+        return shown is not None and not shown.body.strip()
+
+    @property
+    def start(self):
+        return self.version.start(Fragment.Axis.APPLIES)
+
+    @property
+    def future_start(self):
+        if self.future is None:
+            return None
+        return self.future.start(Fragment.Axis.APPLIES)
+
+    @property
+    def introduced(self):
+        """Изменение, которым введена редакция; базовый текст — None."""
+        amendment = self.version.amendment
+        if amendment.kind == amendment.Kind.BASE:
+            return None
+        return amendment
+
+
+def pick_text(texts, lang):
+    found = [text for text in texts if text.expression.lang == lang]
+    found.sort(key=lambda text: STATUS_ORDER.index(text.expression.status))
+    return found[0] if found else None
+
+
+REF_RE = re.compile(r'<ref\b([^>]*)>(.*?)</ref>', re.S)
+REF_ID_RE = re.compile(r'\bid="([^"]*)"')
+
+
+def render_body(text, route):
+    """Тело — разметка из своих XML; `<ref>` с найденной целью становится ссылкой."""
+    if text is None:
+        return ''
+    references = {reference.anchor: reference for reference in text.references.all()}
+
+    def replace(match):
+        found = REF_ID_RE.search(match.group(1))
+        reference = references.get(found.group(1)) if found else None
+        inner = match.group(2)
+        href = reference_url(reference, route) if reference else None
+        if href is None:
+            return f'<span class="ref ref--unresolved">{inner}</span>'
+        return f'<a class="ref" href="{escape(href)}">{inner}</a>'
+
+    return REF_RE.sub(replace, text.body)
+
+
+def reference_url(reference, route):
+    if not reference.resolved:
+        return None
+    if reference.to_act is None:
+        return reference.external_url or None
+    on = route.on
+    if reference.mode == reference.Mode.AT_DATE and reference.to_date:
+        on = reference.to_date
+    elif reference.mode == reference.Mode.VERSION and reference.to_version:
+        on = reference.to_version.start(Fragment.Axis.APPLIES)
+    eid = reference.to_fragment.eid if reference.to_fragment else None
+    lang = route.lang if route.lang in act_langs(reference.to_act) else DEFAULT_LANG
+    return build_url(reference.to_act, on=on, eid=eid, lang=lang)
+
+
+def build_nodes(structure, unit, route):
+    """Дерево страницы: редакции на дату, затем тексты всех редакций одним запросом."""
+    on = route.date
+    today = datetime.date.today()
+    nodes = []
+
+    def walk(fragment):
+        version = fragment.version_on(on)
+        future = fragment.future_version(today=today)
+        if future is not None and future.start(Fragment.Axis.APPLIES) <= on:
+            future = None
+        if version is None and future is None:
+            return None
+        node = Node(fragment=fragment, version=version, future=future)
+        link_node(node, route)
+        if version is None:
+            return node
+        nodes.append(node)
+        for child in structure.kids(fragment):
+            child_node = walk(child)
+            if child_node is not None:
+                node.children.append(child_node)
+        return node
+
+    root = walk(unit)
+    attach_texts(nodes, route)
+    return root
+
+
+def has_translation(node):
+    """Есть ли на странице хоть один переведённый фрагмент."""
+    if node.original is not None and node.text is not None:
+        return True
+    return any(has_translation(child) for child in node.children)
+
+
+def link_node(node, route):
+    """Адреса у фрагмента: история редакций, будущая редакция, вводящее положение."""
+    act = route.act
+    eid = node.fragment.eid
+    node.history_url = build_url(act, on=route.on, eid=eid, history=True)
+    if node.future is not None:
+        node.future_url = build_url(
+            act,
+            on=node.future.start(Fragment.Axis.APPLIES),
+            eid=eid,
+            lang=route.lang,
+        )
+    amendment = node.introduced if node.version is not None else None
+    if amendment is not None:
+        provision = amendment.amending_fragment
+        node.introduced_url = build_url(
+            amendment.amending_act,
+            eid=provision.eid if provision else None,
+        )
+        node.introduced_label = act_label(amendment.amending_act)
+        if provision is not None:
+            node.introduced_label += f', {provision.eid}'
+
+
+def attach_texts(nodes, route):
+    texts = (
+        FragmentText.objects.filter(version__in=[node.version for node in nodes])
+        .select_related('expression', 'translated_from')
+        .prefetch_related('notes', 'references__to_act', 'references__to_fragment')
+    )
+    by_version = {}
+    for text in texts:
+        by_version.setdefault(text.version_id, []).append(text)
+    for node in nodes:
+        found = by_version.get(node.version.id, [])
+        original = pick_text(found, DEFAULT_LANG)
+        if route.lang == DEFAULT_LANG:
+            node.text = original
+        else:
+            node.text = pick_text(found, route.lang)
+            node.original = original
+            node.no_translation = node.text is None and original is not None
+        node.body = render_body(node.text or node.original, route)
+        if node.text is not None and node.original is not None:
+            node.original_body = render_body(node.original, route)
+        notes = []
+        for text in (node.text, node.original):
+            if text is not None:
+                notes.extend(text.notes.all())
+        node.notes = notes

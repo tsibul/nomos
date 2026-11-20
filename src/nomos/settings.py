@@ -150,6 +150,8 @@ DJANGO_VITE = {
     'default': {
         'dev_mode': DEBUG,
         'dev_server_port': 5173,
+        # собранные файлы лежат в static/dist/, dev-сервер Vite отдаёт их от /static/
+        'static_url_prefix': '' if DEBUG else 'dist',
         'manifest_path': BASE_DIR / 'nomos' / 'site' / 'static' / 'dist' / 'manifest.json',
     }
 }

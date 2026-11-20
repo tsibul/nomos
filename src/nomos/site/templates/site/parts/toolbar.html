@@ -1,0 +1,81 @@
+{% comment %}
+  Выбор даты и языка. Без JS — обычная форма GET и ссылки; с JS — отправка по изменению даты.
+{% endcomment %}
+<div class="toolbar">
+  <form
+    class="toolbar__date"
+    method="get"
+    action=""
+    data-autosubmit
+  >
+    <label
+      class="toolbar__caption"
+      for="toolbar-on"
+    >
+      Редакция на
+    </label>
+    <input
+      class="toolbar__input"
+      id="toolbar-on"
+      type="date"
+      name="on"
+      value="{{ date|date:'Y-m-d' }}"
+      min="{{ earliest|date:'Y-m-d' }}"
+      required
+    >
+    {% if show_original %}
+      <input
+        type="hidden"
+        name="orig"
+        value="1"
+      >
+    {% endif %}
+    <button
+      class="toolbar__button"
+      type="submit"
+    >
+      Показать
+    </button>
+    {% if not is_today %}
+      <a
+        class="toolbar__link"
+        href="{{ today_url }}"
+      >
+        Сегодня
+      </a>
+    {% endif %}
+  </form>
+
+  {% if future_dates %}
+    <div class="toolbar__future">
+      <span class="toolbar__caption">
+        Будущая принятая:
+      </span>
+      {% for day in future_dates %}
+        <a
+          class="toolbar__link"
+          href="?on={{ day|date:'Y-m-d' }}"
+        >
+          с {{ day|date:'d.m.Y' }}
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% if not hide_langs %}
+    <nav
+      class="toolbar__langs"
+      aria-label="Язык"
+    >
+      {% for lang in langs %}
+        <a
+          class="toolbar__lang{% if lang.current %} toolbar__lang--current{% endif %}"
+          href="{{ lang.url }}"
+          {% if lang.current %}aria-current="true"{% endif %}
+        >
+          {{ lang.code }}
+        </a>
+      {% endfor %}
+    </nav>
+  {% endif %}
+</div>

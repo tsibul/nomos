@@ -1,0 +1,81 @@
+{% extends 'site/base.html' %}
+
+{% block title %}Редакции {{ fragment.eid }} — {{ label }} — Nomos{% endblock %}
+
+{% block header %}
+  {% include 'site/parts/act_header.html' %}
+{% endblock %}
+
+{% block main %}
+  <nav class="crumbs">
+    <a
+      class="crumbs__link"
+      href="{{ act_url }}"
+    >
+      Оглавление
+    </a>
+    <a
+      class="crumbs__link"
+      href="{{ fragment_url }}"
+    >
+      {{ fragment_label }}
+    </a>
+  </nav>
+
+  <h1 class="page__title">
+    Редакции {{ fragment.eid }}
+  </h1>
+
+  <ol class="history">
+    {% for entry in versions %}
+      <li class="history__item{% if entry.current %} history__item--current{% endif %}">
+        <div class="history__dates">
+          <a
+            class="history__link"
+            href="{{ entry.url }}"
+          >
+            {% if entry.start %}
+              с {{ entry.start|date:'d.m.Y' }}
+            {% else %}
+              до 01.01.2024
+            {% endif %}
+          </a>
+          {% if entry.version.state == 'repealed' %}
+            <span class="history__state">
+              исключён
+            </span>
+          {% endif %}
+          {% if entry.current %}
+            <span class="history__state">
+              действует на {{ date|date:'d.m.Y' }}
+            </span>
+          {% endif %}
+        </div>
+        <div class="history__source">
+          {% if entry.introduced %}
+            <a
+              class="history__link"
+              href="{{ entry.introduced.url }}"
+            >
+              {{ entry.introduced.label }}
+            </a>
+            {% if entry.introduced.note %}
+              — {{ entry.introduced.note }}
+            {% endif %}
+          {% else %}
+            Базовый текст
+          {% endif %}
+        </div>
+        <div class="history__known">
+          Опубликовано {{ entry.version.known_from|date:'d.m.Y' }}
+          {% if entry.version.valid_from %}
+            · в силе с {{ entry.version.valid_from|date:'d.m.Y' }}
+          {% endif %}
+          {% if entry.version.applies_from %}
+            · применяется с {{ entry.version.applies_from|date:'d.m.Y' }}
+          {% endif %}
+        </div>
+      </li>
+    {% endfor %}
+  </ol>
+{% endblock %}

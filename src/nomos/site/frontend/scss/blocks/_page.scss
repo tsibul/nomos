@@ -1,0 +1,42 @@
+@use '../base';
+
+.page__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  padding: 0.75rem 1rem;
+  color: var(--color-primary-50);
+  background: var(--color-primary-900);
+}
+
+.page__brand {
+  font-weight: 700;
+  color: var(--color-primary-50);
+  text-decoration: none;
+}
+
+.page__brand:visited {
+  color: var(--color-primary-50);
+}
+
+.page__main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.page__title {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+}
+
+@media (min-width: base.$break-desktop) {
+  .page__header {
+    padding: 0.75rem 2rem;
+  }
+
+  .page__main {
+    padding: 1.5rem 2rem;
+  }
+}

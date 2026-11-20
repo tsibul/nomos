@@ -1,0 +1,13 @@
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  margin: 0 0 1rem;
+  font-size: 0.875rem;
+  color: var(--color-neutral-500);
+}
+
+.crumbs__item::before,
+.crumbs__link + .crumbs__link::before {
+  content: '/ ';
+}

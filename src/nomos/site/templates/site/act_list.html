@@ -1,0 +1,23 @@
+{% extends 'site/base.html' %}
+
+{% block title %}Акты — Nomos{% endblock %}
+
+{% block main %}
+  <h1 class="page__title">
+    Акты
+  </h1>
+
+  <section class="acts">
+    <h2 class="acts__heading">
+      Основные акты
+    </h2>
+    {% include 'site/parts/act_entries.html' with entries=base %}
+  </section>
+
+  <section class="acts">
+    <h2 class="acts__heading">
+      Изменяющие акты
+    </h2>
+    {% include 'site/parts/act_entries.html' with entries=amending %}
+  </section>
+{% endblock %}
