@@ -11,6 +11,7 @@ from django.http import Http404
 from django.utils.html import escape
 
 from nomos.acts.models import Act, Expression, Fragment, FragmentAlias, FragmentText
+from nomos.translate.models import Note
 
 EARLIEST = datetime.date(2024, 1, 1)
 LANGS = ('el', 'en', 'ru')
@@ -545,5 +546,8 @@ def attach_texts(nodes, route):
         notes = []
         for text in (node.text, node.original):
             if text is not None:
-                notes.extend(text.notes.all())
+                # комментарии источника (сноски CyLaw) на сайте не показываются
+                notes.extend(
+                    note for note in text.notes.all() if note.kind != Note.Kind.SOURCE_COMMENT
+                )
         node.notes = notes

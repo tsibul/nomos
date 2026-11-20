@@ -1,6 +1,6 @@
 import datetime
 
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 
 from nomos.acts.models import Act, ActRelation, Fragment
@@ -55,19 +55,19 @@ def act_list(request, jurisdiction=None):
 
 
 def about(request):
-    sources = []
-    for source in Source.objects.prefetch_related('expressions').order_by('name'):
-        statuses = sorted(
-            {expression.get_status_display().lower() for expression in source.expressions.all()}
-        )
-        sources.append(
-            {
-                'source': source,
-                'statuses': statuses,
-                'count': len(source.expressions.all()),
-            }
-        )
+    sources = [
+        {
+            'source': source,
+            'count': len(source.expressions.all()),
+        }
+        for source in Source.objects.prefetch_related('expressions').order_by('name')
+    ]
     return render(request, 'site/about.html', {'sources': sources})
+
+
+def robots(request):
+    """Прототип не индексируется."""
+    return HttpResponse('User-agent: *\nDisallow: /\n', content_type='text/plain')
 
 
 def read(request, path):

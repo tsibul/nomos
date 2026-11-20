@@ -17,6 +17,13 @@
   font-size: 0.875rem;
 }
 
+.toolbar__notice {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-neutral-500);
+  font-size: 0.8125rem;
+}
+
 .toolbar__input,
 .toolbar__button {
   min-height: 2.5rem;
