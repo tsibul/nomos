@@ -363,6 +363,20 @@ class ViewerTests(TestCase):
         response = self.client.get('/cy/law/2024/2_I/art_2/', {'from': '//example.com/'})
         self.assertNotContains(response, 'back-ref')
 
+    def test_reference_to_paragraph_keeps_way_back(self):
+        origin = '/cy/law/2024/2_I/art_2/'
+        query = {'from': origin, 'at': 'ref-art_2-r1'}
+        response = self.client.get(ACT_URL + '@2025-06-01/art_1.par_1/', query)
+        self.assertRedirects(
+            response,
+            ACT_URL + '@2025-06-01/art_1/?from=%2Fcy%2Flaw%2F2024%2F2_I%2Fart_2%2F'
+            '&at=ref-art_2-r1#art_1.par_1',
+            fetch_redirect_response=False,
+        )
+        response = self.client.get(ACT_URL + '@2025-06-01/art_1/', query)
+        self.assertContains(response, '← Πίσω στο άρθρο 2')
+        self.assertContains(response, f'href="{origin}#ref-art_2-r1"')
+
     def test_back_link_follows_switched_language(self):
         self.add_ru()
         page = ACT_URL + '@2025-06-01/art_1/'
