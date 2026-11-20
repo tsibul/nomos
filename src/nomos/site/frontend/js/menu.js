@@ -5,6 +5,10 @@ export function initMenu() {
     return;
   }
   const toggle = header.querySelector('[data-menu-toggle]');
+  // без входа меню нет (страница входа)
+  if (!toggle) {
+    return;
+  }
   header.classList.add('header--collapsible');
   toggle.hidden = false;
   toggle.addEventListener('click', () => {
