@@ -15,6 +15,8 @@ class FragmentText(models.Model):
     version = models.ForeignKey('FragmentVersion', on_delete=models.CASCADE, related_name='texts')
     expression = models.ForeignKey('Expression', on_delete=models.CASCADE, related_name='texts')
     body = models.TextField()
+    # заголовок на языке текста, если он не опорный (на опорном — FragmentVersion.heading)
+    heading = models.CharField(max_length=500, blank=True)
     text_hash = models.CharField(max_length=64, db_index=True)
     alignment = models.CharField(max_length=15, choices=Alignment, default=Alignment.EXACT)
     translated_from = models.ForeignKey(

@@ -212,7 +212,7 @@ def read_act(path):
 
 
 def read_texts(path):
-    """{(uid, key): (тело из <p>, [элементы <note> уровня текста], неизвестен ли текст)}."""
+    """{(uid, key): (тело из <p>, [<note> уровня текста], неизвестен ли текст, заголовок)}."""
     found = {}
     if not path.exists():
         return found
@@ -226,5 +226,10 @@ def read_texts(path):
             else:
                 body.append(ET.tostring(child, encoding='unicode'))
         key = (text.get('fragment'), text.get('version'))
-        found[key] = ('\n'.join(body), notes, text.get('unknown') == '1')
+        found[key] = (
+            '\n'.join(body),
+            notes,
+            text.get('unknown') == '1',
+            text.get('heading', ''),
+        )
     return found

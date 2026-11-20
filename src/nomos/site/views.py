@@ -203,8 +203,9 @@ def unit_page(request, route, structure, unit):
             previous_unit = units[position - 1]
         if position + 1 < len(units):
             next_unit = units[position + 1]
+    toc_items = reading.toc_items_by_id(toc)
     crumbs = [
-        reading.fragment_label(ancestor, ancestor.version_on(route.date))
+        toc_label(toc_items, ancestor, ancestor.version_on(route.date))
         for ancestor in structure.ancestors(unit)
     ]
     context = base_context(request, route)
@@ -212,7 +213,7 @@ def unit_page(request, route, structure, unit):
         {
             'unit': unit,
             'root': root,
-            'unit_label': reading.fragment_label(unit, root.version),
+            'unit_label': toc_label(toc_items, unit, root.version),
             'crumbs': crumbs,
             'previous': unit_link(previous_unit, route),
             'next': unit_link(next_unit, route),
@@ -220,9 +221,25 @@ def unit_page(request, route, structure, unit):
             'untranslated': (
                 route.lang != reading.DEFAULT_LANG and not reading.has_translation(root)
             ),
+            'translation': translation_expression(route),
         }
     )
     return render(request, 'site/unit.html', context)
+
+
+def toc_label(toc_items, fragment, version):
+    """Подпись из оглавления (там уже переведённые заголовки), иначе — опорная."""
+    item = toc_items.get(fragment.id)
+    if item is not None and item.version == version:
+        return item.label
+    return reading.fragment_label(fragment, version)
+
+
+def translation_expression(route):
+    """Выражение перевода страницы — для строки «Источник перевода»."""
+    if route.lang == reading.DEFAULT_LANG:
+        return None
+    return route.act.expressions.select_related('source').filter(lang=route.lang).first()
 
 
 def unit_link(item, route):

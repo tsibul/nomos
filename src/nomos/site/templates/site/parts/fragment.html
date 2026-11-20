@@ -3,32 +3,34 @@
   id="{{ node.fragment.eid }}"
 >
   {% if node.version %}
-    <div
-      class="fragment__head"
-      lang="{{ structure_lang }}"
-    >
+    <div class="fragment__head">
       <a
         class="fragment__anchor"
         href="#{{ node.fragment.eid }}"
         title="Ссылка на фрагмент {{ node.fragment.eid }}"
-        lang="ru"
       >
         {% if is_root %}
-          {{ unit_label }}
+          <span lang="{{ unit_label.lang }}">
+            {{ unit_label }}
+          </span>
         {% else %}
-          {{ node.version.num|default:'¶' }}
+          <span lang="{{ structure_lang }}">
+            {{ node.version.num|default:'¶' }}
+          </span>
         {% endif %}
       </a>
-      {% if node.version.heading and not is_root %}
-        <span class="fragment__heading">
-          {{ node.version.heading }}
+      {% if node.heading.text and not is_root %}
+        <span
+          class="fragment__heading"
+          lang="{{ node.heading.lang }}"
+        >
+          {{ node.heading }}
         </span>
       {% endif %}
       <a
         class="fragment__history"
         href="{{ node.history_url }}"
         title="Редакции фрагмента"
-        lang="ru"
       >
         редакции
       </a>

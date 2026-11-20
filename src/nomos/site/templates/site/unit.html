@@ -22,7 +22,7 @@
     {% for crumb in crumbs %}
       <span
         class="crumbs__item"
-        lang="{{ structure_lang }}"
+        lang="{{ crumb.lang }}"
       >
         {{ crumb }}
       </span>
@@ -31,11 +31,17 @@
 
   {% if untranslated %}
     <p class="untranslated">
-      Перевода нет — показан официальный греческий текст.
+      Перевод готовится — показан официальный греческий текст.
     </p>
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
       Рабочий перевод, не выверен. Юридическую силу имеет греческий текст.
+      {% if translation.source %}
+        <span class="draft-warning__source">
+          Источник перевода: {{ translation.source.name }}
+          ({{ translation.get_status_display|lower }})
+        </span>
+      {% endif %}
     </p>
     <div class="original-switch">
       {% if show_original %}
@@ -74,6 +80,7 @@
         class="pager__link pager__link--previous"
         href="{{ previous.url }}"
         rel="prev"
+        lang="{{ previous.label.lang }}"
       >
         ← {{ previous.label }}
       </a>
@@ -83,6 +90,7 @@
         class="pager__link pager__link--next"
         href="{{ next.url }}"
         rel="next"
+        lang="{{ next.label.lang }}"
       >
         {{ next.label }} →
       </a>
