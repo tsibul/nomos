@@ -124,7 +124,10 @@ def read(request, path):
     unit = structure.unit_of(fragment)
     if unit.eid != route.eid:
         # постоянная ссылка фрагмента ведёт на его страницу с якорем
+        # строка запроса сохраняется: from/at — путь «← Назад» к месту ссылки, orig — режим
         url = reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang)
+        if request.GET:
+            url += '?' + request.GET.urlencode()
         return redirect(url + '#' + fragment.eid)
     return unit_page(request, route, structure, unit)
 
