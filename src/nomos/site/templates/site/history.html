@@ -1,6 +1,10 @@
 {% extends 'site/base.html' %}
 
-{% block title %}{{ t.versions }} {{ fragment_label }} — {{ label }} — Nomos{% endblock %}
+{% load i18n %}
+
+{% block title %}
+  {% translate 'Редакции:' %} {{ fragment_label }} — {{ label }} — Nomos
+{% endblock %}
 
 {% block header %}
   {% include 'site/parts/act_header.html' %}
@@ -16,7 +20,7 @@
       class="crumbs__link"
       href="{{ act_url }}"
     >
-      {{ t.toc }}
+      {% translate 'Оглавление' %}
     </a>
     <a
       class="crumbs__link"
@@ -32,14 +36,14 @@
       class="history__back-link"
       href="{{ current_url }}"
     >
-      {{ t.back_to_current }}
+      {% translate '← К действующему тексту' %}
     </a>
     {% if dated_url %}
       <a
         class="history__back-link"
         href="{{ dated_url }}"
       >
-        {{ t.back_to_dated }} {{ date|date:'d.m.Y' }}
+        {% translate '← К редакции на' %} {{ date|date:'d.m.Y' }}
       </a>
     {% endif %}
   </p>
@@ -48,12 +52,12 @@
     class="page__title"
     lang="{{ fragment_label.lang }}"
   >
-    {{ t.versions }} {{ fragment_label }}
+    {% translate 'Редакции:' %} {{ fragment_label }}
   </h1>
 
   {% if not has_changes %}
     <p class="history__none">
-      {{ t.no_changes }}
+      {% translate 'Изменений с 01.01.2024 нет.' %}
     </p>
   {% endif %}
 
@@ -66,19 +70,19 @@
             href="{{ entry.url }}"
           >
             {% if entry.start %}
-              {{ t.since }} {{ entry.start|date:'d.m.Y' }}
+              {% translate 'с' %} {{ entry.start|date:'d.m.Y' }}
             {% else %}
-              {{ t.until_2024 }}
+              {% translate 'до 01.01.2024' %}
             {% endif %}
           </a>
           {% if entry.version.state == 'repealed' %}
             <span class="history__state">
-              {{ t.repealed }}
+              {% translate 'исключён' %}
             </span>
           {% endif %}
           {% if entry.current %}
             <span class="history__state">
-              {{ t.in_force_on }} {{ date|date:'d.m.Y' }}
+              {% translate 'действует на' %} {{ date|date:'d.m.Y' }}
             </span>
           {% endif %}
         </div>
@@ -94,16 +98,16 @@
               — {{ entry.introduced.note }}
             {% endif %}
           {% else %}
-            {{ t.base_text }}
+            {% translate 'Базовый текст' %}
           {% endif %}
         </div>
         <div class="history__known">
-          {{ t.published }} {{ entry.version.known_from|date:'d.m.Y' }}
+          {% translate 'Опубликовано' %} {{ entry.version.known_from|date:'d.m.Y' }}
           {% if entry.version.valid_from %}
-            · {{ t.valid_from }} {{ entry.version.valid_from|date:'d.m.Y' }}
+            · {% translate 'в силе с' %} {{ entry.version.valid_from|date:'d.m.Y' }}
           {% endif %}
           {% if entry.version.applies_from %}
-            · {{ t.applies_from }} {{ entry.version.applies_from|date:'d.m.Y' }}
+            · {% translate 'применяется с' %} {{ entry.version.applies_from|date:'d.m.Y' }}
           {% endif %}
         </div>
       </li>

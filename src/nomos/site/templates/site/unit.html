@@ -1,5 +1,7 @@
 {% extends 'site/base.html' %}
 
+{% load i18n %}
+
 {% block title %}{{ unit_label }} — {{ label }} — Nomos{% endblock %}
 
 {% block header %}
@@ -17,13 +19,13 @@
 
   <nav
     class="crumbs"
-    aria-label="{{ t.position_in_act }}"
+    aria-label="{% translate 'Положение в акте' %}"
   >
     <a
       class="crumbs__link"
       href="{{ act_url }}"
     >
-      {{ t.toc }}
+      {% translate 'Оглавление' %}
     </a>
     {% for crumb in crumbs %}
       <span
@@ -37,11 +39,11 @@
 
   {% if untranslated %}
     <p class="untranslated">
-      {{ t.pending_notice }}
+      {% translate 'Перевод готовится — показан официальный греческий текст.' %}
     </p>
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
-      {{ t.translation_notice }}
+      {{ translation_notice }}
     </p>
     <div class="original-switch">
       {% if show_original %}
@@ -50,7 +52,7 @@
           href="?"
           data-original-toggle
         >
-          {{ t.hide_greek }}
+          {% translate 'Скрыть греческий текст' %}
         </a>
       {% else %}
         <a
@@ -58,7 +60,7 @@
           href="?orig=1"
           data-original-toggle
         >
-          {{ t.show_greek }}
+          {% translate 'Показать греческий текст рядом' %}
         </a>
       {% endif %}
     </div>
@@ -73,7 +75,7 @@
 
   <nav
     class="pager"
-    aria-label="{{ t.neighbours }}"
+    aria-label="{% translate 'Соседние положения' %}"
   >
     {% if previous %}
       <a
@@ -91,7 +93,7 @@
       class="pager__link pager__link--toc"
       href="{{ act_url }}"
     >
-      {{ t.toc }}
+      {% translate 'Оглавление' %}
     </a>
     {% if next %}
       <a

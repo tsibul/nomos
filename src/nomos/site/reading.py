@@ -9,8 +9,11 @@ from dataclasses import dataclass, field
 
 from django.db import models
 from django.http import Http404
+from django.utils import translation
 from django.utils.html import escape
 from django.utils.http import urlencode
+from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy
 
 from nomos.acts.models import (
     Act,
@@ -23,7 +26,6 @@ from nomos.acts.models import (
 )
 from nomos.translate.models import Note
 
-from . import strings
 
 EARLIEST = datetime.date(2024, 1, 1)
 LANGS = ('el', 'en', 'ru')
@@ -145,12 +147,36 @@ def build_url(act, on=None, eid=None, lang=None, history=False):
     return '/' + '/'.join(parts) + '/'
 
 
-def act_label(act, lang=READER_LANG):
+# языки, на которые переведён весь интерфейс; на прочих строки выходят по-русски
+UI_LANGS = ('ru', 'el')
+
+# виды актов на языке интерфейса (в модели Act.Kind — русские названия)
+KIND_NAMES = {
+    Act.Kind.LAW: gettext_lazy('Закон'),
+    Act.Kind.REGULATION_BY_LAW: gettext_lazy('Подзаконный акт (ΚΔΠ)'),
+    Act.Kind.DIRECTIVE: gettext_lazy('Директива'),
+    Act.Kind.REGULATION: gettext_lazy('Регламент'),
+    Act.Kind.IMPLEMENTING_REGULATION: gettext_lazy('Имплементационный регламент'),
+    Act.Kind.STANDARD: gettext_lazy('Стандарт'),
+    Act.Kind.INSTRUCTION: gettext_lazy('Инструкция'),
+    Act.Kind.CIRCULAR: gettext_lazy('Циркуляр'),
+    Act.Kind.DECISION: gettext_lazy('Решение'),
+}
+
+
+def interface_lang():
+    """Язык, на котором выходят строки интерфейса (включённый, если он переведён)."""
+    lang = translation.get_language()
+    return lang if lang in UI_LANGS else READER_LANG
+
+
+def act_label(act):
     """«Закон 95(I)/2000», «Подзаконный акт (ΚΔΠ) 95/2024»; на el — «Νόμος 95(I)/2000»."""
     number = act.number
     if act.year:
         number = f'{number}/{act.year}' if number else act.year
-    return f'{strings.kind_name(act, lang)} {number}'.strip()
+    kind = KIND_NAMES.get(act.kind) or act.get_kind_display()
+    return f'{kind} {number}'.strip()
 
 
 def act_title(act, lang=DEFAULT_LANG):
@@ -179,8 +205,8 @@ def act_short_label(act, lang=DEFAULT_LANG):
         text = f'ΚΔΠ {act.number}/{act.year}'
         day = act.published_on or act.date_adopted
         if day is not None:
-            text = f"{text} {strings.text('of_date', lang)} {day:%d.%m.%Y}"
-        return Label(text, strings.interface_lang(lang))
+            text = f"{text} {_('от')} {day:%d.%m.%Y}"
+        return Label(text, interface_lang())
     stored = stored_short_label(act, lang)
     if stored is not None:
         return stored
@@ -190,7 +216,7 @@ def act_short_label(act, lang=DEFAULT_LANG):
     title, title_lang = act_title_lang(act, lang)
     if title:
         return Label(title, title_lang)
-    return Label(act_label(act, lang), strings.interface_lang(lang))
+    return Label(act_label(act), interface_lang())
 
 
 def stored_short_label(act, lang):
@@ -244,12 +270,12 @@ def act_sort_key(act):
 
 
 TARGET_LABELS = {
-    'art': 'target_art',
-    'sch': 'target_sch',
+    'art': gettext_lazy('ст.'),
+    'sch': gettext_lazy('прил.'),
 }
 
 
-def amendment_targets(acts, lang=READER_LANG):
+def amendment_targets(acts):
     """Что меняют изменяющие акты: {id акта: «ст. 45, 61; прил. 12»} по данным изменений.
 
     Берутся статьи и приложения других актов, чьи редакции введены актом; нет данных —
@@ -268,8 +294,7 @@ def amendment_targets(acts, lang=READER_LANG):
     result = {}
     for act_id, kinds in found.items():
         parts = []
-        for kind, key in TARGET_LABELS.items():
-            prefix = strings.text(key, lang)
+        for kind, prefix in TARGET_LABELS.items():
             numbers = sorted(kinds.get(kind, ()), key=number_sort_key)
             if numbers:
                 parts.append(f'{prefix} {", ".join(numbers)}')
@@ -658,7 +683,7 @@ def link_node(node, route):
             amendment.amending_act,
             eid=provision.eid if provision else None,
         )
-        node.introduced_label = act_label(amendment.amending_act, route.lang)
+        node.introduced_label = act_label(amendment.amending_act)
         if provision is not None:
             node.introduced_label += f', {provision.eid}'
 

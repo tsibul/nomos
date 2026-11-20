@@ -3,6 +3,7 @@ import html
 import re
 
 from django.test import TestCase, override_settings
+from django.utils import translation
 
 from nomos.acts.models import (
     Act,
@@ -14,7 +15,7 @@ from nomos.acts.models import (
     FragmentVersion,
     Reference,
 )
-from nomos.site import reading
+from nomos.site import notices, reading
 from nomos.sources.models import Source
 from nomos.translate.models import Note
 
@@ -481,7 +482,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Сайт не даёт юридических и налоговых консультаций')
         self.assertNotContains(response, 'МСФО')
         response = self.client.get(ACT_URL + 'art_1/')
-        self.assertContains(response, 'lang="el"\n    >\n      Το Nomos είναι')
+        self.assertContains(response, 'lang="el"\n  >\n    Το Nomos είναι')
         self.assertContains(response, 'Η έκδοση ανασυντέθηκε')
         response = self.client.get('/robots.txt')
         self.assertContains(response, 'Disallow: /')
@@ -500,8 +501,23 @@ class ViewerTests(TestCase):
             year='2024',
             published_on=datetime.date(2024, 3, 15),
         )
-        self.assertEqual(str(reading.act_short_label(kdp, 'ru')), 'ΚΔΠ 95/2024 от 15.03.2024')
-        self.assertEqual(str(reading.act_short_label(kdp, 'el')), 'ΚΔΠ 95/2024 της 15.03.2024')
+        with translation.override('ru'):
+            label = reading.act_short_label(kdp, 'ru')
+        self.assertEqual(str(label), 'ΚΔΠ 95/2024 от 15.03.2024')
+        with translation.override('el'):
+            label = reading.act_short_label(kdp, 'el')
+        self.assertEqual(str(label), 'ΚΔΠ 95/2024 της 15.03.2024')
+
+    def test_interface_language_by_django_catalogs_without_cookies(self):
+        response = self.client.get('/cy/?lang=el')
+        self.assertContains(response, 'Τροποποιητικοί νόμοι')
+        self.assertContains(response, 'lang="el"\n  >\n    Το Nomos είναι')
+        self.assertNotIn('Set-Cookie', response.headers)
+        self.assertNotIn('django_language', response.cookies)
+        response = self.client.get('/cy/')
+        self.assertContains(response, 'Изменяющие законы')
+        with translation.override('en'):
+            self.assertTrue(str(notices.DISCLAIMER).startswith('Nomos is a private'))
 
     def test_short_label_of_amending_law(self):
         Expression.objects.filter(act=self.law).update(short_title='Ο περί Δοκιμής Νόμος')

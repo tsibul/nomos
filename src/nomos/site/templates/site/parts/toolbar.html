@@ -1,3 +1,4 @@
+{% load i18n %}
 {% comment %}
   Выбор даты (язык — в шапке). Без JS — обычная форма GET и ссылки;
   с JS — отправка по изменению даты.
@@ -5,14 +6,14 @@
 <div class="toolbar">
   {% if not is_today %}
     <p class="toolbar__dated">
-      {{ t.dated_view }} {{ date|date:'d.m.Y' }}
+      {% translate 'Вы смотрите редакцию на' %} {{ date|date:'d.m.Y' }}
       ·
       <a
         class="toolbar__dated-link"
         href="{{ today_url }}"
         data-keep-hash
       >
-        {{ t.in_force_link }}
+        {% translate 'Действующая редакция →' %}
       </a>
     </p>
   {% endif %}
@@ -27,7 +28,7 @@
       class="toolbar__caption"
       for="toolbar-on"
     >
-      {{ t.on_date }}
+      {% translate 'Редакция на дату' %}
     </label>
     <input
       class="toolbar__input"
@@ -49,25 +50,25 @@
       class="toolbar__button"
       type="submit"
     >
-      {{ t.show }}
+      {% translate 'Показать' %}
     </button>
   </form>
 
   <p class="toolbar__notice">
-    {{ t.reconstruction_notice }}
+    {{ reconstruction_notice }}
   </p>
 
   {% if future_dates %}
     <div class="toolbar__future">
       <span class="toolbar__caption">
-        {{ t.future_adopted }}
+        {% translate 'Будущая принятая:' %}
       </span>
       {% for day in future_dates %}
         <a
           class="toolbar__link"
           href="?on={{ day|date:'Y-m-d' }}"
         >
-          {{ t.since }} {{ day|date:'d.m.Y' }}
+          {% translate 'с' %} {{ day|date:'d.m.Y' }}
         </a>
       {% endfor %}
     </div>

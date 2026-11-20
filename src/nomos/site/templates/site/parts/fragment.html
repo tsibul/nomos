@@ -1,3 +1,4 @@
+{% load i18n %}
 <section
   class="fragment fragment--{{ node.fragment.kind }}{% if is_root %} fragment--root{% endif %}"
   id="{{ node.fragment.eid }}"
@@ -36,8 +37,8 @@
           <a
             class="fragment__anchor"
             href="#{{ node.fragment.eid }}"
-            title="{{ t.anchor_link }}"
-            aria-label="{{ t.anchor_link }}"
+            title="{% translate 'Ссылка на этот пункт' %}"
+            aria-label="{% translate 'Ссылка на этот пункт' %}"
           >
             #
           </a>
@@ -45,16 +46,16 @@
         <a
           class="fragment__history"
           href="{{ node.history_url }}"
-          title="{{ t.fragment_versions }}"
+          title="{% translate 'Редакции фрагмента' %}"
         >
-          {{ t.versions_link }}
+          {% translate 'редакции' %}
         </a>
       </span>
     </div>
 
     {% if node.unknown %}
       <p class="fragment__flag fragment__flag--unknown">
-        {{ t.text_unknown }}
+        {% translate 'Текст неизвестен' %}
       </p>
     {% elif node.body %}
       <div class="fragment__texts">
@@ -77,19 +78,23 @@
 
     {% if node.no_translation and not node.unknown and not untranslated %}
       <p class="fragment__flag">
-        {{ t.no_translation }}
+        {% translate 'Перевода нет — показан греческий текст' %}
       </p>
     {% endif %}
 
     {% if node.text.stale %}
       <p class="fragment__flag">
-        {{ t.stale_translation }}
+        {% translate 'Перевод сделан с прежнего текста' %}
       </p>
     {% endif %}
 
     {% if node.introduced %}
       <p class="fragment__meta">
-        {{ t.version }}{% if node.start %} {{ t.since }} {{ node.start|date:'d.m.Y' }}{% endif %}:
+        {% if node.start %}
+          {% translate 'Редакция' %} {% translate 'с' %} {{ node.start|date:'d.m.Y' }}:
+        {% else %}
+          {% translate 'Редакция' %}:
+        {% endif %}
         <a
           class="fragment__meta-link"
           href="{{ node.introduced_url }}"
@@ -104,14 +109,14 @@
 
     {% if node.future %}
       <p class="fragment__future">
-        {{ t.since_cap }} {{ node.future_start|date:'d.m.Y' }}
+        {% translate 'С' %} {{ node.future_start|date:'d.m.Y' }}
         <a
           class="fragment__future-link"
           href="{{ node.future_url }}"
         >
-          {{ t.new_version }}
+          {% translate 'новая редакция' %}
           {% if node.future.state == 'repealed' %}
-            {{ t.being_repealed }}
+            {% translate '(исключается)' %}
           {% endif %}
         </a>
       </p>
@@ -130,7 +135,7 @@
             {{ note.body }}
             {% if note.suggestion %}
               <span class="notes__suggestion">
-                {{ t.suggestion }} {{ note.suggestion }}
+                {% translate 'Вариант:' %} {{ note.suggestion }}
               </span>
             {% endif %}
           </li>
@@ -147,12 +152,12 @@
     {% endif %}
   {% else %}
     <p class="fragment__future">
-      {{ t.fragment_introduced }}
+      {% translate 'Фрагмент вводится' %}
       <a
         class="fragment__future-link"
         href="{{ node.future_url }}"
       >
-        {{ t.by_new_version }}
+        {% translate 'новой редакцией' %}
       </a>
     </p>
   {% endif %}

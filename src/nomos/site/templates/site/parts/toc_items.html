@@ -1,3 +1,4 @@
+{% load i18n %}
 <ul class="toc__list">
   {% for item in items %}
     <li class="toc__item{% if not item.is_unit %} toc__item--section{% endif %}">
@@ -22,7 +23,7 @@
         {% endif %}
         {% if not item.translated %}
           <span class="toc__pending">
-            {{ t.translation_pending }}
+            {% translate 'перевод готовится' %}
           </span>
         {% endif %}
       {% else %}
