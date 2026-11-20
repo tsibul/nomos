@@ -170,8 +170,10 @@ def write_act(path, info, versions, uids):
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
-def write_texts(path, info, versions, uids, markup):
-    """markup(paragraph) → разметка абзаца без <p>."""
+def write_texts(path, info, versions, uids, markup, refs=None):
+    """markup(paragraph) → разметка абзаца без <p>.
+
+    refs(node, version, абзацы) → абзацы со ссылками: разметка на весь текст сразу."""
     lines = ['<?xml version="1.0" encoding="utf-8"?>']
     lines.append('<texts %s>' % attrs([('act', info.uid), ('lang', info.lang)]))
     for node, node_versions in versions.items():
@@ -184,8 +186,11 @@ def write_texts(path, info, versions, uids, markup):
                 ('version', version.key),
                 ('unknown', unknown),
             ]))
-            for paragraph in version.paragraphs or []:
-                lines.append('    <p>%s</p>' % markup(paragraph))
+            paragraphs = [markup(paragraph) for paragraph in version.paragraphs or []]
+            if refs is not None:
+                paragraphs = refs(node, version, paragraphs)
+            for paragraph in paragraphs:
+                lines.append('    <p>%s</p>' % paragraph)
             for note in version.notes:
                 lines.append(
                     '    <note kind="editor_comment" status="open">%s</note>' % escape(note)
