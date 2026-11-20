@@ -27,8 +27,12 @@
       {% block header %}{% endblock %}
     </header>
 
-    <main class="page__main">
-      {% block main %}{% endblock %}
-    </main>
+    <div class="page__layout">
+      {% block aside %}{% endblock %}
+
+      <main class="page__main">
+        {% block main %}{% endblock %}
+      </main>
+    </div>
   </body>
 </html>

@@ -11,6 +11,7 @@ from nomos.acts.models import (
     FragmentText,
     FragmentVersion,
 )
+from nomos.site import reading
 from nomos.sources.models import Source
 from nomos.translate.models import Note
 
@@ -291,7 +292,7 @@ class ViewerTests(TestCase):
             text_hash='ru-heading',
         )
         response = self.client.get(ACT_URL + 'ru/')
-        self.assertContains(response, 'lang="ru"\n        >\n          Статья 1. Толкование')
+        self.assertRegex(response.content.decode(), r'lang="ru"\s*>\s*Статья 1\. Толкование')
         self.assertNotContains(response, 'перевод готовится')
         response = self.client.get(ACT_URL + 'art_1/ru/')
         self.assertContains(response, 'Статья 1. Толкование — Закон 1(I)/2000 — Nomos')
@@ -309,9 +310,31 @@ class ViewerTests(TestCase):
         )
         response = self.client.get(ACT_URL + 'ru/')
         self.assertContains(response, 'перевод готовится')
-        self.assertContains(response, 'lang="el"\n        >\n          Άρθρο 1. Ερμηνεία')
+        self.assertRegex(response.content.decode(), r'lang="el"\s*>\s*Άρθρο 1\. Ερμηνεία')
         response = self.client.get(ACT_URL + 'art_1/ru/')
         self.assertContains(response, 'Перевод готовится — показан официальный греческий текст.')
+
+    def test_side_column(self):
+        response = self.client.get('/cy/')
+        self.assertContains(response, 'Список актов')
+        self.assertContains(response, 'class="sidenav__link"')
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'Оглавление акта')
+        self.assertContains(response, 'href="/cy/"')
+        self.assertRegex(response.content.decode(), r'toc__link--current"[^>]*art_1/"')
+        response = self.client.get(ACT_URL + 'art_1.par_1/history/')
+        self.assertContains(response, 'toc__link--current')
+
+    def test_short_label_of_kdp_is_number_and_date(self):
+        kdp = Act.objects.create(
+            uid='cy/kdp/2024/95',
+            jurisdiction='cy',
+            kind='kdp',
+            number='95',
+            year='2024',
+            published_on=datetime.date(2024, 3, 15),
+        )
+        self.assertEqual(str(reading.act_short_label(kdp)), 'ΚΔΠ 95/2024 от 15.03.2024')
 
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')

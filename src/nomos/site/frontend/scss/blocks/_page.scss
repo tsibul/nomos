@@ -6,9 +6,15 @@
   background: var(--color-primary-900);
 }
 
-.page__main {
-  max-width: 72rem;
+.page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 88rem;
   margin: 0 auto;
+}
+
+.page__main {
+  min-width: 0;
   padding: 1rem;
 }
 
@@ -24,5 +30,9 @@
 
   .page__main {
     padding: 1.5rem 2rem;
+  }
+
+  .page__layout:has(.sidenav) {
+    grid-template-columns: 20rem minmax(0, 1fr);
   }
 }

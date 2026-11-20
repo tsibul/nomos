@@ -27,6 +27,7 @@ def act_list(request, jurisdiction=None):
         entry = {
             'act': act,
             'label': reading.act_label(act),
+            'short': reading.act_short_label(act, reading.DEFAULT_LANG),
             'title': title,
             'title_lang': title_lang,
             'url': reading.build_url(act),
@@ -35,6 +36,7 @@ def act_list(request, jurisdiction=None):
             amending.append(entry)
         else:
             base.append(entry)
+    amending.sort(key=lambda entry: (entry['act'].published_on or datetime.date.min))
     return render(
         request,
         'site/act_list.html',
@@ -42,6 +44,11 @@ def act_list(request, jurisdiction=None):
             'base': base,
             'amending': amending,
             'section': section,
+            'sidenav_title': 'Список актов',
+            'nav_groups': [
+                {'title': 'Основные', 'entries': base},
+                {'title': 'Изменяющие', 'entries': amending},
+            ],
         },
     )
 
@@ -140,6 +147,27 @@ def base_context(request, route):
     }
 
 
+def nav_context(route, toc, current=None):
+    """Левая колонка открытого акта: оглавление, текущая страница, путь к списку актов."""
+    jurisdiction = route.act.jurisdiction
+    sections = dict(menu.SECTIONS)
+    if jurisdiction in sections:
+        section_url = f'/{jurisdiction}/'
+        section_label = sections[jurisdiction]
+    else:
+        section_url = '/'
+        section_label = 'Акты'
+    if current is not None:
+        for item in reading.toc_units(toc):
+            item.current = item.fragment.id == current.id
+    return {
+        'nav_toc': toc,
+        'sidenav_title': 'Оглавление акта',
+        'section_url': section_url,
+        'section_label': section_label,
+    }
+
+
 def act_page(request, route, structure):
     act = route.act
     toc = reading.build_toc(structure, route)
@@ -163,6 +191,7 @@ def act_page(request, route, structure):
             'sources': text_sources(act),
         }
     )
+    context.update(nav_context(route, toc))
     return render(request, 'site/act_detail.html', context)
 
 
@@ -224,6 +253,7 @@ def unit_page(request, route, structure, unit):
             'translation': translation_expression(route),
         }
     )
+    context.update(nav_context(route, toc, unit))
     return render(request, 'site/unit.html', context)
 
 
@@ -298,6 +328,8 @@ def history_page(request, route, structure, fragment):
         key=lambda entry: (entry['start'] or datetime.date.min, entry['version'].known_from)
     )
     context = base_context(request, route)
+    toc = reading.build_toc(structure, route)
+    context.update(nav_context(route, toc, structure.unit_of(fragment)))
     context.update(
         {
             'fragment': fragment,

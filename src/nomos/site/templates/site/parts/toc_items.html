@@ -3,9 +3,10 @@
     <li class="toc__item{% if not item.is_unit %} toc__item--section{% endif %}">
       {% if item.is_unit %}
         <a
-          class="toc__link"
+          class="toc__link{% if item.current %} toc__link--current{% endif %}"
           href="{{ item.url }}"
           lang="{{ item.label.lang }}"
+          {% if item.current %}aria-current="page"{% endif %}
         >
           {{ item.label }}
         </a>
