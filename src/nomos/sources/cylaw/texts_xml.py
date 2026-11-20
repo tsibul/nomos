@@ -32,7 +32,7 @@ class ActInfo:
 
 @dataclass
 class AmendmentInfo:
-    marker: str
+    key: str
     provision: str
     kind: str
     published_on: object = None
@@ -103,7 +103,7 @@ def write_act(path, info, versions, uids):
     for amendment in info.amendments:
         lines.append('  <amendment %s>%s</amendment>' % (
             attrs([
-                ('marker', amendment.marker),
+                ('key', amendment.key),
                 ('provision', amendment.provision),
                 ('kind', amendment.kind),
                 ('published-on', amendment.published_on),
@@ -124,8 +124,8 @@ def write_act(path, info, versions, uids):
         for version in node_versions:
             lines.append('    <version %s />' % attrs([
                 ('key', version.key),
-                ('num', node.num),
-                ('heading', node.heading),
+                ('num', node.num if version.num is None else version.num),
+                ('heading', node.heading if version.heading is None else version.heading),
                 ('amendment', version.amendment),
                 ('state', '' if version.state == 'active' else version.state),
                 ('valid-from', version.valid_from),
@@ -160,6 +160,16 @@ def write_texts(path, info, versions, uids, markup):
                 )
             lines.append('  </text>')
     lines.append('</texts>')
+    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+
+
+def write_notes(path, info, notes):
+    """Примечания CyLaw к закону, не привязанные к фрагментам: хранятся, в БД не грузятся."""
+    lines = ['<?xml version="1.0" encoding="utf-8"?>']
+    lines.append('<notes %s>' % attrs([('act', info.uid), ('lang', info.lang)]))
+    for note in notes:
+        lines.append('  <note kind="source_comment">%s</note>' % escape(note))
+    lines.append('</notes>')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 

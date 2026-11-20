@@ -55,18 +55,23 @@ class Op:
     note: str = ''
     absent: bool = False
     same: bool = False
+    # on="heading": изменение заголовка, old/new — заголовок; old_num — прежний номер
+    on: str = ''
+    old_num: str = None
+    # тексты из изменяющего акта: {eid: [абзацы]}; <p for="eid"> — для потомка цели
+    texts: dict = field(default_factory=dict)
 
     @property
-    def marker(self):
+    def key(self):
         """Ключ изменения внутри изменяющего акта: положение, вид, своя дата."""
-        marker = '%s:%s' % (self.provision, self.kind)
+        key = '%s:%s' % (self.provision, self.kind)
         if self.valid_from != self.act.in_force_from:
-            marker += '@' + self.valid_from.isoformat()
-        return marker
+            key += '@' + self.valid_from.isoformat()
+        return key
 
     @property
     def ref(self):
-        return '%s#%s' % (self.act.uid, self.marker)
+        return '%s#%s' % (self.act.uid, self.key)
 
     @property
     def sort_key(self):
@@ -84,6 +89,9 @@ class Version:
     # None — текст неизвестен
     paragraphs: list = None
     notes: list = field(default_factory=list)
+    # None — как у фрагмента в сводном тексте
+    num: str = None
+    heading: str = None
 
 
 def parse_date(value):
@@ -113,8 +121,11 @@ def read_manifest(path):
         for item in element.iter('op'):
             act.ops.append(make_op(act, item))
         acts.append(act)
+    # kind="doubt": примечание о сомнении ко всем редакциям фрагмента;
+    # until="…": срок, указанный в самом сводном тексте, — фрагмент утрачивает силу на
+    # следующий день. Текст remark идёт и в отчёт.
     remarks = [
-        (item.get('target'), ' '.join(item.text.split()))
+        (item.get('target'), ' '.join(item.text.split()), item.attrib)
         for item in root.iter('remark')
     ]
     return root.attrib, acts, remarks
@@ -136,7 +147,18 @@ def make_op(act, item):
         note=' '.join((item.text or '').split()),
         absent=item.get('absent') == '1',
         same=item.get('same') == '1',
+        on=item.get('on', ''),
+        old_num=item.get('old-num'),
+        texts=op_texts(item),
     )
+
+
+def op_texts(item):
+    texts = {}
+    for paragraph in item.findall('p'):
+        eid = paragraph.get('for', item.get('target'))
+        texts.setdefault(eid, []).append(' '.join(paragraph.text.split()))
+    return texts
 
 
 def ops_by_target(acts):
@@ -161,16 +183,31 @@ def build_versions(node, ops, base_ref, report):
     text = list(node.paragraphs)
     latest_text = text
     present = True
+    title = {'num': node.num, 'heading': node.heading}
     for op in sorted(ops, key=lambda item: item.sort_key, reverse=True):
         if op.absent or op.kind == 'note':
             report.append('%s → %s: %s' % (op.ref, node.eid, op.note or 'не применено'))
             continue
+        if not present and op.kind == 'delete':
+            # отмена фрагмента, которого потом не было, пока его не вставили заново:
+            # до отмены он действовал, его текст — из манифеста или неизвестен
+            present = True
+            text = None
         if not present and op.kind != 'insert':
             report.append('%s → %s: фрагмента в это время нет' % (op.ref, node.eid))
             continue
         if not present:
             text = list(latest_text) if op.same else None
+        if node.eid in op.texts:
+            # текст редакции приведён в манифесте по изменяющему акту
+            text = list(op.texts[node.eid])
         version = version_for(op, text)
+        version.num = title['num']
+        version.heading = title['heading']
+        if op.on == 'heading':
+            later.append(version)
+            title = reverse_heading(op, title, node, report)
+            continue
         if op.until:
             later.append(revert_version(op, node, text))
         later.append(version)
@@ -190,12 +227,34 @@ def build_versions(node, ops, base_ref, report):
             report.append('%s → %s: %s' % (op.ref, node.eid, problem))
         text = previous
     if present:
-        later.append(Version(key=BASE_KEY, amendment=base_ref, paragraphs=text))
+        later.append(Version(
+            key=BASE_KEY,
+            amendment=base_ref,
+            paragraphs=text,
+            num=title['num'],
+            heading=title['heading'],
+        ))
     versions = list(reversed(later))
     for version, newer in zip(versions, versions[1:]):
         if version.paragraphs is None and version.state == 'active':
             version.notes.append(missing_note(newer.amendment))
     return attach_notes(node, versions)
+
+
+def reverse_heading(op, title, node, report):
+    """Заголовок (и номер) до изменения заголовка; прежний заголовок может быть пустым."""
+    heading = title['heading']
+    # значения атрибутов в манифесте переносятся по строкам
+    new = ' '.join(op.new.split())
+    old = ' '.join(op.old.split())
+    count = heading.count(new) if new else 0
+    if count != 1:
+        report.append('%s → %s: заголовок: «%s» встречается %d раз' % (
+            op.ref, node.eid, new, count))
+        return title
+    num = title['num'] if op.old_num is None else op.old_num
+    previous = ' '.join(heading.replace(new, old).split())
+    return {'num': num, 'heading': previous}
 
 
 def version_for(op, text):
@@ -298,11 +357,18 @@ def collect(root, acts, base_ref, report):
             continue
         ops = list(targets.get(node.eid, []))
         own_insert = any(op.kind == 'insert' and not op.absent for op in ops)
-        for target, target_ops in targets.items():
+        # своя вставка задаёт сроки фрагмента точнее, чем вставка предка;
+        # из предков — только ближайший со вставкой
+        ancestors = sorted(
+            (target for target in targets if target != node.eid and is_inside(node.eid, target)),
+            key=len,
+            reverse=True,
+        )
+        for target in ancestors:
             if own_insert:
-                # своя вставка задаёт сроки фрагмента точнее, чем вставка предка
                 break
-            if target != node.eid and is_inside(node.eid, target):
-                ops.extend(op for op in target_ops if op.kind in ('insert', 'delete'))
+            inherited = [op for op in targets[target] if op.kind in ('insert', 'delete')]
+            ops.extend(inherited)
+            own_insert = any(op.kind == 'insert' and not op.absent for op in inherited)
         result[node] = build_versions(node, ops, base_ref, report)
     return result

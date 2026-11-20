@@ -20,6 +20,8 @@ class Node:
     parent: 'Node' = None
     indent: int = 0
     level: float = 0
+    # вид нумерации пункта при разборе: top, arabic, greek, roman
+    style: str = ''
     order_key: str = ''
     repealed: bool = False
     in_schedule: bool = False

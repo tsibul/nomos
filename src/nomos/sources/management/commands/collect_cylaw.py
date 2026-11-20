@@ -5,6 +5,7 @@
 в конце — отчёт о том, что не снято однозначно.
 """
 
+import datetime
 import os
 from pathlib import Path
 
@@ -12,24 +13,47 @@ from django.core.management.base import BaseCommand, CommandError
 
 from nomos.sources.cylaw import consolidated, gazette, history, layout, texts_xml
 
-BASE_MARKER = 'base'
+BASE_KEY = history.BASE_KEY
 
 
 def base_version(info):
     return history.Version(
         key=history.BASE_KEY,
-        amendment='%s#%s' % (info.uid, BASE_MARKER),
+        amendment='%s#%s' % (info.uid, BASE_KEY),
     )
 
 
-def base_amendment(info):
+def base_amendment(info, note=''):
     return texts_xml.AmendmentInfo(
-        marker=BASE_MARKER,
+        key=BASE_KEY,
         provision='',
         kind='base',
         published_on=info.published_on,
         in_force_from=info.in_force_from,
+        note=note,
     )
+
+
+def act_reference(text):
+    """«104(Ι)/2025», «Κ.Δ.Π. 102/2026» → «104(I)/2025», «102/2026» без пробелов."""
+    return ''.join(text.replace('Ι', 'I').split())
+
+
+def split_notes(notes, acts):
+    """Примечания CyLaw «Σημείωση N του Ν. …» → ({uid акта: текст}, прочие).
+
+    Примечание относится к акту, чей номер стоит в его заголовке (до «Έναρξη»)."""
+    own = {}
+    other = []
+    for note in notes:
+        heading = act_reference(note.split('Έναρξη')[0].split('Αναδρομική')[0])
+        for act in acts:
+            if '%s/%s' % (act_reference(act.number), act.year) in heading:
+                own[act.uid] = (own.get(act.uid, '') + ' ' + note).strip()
+                break
+        else:
+            other.append(note)
+    return own, other
 
 
 def law_info(manifest):
@@ -46,7 +70,7 @@ def law_info(manifest):
     return info
 
 
-def amending_info(act, law_uid, title):
+def amending_info(act, law_uid, title, note=''):
     info = texts_xml.ActInfo(
         uid=act.uid,
         jurisdiction='cy',
@@ -60,14 +84,14 @@ def amending_info(act, law_uid, title):
         title=title,
         relations=[('amends', law_uid)],
     )
-    info.amendments.append(base_amendment(info))
+    info.amendments.append(base_amendment(info, note))
     seen = set()
     for op in act.ops:
-        if op.marker in seen:
+        if op.key in seen:
             continue
-        seen.add(op.marker)
+        seen.add(op.key)
         info.amendments.append(texts_xml.AmendmentInfo(
-            marker=op.marker,
+            key=op.key,
             provision=op.provision,
             kind=op.kind if op.kind != 'add' else 'replace',
             published_on=act.published_on,
@@ -76,6 +100,34 @@ def amending_info(act, law_uid, title):
             note=op.note,
         ))
     return info
+
+
+def apply_remarks(versions, remarks, base_ref, report):
+    """Сомнения и сроки из манифеста: примечания и редакции «утратил силу»."""
+    by_eid = {node.eid: node_versions for node, node_versions in versions.items()}
+    for target, text, attrib in remarks:
+        if target not in by_eid:
+            report.append('%s: фрагмента нет в сводном тексте' % target)
+            continue
+        if attrib.get('kind') == 'doubt':
+            for version in by_eid[target]:
+                version.notes.append(text)
+        if attrib.get('until'):
+            day = history.parse_date(attrib['until']) + datetime.timedelta(days=1)
+            for eid, node_versions in by_eid.items():
+                if eid == target or eid.startswith(target + '.'):
+                    node_versions.append(expired_version(day, base_ref))
+
+
+def expired_version(day, base_ref):
+    return history.Version(
+        key=day.isoformat(),
+        amendment=base_ref,
+        valid_from=day,
+        applies_from=day,
+        state='repealed',
+        paragraphs=[],
+    )
 
 
 def write(folder, info, versions):
@@ -105,9 +157,14 @@ class Command(BaseCommand):
         report = []
 
         info = law_info(manifest)
-        tree, _ = consolidated.parse(root_dir / manifest['file'], info.uid)
-        base_ref = '%s#%s' % (info.uid, BASE_MARKER)
+        tree, _, notes = consolidated.parse(root_dir / manifest['file'], info.uid)
+        act_notes, other_notes = split_notes(notes, acts)
+        texts_xml.write_notes(folder / 'cylaw-notes.xml', info, other_notes)
+        report.append('примечаний CyLaw: %d у изменяющих актов, %d в cylaw-notes.xml' % (
+            len(act_notes), len(other_notes)))
+        base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
+        apply_remarks(versions, remarks, base_ref, report)
         write(folder, info, versions)
         self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
 
@@ -124,7 +181,7 @@ class Command(BaseCommand):
                 amending_versions[node] = [version]
             write(
                 root_dir / amending.uid,
-                amending_info(amending, info.uid, title),
+                amending_info(amending, info.uid, title, act_notes.get(amending.uid, '')),
                 amending_versions,
             )
             provisions = {node.eid for node in amending_versions}
@@ -132,7 +189,7 @@ class Command(BaseCommand):
                 if op.provision not in provisions:
                     report.append('%s: положения нет в разборе акта' % op.ref)
 
-        for target, text in remarks:
+        for target, text, _ in remarks:
             report.append('%s: %s' % (target, text))
         self.stdout.write('Отчёт (%d):' % len(report))
         for line in report:

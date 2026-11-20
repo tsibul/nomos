@@ -121,10 +121,10 @@ class Loader:
                 published_on=date(item.get('published-on')),
                 in_force_from=date(item.get('in-force-from')),
                 applies_from=date(item.get('applies-from')),
-                marker=item.get('marker'),
+                key=item.get('key'),
                 note=item.text or '',
             )
-            self.amendments['%s#%s' % (act.uid, amendment.marker)] = amendment
+            self.amendments['%s#%s' % (act.uid, amendment.key)] = amendment
 
     def load_relations(self, element):
         act = self.acts[element.get('uid')]
