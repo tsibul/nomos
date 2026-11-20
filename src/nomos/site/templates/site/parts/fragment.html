@@ -4,21 +4,25 @@
 >
   {% if node.version %}
     <div class="fragment__head">
-      <a
-        class="fragment__anchor"
-        href="#{{ node.fragment.eid }}"
-        title="Ссылка на фрагмент {{ node.fragment.eid }}"
-      >
-        {% if is_root %}
-          <span lang="{{ unit_label.lang }}">
-            {{ unit_label }}
-          </span>
-        {% else %}
-          <span lang="{{ structure_lang }}">
-            {{ node.version.num|default:'¶' }}
-          </span>
-        {% endif %}
-      </a>
+      {% comment %}
+        Номер и заголовок — текст, не ссылка на эту же страницу; ссылка на пункт —
+        неброский значок «#» рядом с «редакции».
+      {% endcomment %}
+      {% if is_root %}
+        <span
+          class="fragment__num"
+          lang="{{ unit_label.lang }}"
+        >
+          {{ unit_label }}
+        </span>
+      {% else %}
+        <span
+          class="fragment__num"
+          lang="{{ structure_lang }}"
+        >
+          {{ node.version.num|default:'¶' }}
+        </span>
+      {% endif %}
       {% if node.heading.text and not is_root %}
         <span
           class="fragment__heading"
@@ -27,13 +31,25 @@
           {{ node.heading }}
         </span>
       {% endif %}
-      <a
-        class="fragment__history"
-        href="{{ node.history_url }}"
-        title="Редакции фрагмента"
-      >
-        редакции
-      </a>
+      <span class="fragment__tools">
+        {% if not is_root %}
+          <a
+            class="fragment__anchor"
+            href="#{{ node.fragment.eid }}"
+            title="Ссылка на этот пункт"
+            aria-label="Ссылка на этот пункт"
+          >
+            #
+          </a>
+        {% endif %}
+        <a
+          class="fragment__history"
+          href="{{ node.history_url }}"
+          title="Редакции фрагмента"
+        >
+          редакции
+        </a>
+      </span>
     </div>
 
     {% if node.unknown %}

@@ -235,6 +235,8 @@ def act_page(request, route, structure):
     )
     context.update(nav_context(route, toc))
     context['sidenav_wide_only'] = True
+    # на странице самого акта его метка в шапке — не ссылка на себя
+    context['act_head_current'] = True
     return render(request, 'site/act_detail.html', context)
 
 

@@ -280,6 +280,14 @@ class ViewerTests(TestCase):
             fetch_redirect_response=False,
         )
 
+    def test_page_does_not_link_to_itself(self):
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertNotContains(response, f'href="{ACT_URL}art_1/"')
+        self.assertNotContains(response, 'href="#art_1"')
+        self.assertContains(response, 'href="#art_1.par_1"')
+        response = self.client.get(ACT_URL)
+        self.assertNotContains(response, f'href="{ACT_URL}"')
+
     def test_language_kept_outside_act(self):
         self.add_ru()
         response = self.client.get(ACT_URL + 'art_1/el/')
@@ -394,7 +402,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'pager__link--toc')
         self.assertContains(response, 'Оглавление акта')
         self.assertContains(response, 'href="/cy/?lang=el"')
-        self.assertRegex(response.content.decode(), r'toc__link--current"[^>]*art_1/"')
+        self.assertContains(response, 'toc__link toc__link--current')
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
         self.assertContains(response, 'toc__link--current')
 

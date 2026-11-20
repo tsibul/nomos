@@ -23,9 +23,20 @@
   gap: 0.25rem 0.5rem;
 }
 
-.fragment__anchor {
+.fragment__num {
   font-weight: 600;
+}
+
+.fragment__tools {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.75rem;
+}
+
+.fragment__anchor {
   text-decoration: none;
+  color: var(--color-neutral-500);
 }
 
 .fragment__heading {
@@ -33,8 +44,6 @@
 }
 
 .fragment__history {
-  margin-left: auto;
-  font-size: 0.75rem;
   color: var(--color-neutral-500);
 }
 
