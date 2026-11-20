@@ -3,6 +3,7 @@
 import datetime
 import hashlib
 import os
+import re
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
@@ -16,6 +17,7 @@ from nomos.acts.models import (
     Fragment,
     FragmentText,
     FragmentVersion,
+    Reference,
 )
 from nomos.sources.cylaw import history, texts_xml
 from nomos.sources.models import Source
@@ -37,6 +39,11 @@ SOURCES = {
 }
 
 
+# <ref id="r1" to="art_5.par_2">: to — eid в том же акте, «uid акта#eid» или «uid акта»
+REF_RE = re.compile(r'<ref\b([^>]*)>')
+REF_ATTR_RE = re.compile(r'\b(id|to)="([^"]*)"')
+
+
 def date(value):
     if not value:
         return None
@@ -55,6 +62,8 @@ class Loader:
         self.fragments = {}
         self.amendments = {}
         self.elements = []
+        # (текст, id, to): цели ищутся, когда загружены фрагменты всех актов
+        self.references = []
 
     def run(self):
         paths = sorted(
@@ -73,13 +82,15 @@ class Loader:
             self.load_relations(element)
         for path, element in zip(paths, self.elements):
             self.load_versions(path, element)
+        self.load_references()
         self.stdout.write(
-            'актов %d, фрагментов %d, редакций %d, текстов %d, примечаний %d' % (
+            'актов %d, фрагментов %d, редакций %d, текстов %d, примечаний %d, ссылок %d' % (
                 Act.objects.count(),
                 Fragment.objects.count(),
                 FragmentVersion.objects.count(),
                 FragmentText.objects.count(),
                 Note.objects.count(),
+                Reference.objects.count(),
             )
         )
 
@@ -183,6 +194,9 @@ class Loader:
             heading=heading,
             text_hash=text_hash(body),
         )
+        for match in REF_RE.finditer(body):
+            found = dict(REF_ATTR_RE.findall(match.group(1)))
+            self.references.append((text, found.get('id', ''), found.get('to', '')))
         for note in notes:
             Note.objects.create(
                 target=text,
@@ -190,6 +204,26 @@ class Loader:
                 origin=note.get('origin', Note.Origin.HUMAN),
                 status=note.get('status', Note.Status.OPEN),
                 body=(note.text or '').strip(),
+            )
+
+    def load_references(self):
+        fragments = {
+            (act_uid, eid): fragment_id
+            for fragment_id, act_uid, eid in Fragment.objects.values_list('id', 'act__uid', 'eid')
+        }
+        for text, anchor, target in self.references:
+            act_uid = text.version.fragment.act.uid
+            eid = target
+            if '/' in target:
+                act_uid, _, eid = target.partition('#')
+            act = self.acts.get(act_uid)
+            fragment_id = fragments.get((act_uid, eid)) if eid else None
+            Reference.objects.create(
+                from_text=text,
+                anchor=anchor,
+                to_act=act,
+                to_fragment_id=fragment_id,
+                resolved=act is not None and (not eid or fragment_id is not None),
             )
 
 
