@@ -150,11 +150,7 @@ class VatLawTests(TestCase):
         """Тексты редакции CyLaw («Σημείωση…», [Σ.Σ.: …]) остаются в cylaw-notes.xml."""
         self.assertFalse(Amendment.objects.filter(note__contains='Σημείωση').exists())
         self.assertFalse(FragmentText.objects.filter(body__contains='source_comment').exists())
-        greek = Note.objects.filter(
-            kind=Note.Kind.SOURCE_COMMENT,
-            target__expression__lang='el',
-        )
-        self.assertFalse(greek.exists())
+        self.assertFalse(Note.objects.filter(kind=Note.Kind.SOURCE_COMMENT).exists())
 
     def test_titles_without_hyphen_breaks(self):
         titles = Expression.objects.filter(title__regex=r'[α-ω]- [α-ω]')
