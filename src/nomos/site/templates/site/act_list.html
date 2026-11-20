@@ -1,10 +1,14 @@
 {% extends 'site/base.html' %}
 
-{% block title %}Акты — Nomos{% endblock %}
+{% block title %}{{ section|default:'Акты' }} — Nomos{% endblock %}
 
 {% block main %}
   <h1 class="page__title">
-    Акты
+    {% if section %}
+      {{ section }}: акты
+    {% else %}
+      Акты
+    {% endif %}
   </h1>
 
   <section class="acts">

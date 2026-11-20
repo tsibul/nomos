@@ -4,22 +4,31 @@ from django.http import Http404
 from django.shortcuts import redirect, render
 
 from nomos.acts.models import Act, ActRelation, Fragment
+from nomos.sources.models import Source
 
-from . import reading
+from . import menu, reading
 
 
-def act_list(request):
+def act_list(request, jurisdiction=None):
     acts = Act.objects.prefetch_related('expressions').order_by('jurisdiction', 'kind', 'uid')
+    section = None
+    if jurisdiction is not None:
+        if jurisdiction not in menu.section_codes():
+            raise Http404('Нет такого раздела')
+        section = dict(menu.SECTIONS)[jurisdiction]
+        acts = acts.filter(jurisdiction=jurisdiction)
     amending_ids = set(
         ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
     )
     base = []
     amending = []
     for act in acts:
+        title, title_lang = reading.act_title_lang(act)
         entry = {
             'act': act,
             'label': reading.act_label(act),
-            'title': reading.act_title(act),
+            'title': title,
+            'title_lang': title_lang,
             'url': reading.build_url(act),
         }
         if act.id in amending_ids:
@@ -32,8 +41,25 @@ def act_list(request):
         {
             'base': base,
             'amending': amending,
+            'section': section,
         },
     )
+
+
+def about(request):
+    sources = []
+    for source in Source.objects.prefetch_related('expressions').order_by('name'):
+        statuses = sorted(
+            {expression.get_status_display().lower() for expression in source.expressions.all()}
+        )
+        sources.append(
+            {
+                'source': source,
+                'statuses': statuses,
+                'count': len(source.expressions.all()),
+            }
+        )
+    return render(request, 'site/about.html', {'sources': sources})
 
 
 def read(request, path):
@@ -96,11 +122,14 @@ def base_context(request, route):
         }
         for lang in reading.act_langs(act)
     ]
+    title, title_lang = reading.act_title_lang(act, route.lang)
     return {
         'act': act,
         'route': route,
         'label': reading.act_label(act),
-        'title': reading.act_title(act, route.lang),
+        'title': title,
+        'title_lang': title_lang,
+        'structure_lang': act.structure_lang or reading.DEFAULT_LANG,
         'act_url': reading.build_url(act, on=on, lang=route.lang),
         'today_url': reading.build_url(act, eid=route.eid, lang=route.lang),
         'langs': langs,
@@ -131,15 +160,30 @@ def act_page(request, route, structure):
             'toc': toc,
             'amended_by': [related_entry(other, route) for other in amended_by],
             'amends': [related_entry(other, route) for other in amends],
+            'sources': text_sources(act),
         }
     )
     return render(request, 'site/act_detail.html', context)
 
 
+def text_sources(act):
+    """Откуда тексты акта: источник и статус каждого выражения."""
+    return [
+        {
+            'lang': expression.lang,
+            'status': expression.get_status_display(),
+            'source': expression.source,
+        }
+        for expression in act.expressions.select_related('source').order_by('lang')
+    ]
+
+
 def related_entry(act, route):
+    title, title_lang = reading.act_title_lang(act, route.lang)
     return {
         'label': reading.act_label(act),
-        'title': reading.act_title(act, route.lang),
+        'title': title,
+        'title_lang': title_lang,
         'url': reading.build_url(act),
     }
 

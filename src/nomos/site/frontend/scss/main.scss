@@ -2,12 +2,17 @@
 @use 'tokens';
 @use 'base';
 @use 'blocks/page';
+@use 'blocks/header';
+@use 'blocks/menu';
+@use 'blocks/about';
 @use 'blocks/acts';
 @use 'blocks/act-head';
 @use 'blocks/toolbar';
 @use 'blocks/crumbs';
 @use 'blocks/toc';
 @use 'blocks/related';
+@use 'blocks/sources';
+@use 'blocks/draft-warning';
 @use 'blocks/original-switch';
 @use 'blocks/untranslated';
 @use 'blocks/unit';

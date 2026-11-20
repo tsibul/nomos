@@ -121,12 +121,17 @@ def act_label(act):
 
 def act_title(act, lang=DEFAULT_LANG):
     """Название на языке чтения, иначе на опорном."""
+    return act_title_lang(act, lang)[0]
+
+
+def act_title_lang(act, lang=DEFAULT_LANG):
+    """Название и его язык (для атрибута lang): на языке чтения, иначе на опорном."""
     expressions = list(act.expressions.all())
     for wanted in (lang, act.structure_lang or DEFAULT_LANG, DEFAULT_LANG):
         for expression in expressions:
             if expression.lang == wanted and expression.title:
-                return expression.title
-    return ''
+                return expression.title, expression.lang
+    return '', wanted
 
 
 def act_langs(act):

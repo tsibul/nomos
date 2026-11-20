@@ -1,0 +1,81 @@
+{% comment %}
+  Шапка: название, разделы, «О проекте», язык текста.
+  Без JS меню видно всегда; с JS на телефоне сворачивается под кнопку.
+{% endcomment %}
+<div
+  class="header"
+  data-header
+>
+  <a
+    class="header__brand"
+    href="/"
+  >
+    Nomos
+  </a>
+
+  <button
+    class="header__toggle"
+    type="button"
+    aria-controls="main-menu"
+    aria-expanded="false"
+    data-menu-toggle
+    hidden
+  >
+    Меню
+  </button>
+
+  <nav
+    class="menu"
+    id="main-menu"
+    aria-label="Разделы"
+  >
+    <ul class="menu__list">
+      {% for section in menu_sections %}
+        <li class="menu__item">
+          {% if section.active %}
+            <a
+              class="menu__link{% if section.current %} menu__link--current{% endif %}"
+              href="{{ section.url }}"
+              {% if section.current %}aria-current="page"{% endif %}
+            >
+              {{ section.label }}
+            </a>
+          {% else %}
+            <span class="menu__link menu__link--disabled">
+              {{ section.label }}
+              <span class="menu__soon">
+                скоро
+              </span>
+            </span>
+          {% endif %}
+        </li>
+      {% endfor %}
+      <li class="menu__item">
+        <a
+          class="menu__link{% if menu_about_current %} menu__link--current{% endif %}"
+          href="/about/"
+          {% if menu_about_current %}aria-current="page"{% endif %}
+        >
+          О проекте
+        </a>
+      </li>
+    </ul>
+  </nav>
+
+  {% if langs %}
+    <nav
+      class="header__langs"
+      aria-label="Язык текста"
+    >
+      {% for lang in langs %}
+        <a
+          class="header__lang{% if lang.current %} header__lang--current{% endif %}"
+          href="{{ lang.url }}"
+          {% if lang.current %}aria-current="true"{% endif %}
+        >
+          {{ lang.code }}
+        </a>
+      {% endfor %}
+    </nav>
+  {% endif %}
+</div>

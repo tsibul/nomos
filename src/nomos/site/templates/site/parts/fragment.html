@@ -3,11 +3,15 @@
   id="{{ node.fragment.eid }}"
 >
   {% if node.version %}
-    <div class="fragment__head">
+    <div
+      class="fragment__head"
+      lang="{{ structure_lang }}"
+    >
       <a
         class="fragment__anchor"
         href="#{{ node.fragment.eid }}"
         title="Ссылка на фрагмент {{ node.fragment.eid }}"
+        lang="ru"
       >
         {% if is_root %}
           {{ unit_label }}
@@ -24,6 +28,7 @@
         class="fragment__history"
         href="{{ node.history_url }}"
         title="Редакции фрагмента"
+        lang="ru"
       >
         редакции
       </a>
@@ -37,14 +42,14 @@
       <div class="fragment__texts">
         <div
           class="fragment__text"
-          lang="{% if node.no_translation %}el{% else %}{{ route.lang }}{% endif %}"
+          lang="{{ node.text.expression.lang|default:'el' }}"
         >
           {{ node.body|safe }}
         </div>
         {% if node.original_body %}
           <div
             class="fragment__original"
-            lang="el"
+            lang="{{ node.original.expression.lang }}"
           >
             {{ node.original_body|safe }}
           </div>

@@ -56,7 +56,12 @@ class ViewerTests(TestCase):
             source=source,
             title='Τροποποιητικός',
         )
-        base = Amendment.objects.create(amending_act=cls.law, kind='base', key='base', marker='base')
+        base = Amendment.objects.create(
+            amending_act=cls.law,
+            kind='base',
+            key='base',
+            marker='base',
+        )
         amending_base = Amendment.objects.create(
             amending_act=cls.amending,
             kind='base',
@@ -177,10 +182,30 @@ class ViewerTests(TestCase):
         self.assertEqual([entry['act'] for entry in base], [self.law])
         self.assertEqual([entry['act'] for entry in amending], [self.amending])
 
+    def test_menu_sections_follow_data(self):
+        response = self.client.get('/')
+        self.assertContains(response, 'href="/cy/"')
+        self.assertNotContains(response, 'href="/eu/"')
+        self.assertContains(response, 'скоро')
+        self.assertContains(response, 'href="/about/"')
+
+    def test_section_lists_its_acts(self):
+        response = self.client.get('/cy/')
+        self.assertEqual(len(response.context['base']), 1)
+        self.assertEqual(self.client.get('/xx/').status_code, 404)
+
+    def test_about_lists_sources(self):
+        response = self.client.get('/about/')
+        self.assertContains(response, 'Тест')
+        self.assertContains(response, 'CC BY 4.0')
+
     def test_act_page_has_toc(self):
         response = self.client.get(ACT_URL)
         self.assertContains(response, 'ΜΕΡΟΣ I')
         self.assertContains(response, f'href="{ACT_URL}art_1/"')
+        self.assertContains(response, 'translate="no"')
+        self.assertContains(response, 'Источник текста')
+        self.assertContains(response, 'Тест')
 
     def test_version_by_date(self):
         response = self.client.get(ACT_URL + '@2024-06-01/art_1/')
@@ -247,6 +272,8 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'Сомнительный термин')
         self.assertContains(response, 'unit--with-original')
+        self.assertContains(response, 'Рабочий перевод, не выверен')
+        self.assertContains(response, 'class="fragment__original"\n            lang="el"')
 
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')

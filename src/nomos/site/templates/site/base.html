@@ -1,8 +1,15 @@
 {% load django_vite %}
 <!doctype html>
-<html lang="{{ route.lang|default:'ru' }}">
+<html
+  lang="ru"
+  translate="no"
+>
   <head>
     <meta charset="utf-8">
+    <meta
+      name="google"
+      content="notranslate"
+    >
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1"
@@ -16,12 +23,7 @@
 
   <body class="page">
     <header class="page__header">
-      <a
-        class="page__brand"
-        href="/"
-      >
-        Nomos
-      </a>
+      {% include 'site/parts/header.html' %}
       {% block header %}{% endblock %}
     </header>
 

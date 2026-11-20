@@ -1,4 +1,7 @@
-<ul class="toc__list">
+<ul
+  class="toc__list"
+  lang="{{ structure_lang }}"
+>
   {% for item in items %}
     <li class="toc__item{% if not item.is_unit %} toc__item--section{% endif %}">
       {% if item.is_unit %}
