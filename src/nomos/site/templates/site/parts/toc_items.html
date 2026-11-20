@@ -1,0 +1,19 @@
+<ul class="toc__list">
+  {% for item in items %}
+    <li class="toc__item{% if not item.is_unit %} toc__item--section{% endif %}">
+      {% if item.is_unit %}
+        <a
+          class="toc__link"
+          href="{{ item.url }}"
+        >
+          {{ item.label }}
+        </a>
+      {% else %}
+        <span class="toc__section">
+          {{ item.label }}
+        </span>
+        {% include 'site/parts/toc_items.html' with items=item.children %}
+      {% endif %}
+    </li>
+  {% endfor %}
+</ul>

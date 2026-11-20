@@ -1,0 +1,35 @@
+.history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.history__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--color-neutral-500);
+}
+
+.history__item--current {
+  border-left-color: var(--color-primary-500);
+  background: var(--color-primary-50);
+}
+
+.history__dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.history__state {
+  font-weight: 400;
+  color: var(--color-neutral-500);
+}
+
+.history__known {
+  font-size: 0.875rem;
+  color: var(--color-neutral-500);
+}

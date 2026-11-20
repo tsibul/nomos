@@ -1,0 +1,85 @@
+{% extends 'site/base.html' %}
+
+{% block title %}{{ unit_label }} — {{ label }} — Nomos{% endblock %}
+
+{% block header %}
+  {% include 'site/parts/act_header.html' %}
+{% endblock %}
+
+{% block main %}
+  {% include 'site/parts/toolbar.html' %}
+
+  <nav
+    class="crumbs"
+    aria-label="Положение в акте"
+  >
+    <a
+      class="crumbs__link"
+      href="{{ act_url }}"
+    >
+      Оглавление
+    </a>
+    {% for crumb in crumbs %}
+      <span class="crumbs__item">
+        {{ crumb }}
+      </span>
+    {% endfor %}
+  </nav>
+
+  {% if untranslated %}
+    <p class="untranslated">
+      Перевода нет — показан официальный греческий текст.
+    </p>
+  {% elif route.lang != 'el' %}
+    <div class="original-switch">
+      {% if show_original %}
+        <a
+          class="original-switch__link"
+          href="?"
+          data-original-toggle
+        >
+          Скрыть греческий текст
+        </a>
+      {% else %}
+        <a
+          class="original-switch__link"
+          href="?orig=1"
+          data-original-toggle
+        >
+          Показать греческий текст рядом
+        </a>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div
+    class="unit{% if show_original %} unit--with-original{% endif %}"
+    data-unit
+  >
+    {% include 'site/parts/fragment.html' with node=root is_root=True %}
+  </div>
+
+  <nav
+    class="pager"
+    aria-label="Соседние положения"
+  >
+    {% if previous %}
+      <a
+        class="pager__link pager__link--previous"
+        href="{{ previous.url }}"
+        rel="prev"
+      >
+        ← {{ previous.label }}
+      </a>
+    {% endif %}
+    {% if next %}
+      <a
+        class="pager__link pager__link--next"
+        href="{{ next.url }}"
+        rel="next"
+      >
+        {{ next.label }} →
+      </a>
+    {% endif %}
+  </nav>
+{% endblock %}

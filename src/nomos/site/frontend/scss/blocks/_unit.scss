@@ -1,0 +1,28 @@
+@use '../base';
+
+// Греческий оригинал рядом с переводом: скрыт, пока не выбран показ.
+.unit .fragment__original {
+  display: none;
+}
+
+.unit--with-original .fragment__original {
+  display: block;
+  padding-top: 0.5rem;
+  border-top: 1px dashed var(--color-neutral-500);
+  color: var(--color-neutral-500);
+}
+
+@media (min-width: base.$break-tablet) {
+  .unit--with-original .fragment__texts {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+  }
+
+  .unit--with-original .fragment__original {
+    padding-top: 0;
+    padding-left: 1rem;
+    border-top: 0;
+    border-left: 1px dashed var(--color-neutral-500);
+  }
+}

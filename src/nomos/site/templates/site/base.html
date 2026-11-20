@@ -1,0 +1,32 @@
+{% load django_vite %}
+<!doctype html>
+<html lang="{{ route.lang|default:'ru' }}">
+  <head>
+    <meta charset="utf-8">
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    >
+    <title>
+      {% block title %}Nomos{% endblock %}
+    </title>
+    {% vite_hmr_client %}
+    {% vite_asset 'js/main.js' %}
+  </head>
+
+  <body class="page">
+    <header class="page__header">
+      <a
+        class="page__brand"
+        href="/"
+      >
+        Nomos
+      </a>
+      {% block header %}{% endblock %}
+    </header>
+
+    <main class="page__main">
+      {% block main %}{% endblock %}
+    </main>
+  </body>
+</html>

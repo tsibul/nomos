@@ -1,0 +1,133 @@
+<section
+  class="fragment fragment--{{ node.fragment.kind }}{% if is_root %} fragment--root{% endif %}"
+  id="{{ node.fragment.eid }}"
+>
+  {% if node.version %}
+    <div class="fragment__head">
+      <a
+        class="fragment__anchor"
+        href="#{{ node.fragment.eid }}"
+        title="Ссылка на фрагмент {{ node.fragment.eid }}"
+      >
+        {% if is_root %}
+          {{ unit_label }}
+        {% else %}
+          {{ node.version.num|default:'¶' }}
+        {% endif %}
+      </a>
+      {% if node.version.heading and not is_root %}
+        <span class="fragment__heading">
+          {{ node.version.heading }}
+        </span>
+      {% endif %}
+      <a
+        class="fragment__history"
+        href="{{ node.history_url }}"
+        title="Редакции фрагмента"
+      >
+        редакции
+      </a>
+    </div>
+
+    {% if node.unknown %}
+      <p class="fragment__flag fragment__flag--unknown">
+        Текст неизвестен
+      </p>
+    {% elif node.body %}
+      <div class="fragment__texts">
+        <div
+          class="fragment__text"
+          lang="{% if node.no_translation %}el{% else %}{{ route.lang }}{% endif %}"
+        >
+          {{ node.body|safe }}
+        </div>
+        {% if node.original_body %}
+          <div
+            class="fragment__original"
+            lang="el"
+          >
+            {{ node.original_body|safe }}
+          </div>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if node.no_translation and not node.unknown and not untranslated %}
+      <p class="fragment__flag">
+        Перевода нет — показан греческий текст
+      </p>
+    {% endif %}
+
+    {% if node.text.stale %}
+      <p class="fragment__flag">
+        Перевод сделан с прежнего текста
+      </p>
+    {% endif %}
+
+    {% if node.introduced %}
+      <p class="fragment__meta">
+        Редакция{% if node.start %} с {{ node.start|date:'d.m.Y' }}{% endif %}:
+        <a
+          class="fragment__meta-link"
+          href="{{ node.introduced_url }}"
+        >
+          {{ node.introduced_label }}
+        </a>
+        {% if node.introduced.note %}
+          — {{ node.introduced.note }}
+        {% endif %}
+      </p>
+    {% endif %}
+
+    {% if node.future %}
+      <p class="fragment__future">
+        С {{ node.future_start|date:'d.m.Y' }}
+        <a
+          class="fragment__future-link"
+          href="{{ node.future_url }}"
+        >
+          новая редакция{% if node.future.state == 'repealed' %} (исключается){% endif %}
+        </a>
+      </p>
+    {% endif %}
+
+    {% if node.notes %}
+      <ul class="notes">
+        {% for note in node.notes %}
+          <li class="notes__item notes__item--{{ note.kind }}">
+            <span class="notes__kind">
+              {{ note.get_kind_display }}:
+            </span>
+            {% if note.span %}
+              «{{ note.span }}» —
+            {% endif %}
+            {{ note.body }}
+            {% if note.suggestion %}
+              <span class="notes__suggestion">
+                Вариант: {{ note.suggestion }}
+              </span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    {% if node.children %}
+      <div class="fragment__children">
+        {% for child in node.children %}
+          {% include 'site/parts/fragment.html' with node=child is_root=False %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="fragment__future">
+      Фрагмент вводится
+      <a
+        class="fragment__future-link"
+        href="{{ node.future_url }}"
+      >
+        новой редакцией
+      </a>
+    </p>
+  {% endif %}
+</section>

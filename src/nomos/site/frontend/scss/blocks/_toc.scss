@@ -1,0 +1,26 @@
+.toc__heading {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+
+.toc__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.toc__list .toc__list {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1rem;
+  border-left: 1px solid var(--color-neutral-500);
+}
+
+.toc__section {
+  display: block;
+  font-weight: 600;
+}
+
+.toc__link {
+  display: block;
+  padding: 0.25rem 0;
+}
