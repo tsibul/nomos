@@ -245,15 +245,61 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'id="art_1.par_1"')
         self.assertContains(response, 'href="#art_1.par_1"')
-        response = self.client.get(ACT_URL + '@2024-06-01/art_1.par_1/ru/')
+        response = self.client.get(ACT_URL + '@2024-06-01/art_1.par_1/')
         self.assertRedirects(
             response,
-            ACT_URL + '@2024-06-01/art_1/ru/#art_1.par_1',
+            ACT_URL + '@2024-06-01/art_1/#art_1.par_1',
             fetch_redirect_response=False,
         )
 
+    def add_ru(self):
+        return Expression.objects.create(
+            act=self.law,
+            lang='ru',
+            status='our_translation',
+            source=Source.objects.get(code='test'),
+        )
+
+    def test_act_without_translation_offers_no_russian(self):
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertEqual([lang['code'] for lang in response.context['langs']], ['el'])
+        self.assertEqual(self.client.get(ACT_URL + 'art_1/ru/').status_code, 404)
+
+    def test_history_keeps_language(self):
+        self.add_ru()
+        response = self.client.get(ACT_URL + 'art_1.par_1/history/el/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['route'].lang, 'el')
+        switch = {lang['code']: lang['url'] for lang in response.context['langs']}
+        self.assertEqual(switch['ru'], ACT_URL + 'art_1.par_1/history/')
+        response = self.client.get(ACT_URL + 'art_1.par_1/history/ru/')
+        self.assertRedirects(
+            response,
+            ACT_URL + 'art_1.par_1/history/',
+            status_code=301,
+            fetch_redirect_response=False,
+        )
+
+    def test_language_kept_outside_act(self):
+        self.add_ru()
+        response = self.client.get(ACT_URL + 'art_1/el/')
+        self.assertContains(response, 'href="/cy/?lang=el"')
+        self.assertContains(response, 'href="/about/?lang=el"')
+        response = self.client.get('/cy/', {'lang': 'el'})
+        self.assertContains(response, f'href="{ACT_URL}el/"')
+        response = self.client.get('/cy/')
+        self.assertContains(response, f'href="{ACT_URL}"')
+
+    def test_language_switch_keeps_original_mode(self):
+        self.add_ru()
+        response = self.client.get(ACT_URL + '@2024-06-01/art_1/', {'orig': '1'})
+        switch = {lang['code']: lang['url'] for lang in response.context['langs']}
+        self.assertEqual(switch['el'], ACT_URL + '@2024-06-01/art_1/el/?orig=1')
+        self.assertContains(response, 'data-keep-hash')
+
     def test_missing_translation_falls_back_to_greek(self):
-        response = self.client.get(ACT_URL + 'art_1/ru/')
+        self.add_ru()
+        response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'Перевод готовится')
 
@@ -347,7 +393,7 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'pager__link--toc')
         self.assertContains(response, 'Оглавление акта')
-        self.assertContains(response, 'href="/cy/"')
+        self.assertContains(response, 'href="/cy/?lang=el"')
         self.assertRegex(response.content.decode(), r'toc__link--current"[^>]*art_1/"')
         response = self.client.get(ACT_URL + 'art_1.par_1/history/')
         self.assertContains(response, 'toc__link--current')

@@ -54,7 +54,7 @@ KIND_PREFIX = {
 
 @dataclass
 class Route:
-    """Разобранный адрес: /<акт>/[@<дата>/][<eid>/][<язык>/ | history/]."""
+    """Разобранный адрес: /<акт>/[@<дата>/][<eid>/][history/][<язык>/]."""
 
     act: Act
     on: datetime.date | None = None
@@ -109,6 +109,10 @@ def parse_path(path):
     elif rest and rest[0] == HISTORY and route.eid:
         route.history = True
         rest = rest[1:]
+        if rest and rest[0] in LANGS:
+            route.lang = rest[0]
+            route.explicit_lang = True
+            rest = rest[1:]
     if rest:
         raise Http404('Неверный адрес')
     return route
@@ -133,7 +137,7 @@ def build_url(act, on=None, eid=None, lang=None, history=False):
         parts.append(eid)
     if history:
         parts.append(HISTORY)
-    elif lang is not None and lang != default_lang(act):
+    if lang is not None and lang != default_lang(act):
         parts.append(lang)
     return '/' + '/'.join(parts) + '/'
 
@@ -275,9 +279,10 @@ def number_sort_key(number):
 
 
 def act_langs(act):
-    """Языки переключателя: греческий и русский всегда, прочие — если тексты есть."""
-    present = set(act.expressions.values_list('lang', flat=True))
-    return [lang for lang in LANGS if lang in ('el', 'ru') or lang in present]
+    """Языки переключателя: язык оригинала и те, на которые есть тексты акта."""
+    present = {expression.lang for expression in act.expressions.all()}
+    present.add(act.structure_lang or DEFAULT_LANG)
+    return [lang for lang in LANGS if lang in present]
 
 
 @dataclass

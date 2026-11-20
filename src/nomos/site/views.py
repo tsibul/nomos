@@ -6,7 +6,7 @@ from django.shortcuts import redirect, render
 from nomos.acts.models import Act, ActRelation, Fragment
 from nomos.sources.models import Source
 
-from . import menu, reading
+from . import menu, reading, ui
 
 
 def act_list(request, jurisdiction=None):
@@ -19,6 +19,7 @@ def act_list(request, jurisdiction=None):
         section = dict(menu.SECTIONS)[jurisdiction]
         acts = acts.filter(jurisdiction=jurisdiction)
     acts = sorted(acts, key=reading.act_sort_key)
+    lang = ui.ui_lang(request)
     amending_ids = set(
         ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
     )
@@ -27,7 +28,7 @@ def act_list(request, jurisdiction=None):
     amending_laws = []
     regulations = []
     for act in acts:
-        entry = act_entry(act, targets.get(act.id, ''))
+        entry = act_entry(act, targets.get(act.id, ''), lang)
         if act.id not in amending_ids:
             base.append(entry)
         elif act.kind == Act.Kind.REGULATION_BY_LAW:
@@ -51,17 +52,21 @@ def act_list(request, jurisdiction=None):
     )
 
 
-def act_entry(act, changes=''):
-    """Строка списка актов: короткое название, полное — второй строкой, что меняет."""
-    title, title_lang = reading.act_title_lang(act, reading.READER_LANG)
+def act_entry(act, changes='', lang=reading.READER_LANG):
+    """Строка списка актов: короткое название, полное — второй строкой, что меняет.
+
+    Ссылка — на языке интерфейса, если у акта есть этот язык, иначе на языке по умолчанию.
+    """
+    title, title_lang = reading.act_title_lang(act, lang)
+    link_lang = lang if lang in reading.act_langs(act) else None
     return {
         'act': act,
         'label': reading.act_label(act),
-        'short': reading.act_short_label(act, reading.READER_LANG),
+        'short': reading.act_short_label(act, lang),
         'title': title,
         'title_lang': title_lang,
         'changes': changes,
-        'url': reading.build_url(act),
+        'url': reading.build_url(act, lang=link_lang),
     }
 
 
@@ -83,6 +88,7 @@ def robots(request):
 
 def read(request, path):
     route = reading.parse_path(path)
+    request.ui_lang = route.lang
     if route.explicit_lang and route.lang == reading.default_lang(route.act):
         # язык по умолчанию в адресе не пишется: /ru/ → адрес без языка
         url = reading.build_url(
@@ -90,6 +96,7 @@ def read(request, path):
             on=route.on,
             eid=route.eid,
             lang=route.lang,
+            history=route.history,
         )
         if request.GET:
             url += '?' + request.GET.urlencode()
@@ -127,7 +134,7 @@ def form_target(request, route):
     if on == datetime.date.today():
         on = None
     lang = request.GET.get('lang', route.lang)
-    if lang not in reading.LANGS:
+    if lang not in reading.act_langs(route.act):
         lang = route.lang
     url = reading.build_url(
         route.act,
@@ -144,10 +151,20 @@ def form_target(request, route):
 def base_context(request, route):
     act = route.act
     on = route.on
+    # переключатель ведёт на ту же страницу, дату и режим «оригинал рядом»;
+    # якорь добавляет JS (data-keep-hash)
+    query = '?orig=1' if request.GET.get('orig') else ''
     langs = [
         {
             'code': lang,
-            'url': reading.build_url(act, on=on, eid=route.eid, lang=lang),
+            'url': reading.build_url(
+                act,
+                on=on,
+                eid=route.eid,
+                lang=lang,
+                history=route.history,
+            )
+            + query,
             'current': lang == route.lang,
         }
         for lang in reading.act_langs(act)
@@ -174,11 +191,12 @@ def nav_context(route, toc, current=None):
     """Левая колонка открытого акта: оглавление, текущая страница, путь к списку актов."""
     jurisdiction = route.act.jurisdiction
     sections = dict(menu.SECTIONS)
+    query = ui.lang_query(route.lang)
     if jurisdiction in sections:
-        section_url = f'/{jurisdiction}/'
+        section_url = f'/{jurisdiction}/{query}'
         section_label = sections[jurisdiction]
     else:
-        section_url = '/'
+        section_url = '/' + query
         section_label = 'Акты'
     if current is not None:
         for item in reading.toc_units(toc):

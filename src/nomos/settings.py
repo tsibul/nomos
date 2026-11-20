@@ -74,6 +74,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'nomos.site.menu.menu',
                 'nomos.site.notices.notices',
+                'nomos.site.ui.ui',
             ],
         },
     },
