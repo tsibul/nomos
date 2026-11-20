@@ -345,7 +345,8 @@ class OrderKeyTests(SimpleTestCase):
 
 REF_EIDS = [
     'art_5', 'art_5.par_1', 'art_5.par_2', 'art_6', 'art_6.par_2', 'art_8', 'art_9',
-    'art_9.par_4', 'art_9.par_5', 'art_9.par_10', 'art_11A', 'art_13ST', 'art_13ST.par_1',
+    'art_9.par_4', 'art_9.par_5', 'art_9.par_10', 'art_11A', 'art_13A', 'art_13B',
+    'art_13ST', 'art_13ST.par_1',
     'art_13ST.par_1.pnt_a', 'art_58', 'art_72', 'sch_1', 'sch_1.prt_III', 'sch_5',
     'sch_5.tbl_G', 'sch_10', 'sch_10.par_1A', 'sch_13',
 ]
@@ -392,6 +393,7 @@ class RefsTests(SimpleTestCase):
             'в статьях 8 и 9': ['art_8', 'art_9'],
             'пункта (2) статьи 6': ['art_6.par_2'],
             'статьёй 13СТ': ['art_13ST'],
+            'статьям 13А и 13Б': ['art_13A', 'art_13B'],
             'статей 11А или 13ΣΤ(1)': ['art_11A', 'art_13ST.par_1'],
             'Пятое приложение': ['sch_5'],
             'параграфа 1Α Десятого приложения': ['sch_10.par_1A'],
