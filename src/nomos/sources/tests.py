@@ -13,7 +13,7 @@ from django.test import SimpleTestCase, TestCase
 from nomos.acts.models import Amendment, Expression, Fragment, FragmentText, Reference
 from nomos.translate.models import Note
 
-from .cylaw import history, numbering, refs
+from .cylaw import history, numbering, refs, texts_xml
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
 
@@ -169,6 +169,9 @@ class VatLawTests(TestCase):
             from_text__version__key=history.BASE_KEY,
         ).to_fragment.eid
         self.assertEqual(eid, 'sch_7')
+
+    def test_expressions_not_public_by_default(self):
+        self.assertFalse(Expression.objects.filter(public=True).exists())
 
     def active_eids(self, prefix, day):
         found = set()
@@ -342,7 +345,8 @@ class OrderKeyTests(SimpleTestCase):
 
 REF_EIDS = [
     'art_5', 'art_5.par_1', 'art_5.par_2', 'art_6', 'art_6.par_2', 'art_8', 'art_9',
-    'art_9.par_4', 'art_9.par_5', 'art_9.par_10', 'art_11A', 'art_13ST', 'art_13ST.par_1',
+    'art_9.par_4', 'art_9.par_5', 'art_9.par_10', 'art_11A', 'art_13A', 'art_13B',
+    'art_13ST', 'art_13ST.par_1',
     'art_13ST.par_1.pnt_a', 'art_58', 'art_72', 'sch_1', 'sch_1.prt_III', 'sch_5',
     'sch_5.tbl_G', 'sch_10', 'sch_10.par_1A', 'sch_13',
 ]
@@ -389,6 +393,7 @@ class RefsTests(SimpleTestCase):
             'в статьях 8 и 9': ['art_8', 'art_9'],
             'пункта (2) статьи 6': ['art_6.par_2'],
             'статьёй 13СТ': ['art_13ST'],
+            'статьям 13А и 13Б': ['art_13A', 'art_13B'],
             'статей 11А или 13ΣΤ(1)': ['art_11A', 'art_13ST.par_1'],
             'Пятое приложение': ['sch_5'],
             'параграфа 1Α Десятого приложения': ['sch_10.par_1A'],
@@ -455,3 +460,36 @@ class RefsTests(SimpleTestCase):
             self.assertEqual(refs.strip_own_refs(result), source)
             refs.mark_translation(path, refs.Targets(REF_EIDS), {'u1': 'art_1'}, {})
             self.assertEqual(path.read_text(encoding='utf-8'), result)
+
+
+class PublicAttributeTests(TestCase):
+    """Атрибут public у <expression>: читается загрузчиком, сохраняется при пересборке."""
+
+    def test_public_kept_and_loaded(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            path = root / 'cy/law/2000/1_I/act.xml'
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<act uid="cy/law/2000/1_I" jurisdiction="cy" kind="law">\n'
+                '  <expression lang="el" status="official_text" source="cylaw" file="el.xml"'
+                ' public="true" />\n'
+                '  <expression lang="ru" status="our_translation" source="nomos" file="ru.xml"'
+                ' public="true" />\n'
+                '</act>\n',
+                encoding='utf-8',
+            )
+            info = texts_xml.ActInfo(
+                uid='cy/law/2000/1_I', jurisdiction='cy', kind='law', source='cylaw',
+            )
+            texts_xml.write_act(path, info, {}, {})
+            public = {
+                item.get('lang'): item.get('public')
+                for item in texts_xml.read_act(path).iter('expression')
+            }
+            self.assertEqual(public, {'el': 'true', 'ru': 'true'})
+            call_command('load_texts', texts_dir=folder, stdout=StringIO())
+        self.assertEqual(
+            dict(Expression.objects.values_list('lang', 'public')), {'el': True, 'ru': True},
+        )
