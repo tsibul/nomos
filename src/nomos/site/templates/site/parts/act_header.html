@@ -1,10 +1,16 @@
 <div class="act-head">
-  <a
-    class="act-head__label"
-    href="{{ act_url }}"
-  >
-    {{ label }}
-  </a>
+  {% if act_head_current %}
+    <span class="act-head__label">
+      {{ label }}
+    </span>
+  {% else %}
+    <a
+      class="act-head__label"
+      href="{{ act_url }}"
+    >
+      {{ label }}
+    </a>
+  {% endif %}
   {% if title %}
     <span
       class="act-head__title"

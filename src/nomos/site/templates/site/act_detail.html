@@ -1,5 +1,7 @@
 {% extends 'site/base.html' %}
 
+{% load i18n %}
+
 {% block title %}{{ label }} — Nomos{% endblock %}
 
 {% block header %}
@@ -11,6 +13,8 @@
 {% endblock %}
 
 {% block main %}
+  {% include 'site/parts/back_ref.html' %}
+
   {% include 'site/parts/toolbar.html' %}
 
   <section class="act-info">
@@ -29,7 +33,7 @@
 
     <div class="act-info__row">
       <span class="act-info__caption">
-        Языки:
+        {% translate 'Языки:' %}
       </span>
       {% for lang in langs %}
         {% if lang.current %}
@@ -50,7 +54,7 @@
     {% if sources %}
       <div class="act-info__row">
         <span class="act-info__caption">
-          Источник текста:
+          {% translate 'Источник текста:' %}
         </span>
         <ul class="sources__list">
           {% for entry in sources %}
@@ -85,7 +89,7 @@
     {% if amends %}
       <div class="act-info__row">
         <span class="act-info__caption">
-          Изменяет:
+          {% translate 'Изменяет:' %}
         </span>
         {% include 'site/parts/act_entries.html' with entries=amends %}
       </div>
@@ -94,7 +98,7 @@
     {% if amended_by %}
       <details class="acts__group">
         <summary class="acts__summary">
-          Редакции: изменяющие акты, {{ amended_by|length }}
+          {% translate 'Редакции: изменяющие акты,' %} {{ amended_by|length }}
         </summary>
         {% include 'site/parts/act_entries.html' with entries=amended_by %}
       </details>
@@ -104,10 +108,10 @@
   {# на широком экране оглавление — в левой колонке, здесь только на телефоне #}
   <nav
     class="toc toc--main"
-    aria-label="Оглавление"
+    aria-label="{% translate 'Оглавление' %}"
   >
     <h2 class="toc__heading">
-      Оглавление
+      {% translate 'Оглавление' %}
     </h2>
     {% include 'site/parts/toc_items.html' with items=toc %}
   </nav>

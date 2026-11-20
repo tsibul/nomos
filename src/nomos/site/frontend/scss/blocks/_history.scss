@@ -38,3 +38,15 @@
   margin: 0 0 1rem;
   color: var(--color-neutral-500);
 }
+
+// Путь назад из истории: к действующему тексту и к редакции на дату
+.history__back {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.history__back-link {
+  font-weight: 600;
+}

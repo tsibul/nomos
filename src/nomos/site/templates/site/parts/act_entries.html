@@ -1,3 +1,4 @@
+{% load i18n %}
 <ul class="acts__list">
   {% for entry in entries %}
     <li class="acts__item">
@@ -5,7 +6,7 @@
     </li>
   {% empty %}
     <li class="acts__item acts__item--empty">
-      Нет актов
+      {% translate 'Нет актов' %}
     </li>
   {% endfor %}
 </ul>

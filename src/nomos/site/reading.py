@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 
 from django.db import models
 from django.http import Http404
+from django.utils import translation
 from django.utils.html import escape
+from django.utils.http import urlencode
+from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy
 
 from nomos.acts.models import (
     Act,
@@ -21,6 +25,7 @@ from nomos.acts.models import (
     FragmentVersion,
 )
 from nomos.translate.models import Note
+
 
 EARLIEST = datetime.date(2024, 1, 1)
 LANGS = ('el', 'en', 'ru')
@@ -54,7 +59,7 @@ KIND_PREFIX = {
 
 @dataclass
 class Route:
-    """Разобранный адрес: /<акт>/[@<дата>/][<eid>/][<язык>/ | history/]."""
+    """Разобранный адрес: /<акт>/[@<дата>/][<eid>/][history/][<язык>/]."""
 
     act: Act
     on: datetime.date | None = None
@@ -109,6 +114,10 @@ def parse_path(path):
     elif rest and rest[0] == HISTORY and route.eid:
         route.history = True
         rest = rest[1:]
+        if rest and rest[0] in LANGS:
+            route.lang = rest[0]
+            route.explicit_lang = True
+            rest = rest[1:]
     if rest:
         raise Http404('Неверный адрес')
     return route
@@ -133,17 +142,41 @@ def build_url(act, on=None, eid=None, lang=None, history=False):
         parts.append(eid)
     if history:
         parts.append(HISTORY)
-    elif lang is not None and lang != default_lang(act):
+    if lang is not None and lang != default_lang(act):
         parts.append(lang)
     return '/' + '/'.join(parts) + '/'
 
 
+# языки, на которые переведён весь интерфейс; на прочих строки выходят по-русски
+UI_LANGS = ('ru', 'el')
+
+# виды актов на языке интерфейса (в модели Act.Kind — русские названия)
+KIND_NAMES = {
+    Act.Kind.LAW: gettext_lazy('Закон'),
+    Act.Kind.REGULATION_BY_LAW: gettext_lazy('Подзаконный акт (ΚΔΠ)'),
+    Act.Kind.DIRECTIVE: gettext_lazy('Директива'),
+    Act.Kind.REGULATION: gettext_lazy('Регламент'),
+    Act.Kind.IMPLEMENTING_REGULATION: gettext_lazy('Имплементационный регламент'),
+    Act.Kind.STANDARD: gettext_lazy('Стандарт'),
+    Act.Kind.INSTRUCTION: gettext_lazy('Инструкция'),
+    Act.Kind.CIRCULAR: gettext_lazy('Циркуляр'),
+    Act.Kind.DECISION: gettext_lazy('Решение'),
+}
+
+
+def interface_lang():
+    """Язык, на котором выходят строки интерфейса (включённый, если он переведён)."""
+    lang = translation.get_language()
+    return lang if lang in UI_LANGS else READER_LANG
+
+
 def act_label(act):
-    """«Закон 95(I)/2000», «Подзаконный акт (ΚΔΠ) 95/2024»."""
+    """«Закон 95(I)/2000», «Подзаконный акт (ΚΔΠ) 95/2024»; на el — «Νόμος 95(I)/2000»."""
     number = act.number
     if act.year:
         number = f'{number}/{act.year}' if number else act.year
-    return f'{act.get_kind_display()} {number}'.strip()
+    kind = KIND_NAMES.get(act.kind) or act.get_kind_display()
+    return f'{kind} {number}'.strip()
 
 
 def act_title(act, lang=DEFAULT_LANG):
@@ -172,8 +205,8 @@ def act_short_label(act, lang=DEFAULT_LANG):
         text = f'ΚΔΠ {act.number}/{act.year}'
         day = act.published_on or act.date_adopted
         if day is not None:
-            text = f'{text} от {day:%d.%m.%Y}'
-        return Label(text, 'ru')
+            text = f"{text} {_('от')} {day:%d.%m.%Y}"
+        return Label(text, interface_lang())
     stored = stored_short_label(act, lang)
     if stored is not None:
         return stored
@@ -183,7 +216,7 @@ def act_short_label(act, lang=DEFAULT_LANG):
     title, title_lang = act_title_lang(act, lang)
     if title:
         return Label(title, title_lang)
-    return Label(act_label(act), 'ru')
+    return Label(act_label(act), interface_lang())
 
 
 def stored_short_label(act, lang):
@@ -237,8 +270,8 @@ def act_sort_key(act):
 
 
 TARGET_LABELS = {
-    'art': 'ст.',
-    'sch': 'прил.',
+    'art': gettext_lazy('ст.'),
+    'sch': gettext_lazy('прил.'),
 }
 
 
@@ -275,9 +308,10 @@ def number_sort_key(number):
 
 
 def act_langs(act):
-    """Языки переключателя: греческий и русский всегда, прочие — если тексты есть."""
-    present = set(act.expressions.values_list('lang', flat=True))
-    return [lang for lang in LANGS if lang in ('el', 'ru') or lang in present]
+    """Языки переключателя: язык оригинала и те, на которые есть тексты акта."""
+    present = {expression.lang for expression in act.expressions.all()}
+    present.add(act.structure_lang or DEFAULT_LANG)
+    return [lang for lang in LANGS if lang in present]
 
 
 @dataclass
@@ -545,22 +579,37 @@ REF_RE = re.compile(r'<ref\b([^>]*)>(.*?)</ref>', re.S)
 REF_ID_RE = re.compile(r'\bid="([^"]*)"')
 
 
-def render_body(text, route):
-    """Тело — разметка из своих XML; `<ref>` с найденной целью становится ссылкой."""
+def render_body(text, route, place=None, marked=True):
+    """Тело — разметка из своих XML; `<ref>` с найденной целью становится ссылкой.
+
+    place — eid фрагмента. У ссылки в основном тексте (marked) — id «ref-<eid>-<anchor>»:
+    на него ведёт «← Назад» со страницы цели. Внутренняя ссылка несёт адрес возврата
+    в параметрах `from` (эта страница) и `at` (место ссылки).
+    """
     if text is None:
         return ''
     references = {reference.anchor: reference for reference in text.references.all()}
 
     def replace(match):
         found = REF_ID_RE.search(match.group(1))
-        reference = references.get(found.group(1)) if found else None
+        anchor = found.group(1) if found else None
+        reference = references.get(anchor) if anchor else None
         inner = match.group(2)
         href = reference_url(reference, route) if reference else None
         if href is None:
             return f'<span class="ref ref--unresolved">{inner}</span>'
-        return f'<a class="ref" href="{escape(href)}">{inner}</a>'
+        ref_id = f'ref-{place}-{anchor}' if place and marked else None
+        if reference.to_act is not None:
+            href += '?' + urlencode({'from': page_url(route), 'at': ref_id or place or ''})
+        id_attr = f' id="{escape(ref_id)}"' if ref_id else ''
+        return f'<a class="ref"{id_attr} href="{escape(href)}">{inner}</a>'
 
     return REF_RE.sub(replace, text.body)
+
+
+def page_url(route):
+    """Адрес открытой страницы акта: дата, положение, язык."""
+    return build_url(route.act, on=route.on, eid=route.eid, lang=route.lang)
 
 
 def reference_url(reference, route):
@@ -619,7 +668,7 @@ def link_node(node, route):
     """Адреса у фрагмента: история редакций, будущая редакция, вводящее положение."""
     act = route.act
     eid = node.fragment.eid
-    node.history_url = build_url(act, on=route.on, eid=eid, history=True)
+    node.history_url = build_url(act, on=route.on, eid=eid, lang=route.lang, history=True)
     if node.future is not None:
         node.future_url = build_url(
             act,
@@ -657,9 +706,10 @@ def attach_texts(nodes, route):
             node.text = pick_text(found, route.lang)
             node.original = original
             node.no_translation = node.text is None and original is not None
-        node.body = render_body(node.text or node.original, route)
+        place = node.fragment.eid
+        node.body = render_body(node.text or node.original, route, place)
         if node.text is not None and node.original is not None:
-            node.original_body = render_body(node.original, route)
+            node.original_body = render_body(node.original, route, place, marked=False)
         notes = []
         for text in (node.text, node.original):
             if text is not None:

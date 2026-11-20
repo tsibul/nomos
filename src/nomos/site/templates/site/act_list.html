@@ -1,13 +1,17 @@
 {% extends 'site/base.html' %}
 
-{% block title %}{{ section|default:'Акты' }} — Nomos{% endblock %}
+{% load i18n %}
+
+{% block title %}{{ section|default:_('Акты') }} — Nomos{% endblock %}
 
 {% block main %}
   {% if is_home %}
     <section class="hero">
       <p class="hero__text">
-        Законы Кипра об НДС для тех, кто читает по-русски: официальный греческий текст,
-        русский перевод, редакции на любую дату с 01.01.2024, оригинал рядом.
+        {% blocktranslate trimmed %}
+          Законы Кипра об НДС для тех, кто читает по-русски: официальный греческий текст,
+          русский перевод, редакции на любую дату с 01.01.2024, оригинал рядом.
+        {% endblocktranslate %}
       </p>
       <div class="hero__actions">
         {% if base %}
@@ -21,9 +25,9 @@
         {% endif %}
         <a
           class="hero__button"
-          href="/about/"
+          href="/about/{{ lang_query }}"
         >
-          О проекте
+          {% translate 'О проекте' %}
         </a>
       </div>
     </section>
@@ -31,9 +35,9 @@
 
   <h1 class="page__title">
     {% if section %}
-      {{ section }}: акты
+      {{ section }}: {% translate 'акты' %}
     {% else %}
-      Акты
+      {% translate 'Акты' %}
     {% endif %}
   </h1>
 
@@ -58,7 +62,7 @@
     {% endfor %}
   {% else %}
     <p class="acts__empty">
-      В разделе пока нет актов: тексты готовятся.
+      {% translate 'В разделе пока нет актов: тексты готовятся.' %}
     </p>
   {% endif %}
 {% endblock %}

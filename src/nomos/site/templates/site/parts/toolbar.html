@@ -1,8 +1,23 @@
+{% load i18n %}
 {% comment %}
   Выбор даты (язык — в шапке). Без JS — обычная форма GET и ссылки;
   с JS — отправка по изменению даты.
 {% endcomment %}
 <div class="toolbar">
+  {% if not is_today %}
+    <p class="toolbar__dated">
+      {% translate 'Вы смотрите редакцию на' %} {{ date|date:'d.m.Y' }}
+      ·
+      <a
+        class="toolbar__dated-link"
+        href="{{ today_url }}"
+        data-keep-hash
+      >
+        {% translate 'Действующая редакция →' %}
+      </a>
+    </p>
+  {% endif %}
+
   <form
     class="toolbar__date"
     method="get"
@@ -13,7 +28,7 @@
       class="toolbar__caption"
       for="toolbar-on"
     >
-      Редакция на дату
+      {% translate 'Редакция на дату' %}
     </label>
     <input
       class="toolbar__input"
@@ -35,33 +50,27 @@
       class="toolbar__button"
       type="submit"
     >
-      Показать
+      {% translate 'Показать' %}
     </button>
-    {% if not is_today %}
-      <a
-        class="toolbar__link"
-        href="{{ today_url }}"
-      >
-        Сегодня
-      </a>
-    {% endif %}
   </form>
 
   <p class="toolbar__notice">
     {{ reconstruction_notice }}
   </p>
 
+  {% include 'site/parts/source_credit.html' %}
+
   {% if future_dates %}
     <div class="toolbar__future">
       <span class="toolbar__caption">
-        Будущая принятая:
+        {% translate 'Будущая принятая:' %}
       </span>
       {% for day in future_dates %}
         <a
           class="toolbar__link"
           href="?on={{ day|date:'Y-m-d' }}"
         >
-          с {{ day|date:'d.m.Y' }}
+          {% translate 'с' %} {{ day|date:'d.m.Y' }}
         </a>
       {% endfor %}
     </div>

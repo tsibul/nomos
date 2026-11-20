@@ -58,6 +58,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # язык интерфейса из адреса, без cookies
+    'nomos.site.ui.InterfaceLanguageMiddleware',
 ]
 
 ROOT_URLCONF = 'nomos.urls'
@@ -74,6 +76,7 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'nomos.site.menu.menu',
                 'nomos.site.notices.notices',
+                'nomos.site.ui.ui',
             ],
         },
     },
@@ -122,7 +125,16 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+# исходный язык строк интерфейса; переводы — в nomos/locale/ (собираются compilemessages)
+LANGUAGE_CODE = 'ru'
+
+LANGUAGES = [
+    ('ru', 'Русский'),
+    ('el', 'Ελληνικά'),
+    ('en', 'English'),
+]
+
+LOCALE_PATHS = [BASE_DIR / 'nomos' / 'locale']
 
 TIME_ZONE = 'UTC'
 

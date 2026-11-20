@@ -1,24 +1,29 @@
+{% load i18n %}
 <section
   class="fragment fragment--{{ node.fragment.kind }}{% if is_root %} fragment--root{% endif %}"
   id="{{ node.fragment.eid }}"
 >
   {% if node.version %}
     <div class="fragment__head">
-      <a
-        class="fragment__anchor"
-        href="#{{ node.fragment.eid }}"
-        title="Ссылка на фрагмент {{ node.fragment.eid }}"
-      >
-        {% if is_root %}
-          <span lang="{{ unit_label.lang }}">
-            {{ unit_label }}
-          </span>
-        {% else %}
-          <span lang="{{ structure_lang }}">
-            {{ node.version.num|default:'¶' }}
-          </span>
-        {% endif %}
-      </a>
+      {% comment %}
+        Номер и заголовок — текст, не ссылка на эту же страницу; ссылка на пункт —
+        неброский значок «#» рядом с «редакции».
+      {% endcomment %}
+      {% if is_root %}
+        <span
+          class="fragment__num"
+          lang="{{ unit_label.lang }}"
+        >
+          {{ unit_label }}
+        </span>
+      {% else %}
+        <span
+          class="fragment__num"
+          lang="{{ structure_lang }}"
+        >
+          {{ node.version.num|default:'¶' }}
+        </span>
+      {% endif %}
       {% if node.heading.text and not is_root %}
         <span
           class="fragment__heading"
@@ -27,18 +32,30 @@
           {{ node.heading }}
         </span>
       {% endif %}
-      <a
-        class="fragment__history"
-        href="{{ node.history_url }}"
-        title="Редакции фрагмента"
-      >
-        редакции
-      </a>
+      <span class="fragment__tools">
+        {% if not is_root %}
+          <a
+            class="fragment__anchor"
+            href="#{{ node.fragment.eid }}"
+            title="{% translate 'Ссылка на этот пункт' %}"
+            aria-label="{% translate 'Ссылка на этот пункт' %}"
+          >
+            #
+          </a>
+        {% endif %}
+        <a
+          class="fragment__history"
+          href="{{ node.history_url }}"
+          title="{% translate 'Редакции фрагмента' %}"
+        >
+          {% translate 'редакции' %}
+        </a>
+      </span>
     </div>
 
     {% if node.unknown %}
       <p class="fragment__flag fragment__flag--unknown">
-        Текст неизвестен
+        {% translate 'Текст неизвестен' %}
       </p>
     {% elif node.body %}
       <div class="fragment__texts">
@@ -61,19 +78,23 @@
 
     {% if node.no_translation and not node.unknown and not untranslated %}
       <p class="fragment__flag">
-        Перевода нет — показан греческий текст
+        {% translate 'Перевода нет — показан греческий текст' %}
       </p>
     {% endif %}
 
     {% if node.text.stale %}
       <p class="fragment__flag">
-        Перевод сделан с прежнего текста
+        {% translate 'Перевод сделан с прежнего текста' %}
       </p>
     {% endif %}
 
     {% if node.introduced %}
       <p class="fragment__meta">
-        Редакция{% if node.start %} с {{ node.start|date:'d.m.Y' }}{% endif %}:
+        {% if node.start %}
+          {% translate 'Редакция' %} {% translate 'с' %} {{ node.start|date:'d.m.Y' }}:
+        {% else %}
+          {% translate 'Редакция' %}:
+        {% endif %}
         <a
           class="fragment__meta-link"
           href="{{ node.introduced_url }}"
@@ -88,12 +109,15 @@
 
     {% if node.future %}
       <p class="fragment__future">
-        С {{ node.future_start|date:'d.m.Y' }}
+        {% translate 'С' %} {{ node.future_start|date:'d.m.Y' }}
         <a
           class="fragment__future-link"
           href="{{ node.future_url }}"
         >
-          новая редакция{% if node.future.state == 'repealed' %} (исключается){% endif %}
+          {% translate 'новая редакция' %}
+          {% if node.future.state == 'repealed' %}
+            {% translate '(исключается)' %}
+          {% endif %}
         </a>
       </p>
     {% endif %}
@@ -111,7 +135,7 @@
             {{ note.body }}
             {% if note.suggestion %}
               <span class="notes__suggestion">
-                Вариант: {{ note.suggestion }}
+                {% translate 'Вариант:' %} {{ note.suggestion }}
               </span>
             {% endif %}
           </li>
@@ -128,12 +152,12 @@
     {% endif %}
   {% else %}
     <p class="fragment__future">
-      Фрагмент вводится
+      {% translate 'Фрагмент вводится' %}
       <a
         class="fragment__future-link"
         href="{{ node.future_url }}"
       >
-        новой редакцией
+        {% translate 'новой редакцией' %}
       </a>
     </p>
   {% endif %}

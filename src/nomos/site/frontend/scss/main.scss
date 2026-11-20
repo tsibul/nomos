@@ -9,6 +9,7 @@
 @use 'blocks/acts';
 @use 'blocks/act-head';
 @use 'blocks/toolbar';
+@use 'blocks/source-credit';
 @use 'blocks/crumbs';
 @use 'blocks/toc';
 @use 'blocks/sidenav';
@@ -20,6 +21,7 @@
 @use 'blocks/unit';
 @use 'blocks/fragment';
 @use 'blocks/notes';
+@use 'blocks/back-ref';
 @use 'blocks/history';
 @use 'blocks/pager';
 @use 'blocks/footer';
