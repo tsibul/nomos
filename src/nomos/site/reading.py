@@ -34,7 +34,9 @@ STATUS_ORDER = (
 )
 
 KIND_PREFIX = {
-    Fragment.Kind.ARTICLE: 'Άρθρο',
+    'el': {Fragment.Kind.ARTICLE: 'Άρθρο'},
+    'ru': {Fragment.Kind.ARTICLE: 'Статья'},
+    'en': {Fragment.Kind.ARTICLE: 'Article'},
 }
 
 
@@ -140,16 +142,69 @@ def act_langs(act):
     return [lang for lang in LANGS if lang in ('el', 'ru') or lang in present]
 
 
-def fragment_label(fragment, version):
+@dataclass
+class Label:
+    """Подпись фрагмента и её язык (для атрибута lang)."""
+
+    text: str
+    lang: str = DEFAULT_LANG
+
+    def __str__(self):
+        return self.text
+
+
+def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
+    """«Άρθρο 45. Παραβάσεις»; с переведённым заголовком — «Статья 45. Нарушения».
+
+    headings — {id редакции: заголовок на языке lang} (см. translated_headings).
+    """
+    structure_lang = fragment.act.structure_lang or DEFAULT_LANG
     if version is None:
-        return fragment.eid
-    prefix = KIND_PREFIX.get(fragment.kind)
+        return Label(fragment.eid, structure_lang)
+    heading = version.heading
+    label_lang = structure_lang
+    translated = (headings or {}).get(version.id)
+    if translated:
+        heading = translated
+        label_lang = lang
+    prefix = KIND_PREFIX.get(label_lang, {}).get(fragment.kind)
     if prefix and version.num:
-        label = f'{prefix} {version.num}'
-        if version.heading:
-            label = f'{label}. {version.heading}'
-        return label
-    return version.heading or version.num or fragment.get_kind_display()
+        text = f'{prefix} {version.num}'
+        if heading:
+            text = f'{text}. {heading}'
+        return Label(text, label_lang)
+    if heading:
+        return Label(heading, label_lang)
+    return Label(version.num or fragment.get_kind_display(), structure_lang)
+
+
+def translated_headings(versions, lang):
+    """Заголовки перевода одним запросом: {id редакции: заголовок}."""
+    if lang == DEFAULT_LANG:
+        return {}
+    ids = [version.id for version in versions if version is not None]
+    texts = (
+        FragmentText.objects.filter(version__in=ids, expression__lang=lang)
+        .exclude(heading='')
+        .values_list('version_id', 'heading')
+    )
+    return dict(texts)
+
+
+def translated_units(structure, lang):
+    """id страниц, где есть хоть один текст перевода (любой редакции)."""
+    if lang == DEFAULT_LANG:
+        return None
+    fragment_ids = FragmentText.objects.filter(
+        version__fragment__act=structure.act,
+        expression__lang=lang,
+    ).values_list('version__fragment_id', flat=True)
+    units = set()
+    for fragment_id in set(fragment_ids):
+        unit = structure.unit_of(structure.by_id[fragment_id])
+        if unit is not None:
+            units.add(unit.id)
+    return units
 
 
 class Structure:
@@ -211,15 +266,21 @@ class Structure:
 @dataclass
 class TocItem:
     fragment: Fragment
-    label: str
+    version: object
     is_unit: bool
+    label: Label | None = None
     url: str = ''
+    translated: bool = True
     children: list = field(default_factory=list)
 
 
 def build_toc(structure, route):
-    """Оглавление на дату: разделы и страницы, отсутствующие на дату — не показываются."""
+    """Оглавление на дату: разделы и страницы, отсутствующие на дату — не показываются.
+
+    На языке перевода — переведённые заголовки и пометка у страниц без перевода.
+    """
     on = route.date
+    flat = []
 
     def walk(fragments):
         items = []
@@ -231,9 +292,10 @@ def build_toc(structure, route):
                 continue
             item = TocItem(
                 fragment=fragment,
-                label=fragment_label(fragment, version),
+                version=version,
                 is_unit=structure.is_unit(fragment),
             )
+            flat.append(item)
             if item.is_unit:
                 item.url = build_url(
                     structure.act,
@@ -246,7 +308,24 @@ def build_toc(structure, route):
             items.append(item)
         return items
 
-    return walk(structure.roots())
+    items = walk(structure.roots())
+    headings = translated_headings([item.version for item in flat], route.lang)
+    translated = translated_units(structure, route.lang)
+    for item in flat:
+        item.label = fragment_label(item.fragment, item.version, headings, route.lang)
+        if translated is not None and item.is_unit:
+            item.translated = item.fragment.id in translated
+    return items
+
+
+def toc_items_by_id(items, found=None):
+    """Пункты оглавления по id фрагмента — подписи для крошек и заголовка страницы."""
+    if found is None:
+        found = {}
+    for item in items:
+        found[item.fragment.id] = item
+        toc_items_by_id(item.children, found)
+    return found
 
 
 def toc_units(items):
@@ -280,9 +359,20 @@ class Node:
 
     @property
     def unknown(self):
-        """Текст неизвестен: текст редакции записан пустым (у разделов текста нет вовсе)."""
+        """Текст неизвестен: текст редакции записан пустым (у разделов текста нет вовсе).
+
+        Текст из одного заголовка (перевод заголовка статьи) — не «неизвестен».
+        """
         shown = self.text or self.original
-        return shown is not None and not shown.body.strip()
+        return shown is not None and not shown.body.strip() and not shown.heading
+
+    @property
+    def heading(self):
+        """Заголовок на языке текста: перевода, иначе опорный из редакции."""
+        if self.text is not None and self.text.heading:
+            return Label(self.text.heading, self.text.expression.lang)
+        structure_lang = self.fragment.act.structure_lang or DEFAULT_LANG
+        return Label(self.version.heading, structure_lang)
 
     @property
     def start(self):
@@ -376,8 +466,8 @@ def build_nodes(structure, unit, route):
 
 
 def has_translation(node):
-    """Есть ли на странице хоть один переведённый фрагмент."""
-    if node.original is not None and node.text is not None:
+    """Есть ли на странице хоть один переведённый фрагмент (хотя бы заголовок)."""
+    if node.text is not None and node.text.expression.lang != DEFAULT_LANG:
         return True
     return any(has_translation(child) for child in node.children)
 

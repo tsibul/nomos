@@ -251,7 +251,7 @@ class ViewerTests(TestCase):
     def test_missing_translation_falls_back_to_greek(self):
         response = self.client.get(ACT_URL + 'art_1/ru/')
         self.assertContains(response, 'Νέο κείμενο')
-        self.assertContains(response, 'Перевода нет')
+        self.assertContains(response, 'Перевод готовится')
 
     def test_translation_with_original_and_note(self):
         ru = Expression.objects.create(
@@ -274,6 +274,44 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'unit--with-original')
         self.assertContains(response, 'Рабочий перевод, не выверен')
         self.assertContains(response, 'class="fragment__original"\n            lang="el"')
+
+    def test_translated_heading(self):
+        ru = Expression.objects.create(
+            act=self.law,
+            lang='ru',
+            status='our_translation',
+            source=Source.objects.create(code='nomos', name='Неофициальный перевод'),
+        )
+        article = self.law.fragments.get(eid='art_1')
+        FragmentText.objects.create(
+            version=article.versions.get(),
+            expression=ru,
+            body='',
+            heading='Толкование',
+            text_hash='ru-heading',
+        )
+        response = self.client.get(ACT_URL + 'ru/')
+        self.assertContains(response, 'lang="ru"\n        >\n          Статья 1. Толкование')
+        self.assertNotContains(response, 'перевод готовится')
+        response = self.client.get(ACT_URL + 'art_1/ru/')
+        self.assertContains(response, 'Статья 1. Толкование — Закон 1(I)/2000 — Nomos')
+        self.assertContains(response, 'Источник перевода: Неофициальный перевод')
+        self.assertNotContains(response, 'Текст неизвестен</p>')
+        self.assertNotContains(response, 'Перевод готовится')
+        self.assertContains(response, 'class="crumbs__item"\n        lang="el"')
+
+    def test_untranslated_article_is_marked(self):
+        Expression.objects.create(
+            act=self.law,
+            lang='ru',
+            status='our_translation',
+            source=Source.objects.get(code='test'),
+        )
+        response = self.client.get(ACT_URL + 'ru/')
+        self.assertContains(response, 'перевод готовится')
+        self.assertContains(response, 'lang="el"\n        >\n          Άρθρο 1. Ερμηνεία')
+        response = self.client.get(ACT_URL + 'art_1/ru/')
+        self.assertContains(response, 'Перевод готовится — показан официальный греческий текст.')
 
     def test_unknown_text_is_marked(self):
         response = self.client.get(ACT_URL + 'art_1/')

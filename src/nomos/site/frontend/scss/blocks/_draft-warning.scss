@@ -6,3 +6,9 @@
   color: var(--color-secondary-900);
   background: var(--color-secondary-50);
 }
+
+.draft-warning__source {
+  display: block;
+  margin-top: 0.25rem;
+  font-weight: 400;
+}

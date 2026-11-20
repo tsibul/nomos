@@ -24,6 +24,7 @@ from nomos.translate.models import Note
 SOURCES = {
     'cylaw': 'CyLaw — сводные тексты законов Кипра',
     'cy-gazette': 'Επίσημη Εφημερίδα της Δημοκρατίας',
+    'nomos': 'Неофициальный перевод',
 }
 
 
@@ -165,11 +166,12 @@ class Loader:
                     if found is not None:
                         self.load_text(version, expression, *found)
 
-    def load_text(self, version, expression, body, notes, unknown):
+    def load_text(self, version, expression, body, notes, unknown, heading):
         text = FragmentText.objects.create(
             version=version,
             expression=expression,
             body=body,
+            heading=heading,
             text_hash=text_hash(body),
         )
         for note in notes:
