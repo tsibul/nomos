@@ -191,17 +191,19 @@ def base_context(request, route):
         'is_today': route.on is None or route.on == datetime.date.today(),
         'earliest': reading.EARLIEST,
         'show_original': bool(request.GET.get('orig')),
-        'back': back_link(request),
+        'back': back_link(request, route.lang),
     }
 
 
 BACK_AT_RE = re.compile(r'^[\w.-]+$')
 
 
-def back_link(request):
+def back_link(request, lang):
     """«← Назад к статье 2»: возврат на страницу, откуда пришли по ссылке (`?from=&at=`).
 
     Адрес возврата собирается заново из разобранного `from` — только страницы актов сайта.
+    Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта,
+    к пункту ссылки: якоря ссылок (`r1`, `r2`…) в каждом языке свои.
     """
     origin = request.GET.get('from', '')
     if not origin.startswith('/') or origin.startswith('//'):
@@ -210,14 +212,27 @@ def back_link(request):
         route = reading.parse_path(origin)
     except Http404:
         return None
-    url = reading.page_url(route)
     at = request.GET.get('at', '')
-    if BACK_AT_RE.match(at):
+    if not BACK_AT_RE.match(at):
+        at = ''
+    if lang != route.lang and lang in reading.act_langs(route.act):
+        route.lang = lang
+        at = fragment_of_anchor(at)
+    url = reading.page_url(route)
+    if at:
         url += '#' + at
     return {
         'url': url,
         'label': back_label(route.eid),
     }
+
+
+def fragment_of_anchor(at):
+    """`ref-art_5.par_5-r1` → `art_5.par_5`: пункт, в котором стоит ссылка."""
+    if not at.startswith('ref-'):
+        return at
+    eid, _sep, _anchor = at.removeprefix('ref-').rpartition('-')
+    return eid
 
 
 def back_label(eid):

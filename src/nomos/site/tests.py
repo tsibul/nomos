@@ -2,7 +2,7 @@ import datetime
 import html
 import re
 
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
 from django.utils import translation
 
 from nomos.acts.models import (
@@ -15,7 +15,7 @@ from nomos.acts.models import (
     FragmentVersion,
     Reference,
 )
-from nomos.site import notices, reading
+from nomos.site import notices, reading, views
 from nomos.sources.models import Source
 from nomos.translate.models import Note
 
@@ -362,6 +362,17 @@ class ViewerTests(TestCase):
         # чужой адрес возврата не принимается
         response = self.client.get('/cy/law/2024/2_I/art_2/', {'from': '//example.com/'})
         self.assertNotContains(response, 'back-ref')
+
+    def test_back_link_follows_switched_language(self):
+        self.add_ru()
+        page = ACT_URL + '@2025-06-01/art_1/'
+        request = RequestFactory().get('/', {'from': page, 'at': 'ref-art_1.par_1-r1'})
+        # с переводом язык акта по умолчанию — русский; язык не меняли — к самой ссылке
+        back = views.back_link(request, 'ru')
+        self.assertEqual(back['url'], page + '#ref-art_1.par_1-r1')
+        # перешли на греческий — назад на греческую страницу, к пункту ссылки
+        back = views.back_link(request, 'el')
+        self.assertEqual(back['url'], page + 'el/#art_1.par_1')
 
     def test_language_switch_keeps_original_mode(self):
         self.add_ru()
