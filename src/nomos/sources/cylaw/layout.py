@@ -42,7 +42,7 @@ def blocks(lines, skip=None):
         if skip and skip(line):
             after_skip = True
             continue
-        if after_skip and current and ITEM_START_RE.match(line):
+        if after_skip and current and starts_block(line, current[-1]):
             found.append(make_block(start, current))
             current = []
         after_skip = False
@@ -60,6 +60,17 @@ def blocks(lines, skip=None):
     if current:
         found.append(make_block(start, current))
     return found
+
+
+TERM_START_RE = re.compile(r'^\s*("|\'\'|«|“)')
+
+
+def starts_block(line, previous):
+    """После колонтитула новый блок — нумерованный пункт или новое определение
+    («"φόρος εκροών" …» после законченного «… άρθρο 19˙»)."""
+    if ITEM_START_RE.match(line):
+        return True
+    return bool(TERM_START_RE.match(line)) and ends_sentence(previous)
 
 
 SENTENCE_END_RE = re.compile(r'([.;:˙·∙\]—–-]|\sή|\sκαι)$')

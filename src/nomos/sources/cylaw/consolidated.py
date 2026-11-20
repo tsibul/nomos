@@ -23,7 +23,7 @@ TOP_RE = re.compile(
 ITEM_RES = [
     ('arabic', re.compile(r'^\((?P<num>\d+[Α-ΩA-Z]{0,3})\)\s*(?P<rest>.*)$')),
     ('greek', re.compile(r'^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$')),
-    ('roman', re.compile(r'^\((?P<num>[ivx]{1,5})\)\s*(?P<rest>.*)$')),
+    ('roman', re.compile(r'^\((?P<num>[ivxν]{1,5})\)\s*(?P<rest>.*)$')),
 ]
 LEVELS = {
     'top': 0,
@@ -108,6 +108,30 @@ def match_item(text):
     return None, None
 
 
+def number_value(num):
+    """Порядковое значение номера пункта или None: «7Α» → 7, «ιβ» → 12, «iii» → 3."""
+    style = numbering.classify(num)
+    if style == 'arabic':
+        return int(numbering.ARABIC_RE.match(num).group(1))
+    if style == 'roman':
+        return numbering.roman_value(num)
+    if style == 'greek':
+        return numbering.greek_value(num)
+    return None
+
+
+def follows(previous, num):
+    """Номер `num` может идти за пунктом `previous` того же вида нумерации."""
+    before = number_value(previous.num_plain())
+    after = number_value(num)
+    if before is None or after is None:
+        return True
+    if after == before:
+        # «7Α» после «7» или «7Α»
+        return num != previous.num_plain() and not num.isdigit()
+    return after == before + 1
+
+
 def looks_like_heading(block, following):
     """Короткая строка на полях (левее текста) перед статьёй или пунктом приложения.
 
@@ -124,6 +148,13 @@ def looks_like_heading(block, following):
     return following is not None and bool(TOP_RE.match(following.text))
 
 
+EDITOR_NOTE_RE = re.compile(r'^Σημείωση\s+\S+\s+(του|της)\s')
+
+
+def is_editor_note(block):
+    return block.indent <= MARGIN and bool(EDITOR_NOTE_RE.match(block.text))
+
+
 class Parser:
     def __init__(self, act_uid):
         self.root = Node('act', token=act_uid)
@@ -134,6 +165,8 @@ class Parser:
         self.schedule = None
         self.history = {}
         self.dropped = []
+        # примечания CyLaw после приложений: «Σημείωση N του Ν. …Έναρξη Ισχύος …»
+        self.notes = []
 
     def parse(self, lines):
         all_blocks = layout.blocks(lines, skip=is_page_furniture)
@@ -145,12 +178,26 @@ class Parser:
         self.root.add(preamble)
         self.stack = [preamble]
         for index, block in enumerate(all_blocks):
+            if self.in_schedules and is_editor_note(block):
+                self.collect_notes(all_blocks[index:])
+                break
             following = next(
                 (later for later in all_blocks[index + 1:] if not is_history(later.text)),
                 None,
             )
             self.feed(block, following)
         return self.root
+
+    def collect_notes(self, blocks):
+        """«Σημείωση N του Ν. …» и текст — одно примечание до следующей «Σημείωση»."""
+        for block in blocks:
+            if block.text.startswith('Cylaw.org'):
+                break
+            # «Σημείωση» бывает отделена от номера переносом страницы
+            if is_editor_note(block) or block.text == 'Σημείωση':
+                self.notes.append([])
+            self.notes[-1].append(block.text)
+        self.notes = [' '.join(parts) for parts in self.notes if parts]
 
     def feed(self, block, following):
         text = block.text
@@ -203,13 +250,6 @@ class Parser:
         section = SECTION_RE.match(text)
         if section and block.indent >= 14:
             parent = self.nearest('prt') or self.schedule
-            if section.group('num') == '1':
-                # «Τμήμα 1» введено заменой заголовка Μέρους (104(I)/2025, ст. 3(α), (γ)):
-                # это часть заголовка Μέρους, пункты остаются его детьми.
-                parent.heading = '%s %s' % (parent.heading, text)
-                self.container = parent
-                self.stack = [parent]
-                return True
             node = Node('sct', num=section.group('num'), heading=text)
             self.open_container(node, parent)
             return True
@@ -218,13 +258,22 @@ class Parser:
             node = Node('tbl', num=table.group('num'), heading=text)
             self.open_container(node, self.schedule)
             return True
-        if block.indent >= 25 and not TOP_RE.match(text) and not self.container_has_items():
+        if block.indent < 25 or TOP_RE.match(text) or match_item(text)[0]:
+            # глубокий отступ бывает и у пунктов четвёртого уровня («(ια) …·»)
+            return False
+        if not self.container_has_items() and not self.is_item_heading(text):
             self.container.heading = '%s %s' % (self.container.heading, text)
             return True
-        if block.indent >= 25 and not TOP_RE.match(text) and len(text) <= HEADING_MAX:
+        if len(text) <= HEADING_MAX and text[-1] not in ':;·∙˙,—-':
             self.pending_heading.append(text)
             return True
         return False
+
+    def is_item_heading(self, text):
+        """Строчная строка после заглавного названия контейнера — заголовок пункта
+        («Τμήμα 1 / ΕΓΓΡΑΦΗ … / Υποχρέωση προς εγγραφή»)."""
+        title = ' '.join(self.container.heading.split()[2:])
+        return title.isupper() and not text.isupper()
 
     def container_has_items(self):
         return any(child.kind not in ('prt', 'sct', 'tbl') for child in self.container.children)
@@ -290,16 +339,24 @@ class Parser:
         if name == 'arabic' and self.continues_schedule_numbering(match.group('num')):
             # «(25)» вместо «25.» в Έκτο Παράρτημα: продолжение нумерации пунктов
             node = self.open_item('top', match.group('num'), block)
-            name, match = match_item(match.group('rest'))
+            rest = match.group('rest')
+            name, match = match_item(rest)
             if name:
                 node = self.open_item(name, '(%s)' % match.group('num'), block)
-                self.set_text(node, match.group('rest'))
+                rest = match.group('rest')
+            self.set_text(node, rest)
+            return
+        if name and self.is_continuation(name, match.group('num')):
+            self.stack[-1].paragraphs[-1] += ' ' + text
             return
         if name:
             num = match.group('num')
             if name == 'greek' and self.is_roman_in_greek(num):
                 name = 'roman'
                 num = num.replace('ι', 'i')
+            if name == 'roman':
+                # «(νii)»: греческая ню вместо латинской «v»
+                num = num.replace('ν', 'v')
             node = self.open_item(name, '(%s)' % num, block)
             rest = match.group('rest')
             # «10.(α)» и «(1)(α)»: сразу следующий уровень в той же строке
@@ -326,7 +383,11 @@ class Parser:
         tops = [node for node in self.container.children if node.kind == 'par']
         if not tops or tops[-1].num_plain() != str(int(num) - 1):
             return False
-        return not any(node.num_plain() == str(int(num) - 1) for node in tops[-1].children)
+        previous = str(int(num) - 1)
+        return not any(
+            node is not tops[-1] and node.num_plain() == previous
+            for node in tops[-1].walk()
+        )
 
     def drop_shown_deletion(self, parent, node):
         """Удалённый пункт, оставленный в сводном тексте с примечанием «Σ.Σ.: … διαγραφή»,
@@ -336,8 +397,44 @@ class Parser:
                 parent.children.remove(sibling)
                 self.dropped.append(sibling)
 
-    def open_item(self, name, num, block):
+    def same_style_node(self, name):
+        """Ближайший открытый пункт того же вида нумерации."""
+        for node in reversed(self.stack[1:]):
+            if node.style == name:
+                return node
+        return None
+
+    def item_level(self, name, num):
+        """Уровень пункта. Обычно — по виду номера; но «(ια)…(ιδ)» под «(iii) … σημαίνει -»
+        не продолжают «(α)…(δ)», а открывают свой, четвёртый уровень; так же и пункт
+        под пунктом более глубокого вида, если тот открывает список."""
         level = LEVELS[name]
+        if name == 'top':
+            return level
+        plain = numbering.normalize_number(num)
+        previous = self.same_style_node(name)
+        if previous is not None and follows(previous, plain):
+            return previous.level
+        # «(iv) … να είναι:» + «(1) …»: новый список под пунктом, оканчивающимся «:»
+        last = self.stack[-1]
+        if len(self.stack) > 1 and last.level >= level and opens_list(last):
+            return last.level + 1
+        return level
+
+    def is_continuation(self, name, num):
+        """«… στα εδάφια (1) και» + «(2) …»: ссылка, перенесённая на новую строку.
+
+        Номер не продолжает нумерацию, а предыдущий абзац оборван на слове."""
+        if name != 'arabic' or len(self.stack) < 2:
+            return False
+        last = self.stack[-1]
+        if not last.paragraphs or last.paragraphs[-1][-1] in '.;:˙·∙]—–-':
+            return False
+        previous = self.same_style_node(name)
+        return previous is not None and not follows(previous, num)
+
+    def open_item(self, name, num, block):
+        level = self.item_level(name, num)
         if (
             len(self.stack) > 1
             and self.stack[-1].unnumbered
@@ -359,6 +456,7 @@ class Parser:
             num=num,
             indent=block.indent,
             level=level,
+            style=name,
             heading=' '.join(self.pending_heading) if name == 'top' else '',
         )
         self.pending_heading = []
@@ -395,12 +493,17 @@ class Parser:
             and not (
                 # перечень без номеров внутри оговорки приложения («Εξαιρούνται … τα ακόλουθα»)
                 self.in_schedules
+                and not text.startswith('Νοείται')
                 and not self.stack[-1].parent.unnumbered
                 and opens_list(self.stack[-1])
                 and all(child.unnumbered for child in self.stack[-1].children)
             )
         ):
             self.stack.pop()
+        if self.closes_list(text):
+            # «Στην υπεύθυνη δήλωση επισυνάπτονται:» (i)…(vii) «… Νόμο.» + абзац:
+            # перечень закончен, абзац — следующий у владельца вводного абзаца
+            del self.stack[-2:]
         owner = self.stack[-1]
         if not owner.children and not owner.paragraphs:
             # вводный абзац — текст самого пункта
@@ -408,6 +511,21 @@ class Parser:
             return
         # каждый следующий абзац без номера — свой фрагмент (ответ координатора на вопрос 1)
         self.open_unnumbered(owner, text, indent)
+
+    def closes_list(self, text):
+        """Абзац после последнего пункта перечня, введённого абзацем без номера."""
+        if len(self.stack) < 4 or text.startswith('Νοείται'):
+            return False
+        last = self.stack[-1]
+        opener = self.stack[-2]
+        return (
+            not last.unnumbered
+            and not last.children
+            and bool(last.paragraphs)
+            and last.paragraphs[-1].endswith('.')
+            and opener.unnumbered
+            and opens_list(opener)
+        )
 
     def open_unnumbered(self, owner, text, indent):
         node = Node(
@@ -463,4 +581,4 @@ def parse(path, act_uid):
     root = parser.parse(layout.pdf_lines(path))
     article = next(node for node in root.walk() if node.eid == 'art_2')
     mark_definitions(article)
-    return root, parser.history
+    return root, parser.history, parser.notes

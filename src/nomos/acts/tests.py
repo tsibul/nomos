@@ -26,6 +26,7 @@ class VersionOnTests(TestCase):
         replace = Amendment.objects.create(
             amending_act=amending,
             kind='replace',
+            key='art_1:replace',
             marker='M32',
             published_on=date(2022, 4, 6),
             in_force_from=date(2022, 4, 6),
@@ -33,6 +34,7 @@ class VersionOnTests(TestCase):
         insert = Amendment.objects.create(
             amending_act=amending,
             kind='insert',
+            key='art_1:insert',
             published_on=date(2022, 4, 6),
             in_force_from=date(2022, 4, 6),
             applies_from=date(2025, 1, 1),
@@ -40,6 +42,7 @@ class VersionOnTests(TestCase):
         delete = Amendment.objects.create(
             amending_act=amending,
             kind='delete',
+            key='art_1:delete',
             published_on=date(2022, 4, 6),
             in_force_from=date(2022, 4, 6),
         )
@@ -94,10 +97,11 @@ class VersionOnTests(TestCase):
         insert = Amendment.objects.create(
             amending_act=amending,
             kind='insert',
+            key='art_1:insert',
             published_on=date(2024, 2, 23),
             in_force_from=date(2024, 2, 23),
         )
-        base = Amendment.objects.create(amending_act=law, kind='base')
+        base = Amendment.objects.create(amending_act=law, kind='base', key='base')
         art_45 = self.make_fragment(law, 'p2n4t8w1aa', 'art_45', 'art')
         par_7g = self.make_fragment(law, 'p2n4t8w1ab', 'art_45.par_7G', 'par', parent=art_45)
         v_art = self.make_version(art_45, 'base', base, known_from=date(2024, 1, 1))
@@ -120,8 +124,16 @@ class VersionOnTests(TestCase):
 
     def test_correction_wins_by_known_from(self):
         act = self.make_act('eu/dir/2006/112', 'eu', 'dir')
-        amend = Amendment.objects.create(amending_act=act, kind='replace')
-        fix = Amendment.objects.create(amending_act=act, kind='correct')
+        amend = Amendment.objects.create(
+            amending_act=act,
+            kind='replace',
+            key='art_1:replace',
+        )
+        fix = Amendment.objects.create(
+            amending_act=act,
+            kind='correct',
+            key='art_1:correct',
+        )
         fragment = self.make_fragment(act, 'aaaaaaaaaa', 'art_1', 'art')
         self.make_version(
             fragment,

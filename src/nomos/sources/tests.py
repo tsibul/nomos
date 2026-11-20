@@ -10,6 +10,7 @@ from django.test import SimpleTestCase, TestCase
 from nomos.acts.models import Fragment
 
 from .cylaw import history, numbering
+from .management.commands import collect_cylaw
 from .cylaw.tree import Node
 
 LAW = 'cy/law/2000/95_I'
@@ -126,3 +127,121 @@ class VatLawTests(TestCase):
         today = self.active_eids('art_45.', datetime.date(2026, 11, 20))
         self.assertEqual(today - before, {'art_45.par_7G', 'art_45.par_7D'})
         self.assertEqual(before - today, set())
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=LAW, eid=eid).version_on(day)
+
+    def test_schedule_12_item_6_periods(self):
+        """82/2026 вставляет с 1.4.2026, 167/2026 отменяет с 30.4.2026, 363/2026 — новый."""
+        eid = 'sch_12.sub_6'
+        self.assertIsNone(self.version(eid, datetime.date(2026, 3, 31)))
+        self.assertEqual(self.version(eid, datetime.date(2026, 4, 1)).state, 'active')
+        self.assertIsNone(self.version(eid, datetime.date(2026, 5, 1)))
+        self.assertEqual(self.version(eid, datetime.date(2026, 11, 20)).state, 'active')
+
+    def test_table_a_item_7_expires(self):
+        eid = 'sch_5.tbl_A.par_7.sub_3'
+        self.assertEqual(self.version(eid, datetime.date(2024, 5, 30)).state, 'active')
+        self.assertIsNone(self.version(eid, datetime.date(2024, 5, 31)))
+
+    def test_nested_lists(self):
+        """Списки внутри пунктов Пятого и Седьмого Παραρτήματος не всплывают наверх."""
+        found = set(
+            Fragment.objects.filter(act__uid=LAW).values_list('eid', flat=True)
+        )
+        for eid in (
+            'sch_5.tbl_G.par_3.sub_9.pnt_iv.sub_5.sub_1',
+            'sch_5.tbl_G.par_3.sub_9.pnt_vii',
+            'sch_5.tbl_G.par_3.sub_17.sub_9',
+            'sch_7.tbl_B.par_3.pnt_a.pnt_iv',
+            'sch_5.tbl_B.par_13',
+        ):
+            self.assertIn(eid, found)
+        self.assertNotIn('sch_5.tbl_G.par_3.sub_18', found)
+
+
+class ManifestTextsTests(SimpleTestCase):
+    def test_delete_before_reinsert_keeps_manifest_text(self):
+        """sch_12.sub_6: вставка 82/2026, отмена 167/2026, новая вставка 363/2026."""
+        node = paragraph('νέο')
+        first = make_act('cy/kdp/2026/82', datetime.date(2026, 2, 20), datetime.date(2026, 4, 1))
+        second = make_act('cy/kdp/2026/167', datetime.date(2026, 3, 27))
+        third = make_act('cy/kdp/2026/363', datetime.date(2026, 10, 16))
+        ops = [
+            make_op(first, 'insert', texts={'sch_6.par_13': ['παλαιό']}),
+            make_op(second, 'delete', valid_from=datetime.date(2026, 4, 30)),
+            make_op(third, 'insert'),
+        ]
+        report = []
+        versions = history.build_versions(node, ops, 'law#base', report)
+        self.assertEqual(report, [])
+        self.assertEqual(
+            [(version.key, version.state, version.paragraphs) for version in versions],
+            [
+                ('2026-04-01', 'active', ['παλαιό']),
+                ('2026-04-30', 'repealed', []),
+                ('2026-10-16', 'active', ['νέο']),
+            ],
+        )
+
+    def test_op_texts_for_descendant(self):
+        element = history.ET.fromstring(
+            '<op target="a"><p>один\n  абзац</p><p for="a.sub_1">другой</p></op>'
+        )
+        self.assertEqual(history.op_texts(element), {'a': ['один абзац'], 'a.sub_1': ['другой']})
+
+
+class InheritanceTests(SimpleTestCase):
+    def test_only_nearest_ancestor_insert(self):
+        """Вставка пункта и более поздняя вставка его подпункта: подпункт — по своей."""
+        root = Node(kind='act')
+        schedule = root.add(Node(kind='sch', num='6'))
+        item = schedule.add(Node(kind='par', num='25'))
+        item.paragraphs = ['Πίνακας']
+        point = item.add(Node(kind='pnt', num='(δ)'))
+        point.paragraphs = ['σημείο']
+        sub = point.add(Node(kind='sub', num='(1)'))
+        sub.paragraphs = ['υποσημείο']
+        early = make_act('cy/kdp/2025/337', datetime.date(2025, 11, 21), datetime.date(2026, 1, 1))
+        late = make_act('cy/kdp/2026/168', datetime.date(2026, 3, 27))
+        early.ops = [make_op(early, 'insert', target=item.eid)]
+        late.ops = [make_op(late, 'insert', target=point.eid)]
+        versions = history.collect(root, [early, late], 'law#base', [])
+        self.assertEqual([version.key for version in versions[sub]], ['2026-03-27'])
+        self.assertEqual([version.key for version in versions[item]], ['2026-01-01'])
+
+
+class RemarkTests(SimpleTestCase):
+    def test_doubt_and_until(self):
+        node = paragraph('κείμενο')
+        child = node.add(Node(kind='sub', num='(1)'))
+        versions = {
+            node: [history.Version(key='base', amendment='law#base')],
+            child: [history.Version(key='base', amendment='law#base')],
+        }
+        remarks = [
+            (node.eid, 'сомнение', {'kind': 'doubt'}),
+            (node.eid, 'срок', {'until': '2024-04-30'}),
+            ('sch_9', 'нет', {}),
+        ]
+        report = []
+        collect_cylaw.apply_remarks(versions, remarks, 'law#base', report)
+        self.assertEqual(versions[node][0].notes, ['сомнение'])
+        self.assertEqual(
+            [(version.key, version.state) for version in versions[child]],
+            [('base', 'active'), ('2024-05-01', 'repealed')],
+        )
+        self.assertEqual(report, ['sch_9: фрагмента нет в сводном тексте'])
+
+
+class SplitNotesTests(SimpleTestCase):
+    def test_note_goes_to_act_by_number(self):
+        act = make_act('cy/law/2025/104_I', datetime.date(2025, 6, 25))
+        act.number = '104(I)'
+        act.year = '2025'
+        own, other = collect_cylaw.split_notes(
+            ['Σημείωση 1 του Ν. 104(Ι)/2025 Έναρξη ισχύος 1.1.2025', 'Σημείωση 2 του Ν. 1/2001'],
+            [act],
+        )
+        self.assertEqual(list(own), ['cy/law/2025/104_I'])
+        self.assertEqual(other, ['Σημείωση 2 του Ν. 1/2001'])

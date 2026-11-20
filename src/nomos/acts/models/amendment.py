@@ -22,8 +22,19 @@ class Amendment(models.Model):
     published_on = models.DateField(null=True, blank=True)
     in_force_from = models.DateField(null=True, blank=True)
     applies_from = models.DateField(null=True, blank=True)
+    # ключ изменения внутри изменяющего акта: «<положение>:<вид>[@<дата>]», «base»
+    key = models.CharField(max_length=60)
+    # метка источника (EUR-Lex M32, сноска CyLaw)
     marker = models.CharField(max_length=50, blank=True)
     note = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['amending_act', 'key'],
+                name='amendment_act_key_unique',
+            ),
+        ]
 
     @property
     def retroactive(self):
@@ -33,4 +44,4 @@ class Amendment(models.Model):
         return self.in_force_from < self.published_on
 
     def __str__(self):
-        return f'{self.amending_act} {self.kind} {self.marker}'.strip()
+        return f'{self.amending_act} {self.kind} {self.key}'.strip()
