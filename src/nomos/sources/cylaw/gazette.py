@@ -38,7 +38,9 @@ def split_line(line, column):
             return '', left + ' ' + right
         return left, right
     indent = len(line) - len(line.lstrip())
-    if indent < column - 3 and len(line.rstrip()) < column:
+    # короткий хвост цитаты («αναλογιών.»·») — текст: в полях кавычек «» нет
+    quoted = '«' in line or '»' in line
+    if indent < column - 3 and len(line.rstrip()) < column and not quoted:
         return line.strip(), ''
     return '', line.strip()
 
@@ -98,7 +100,7 @@ class GazetteParser:
         self.quote_depth += body.count('«') - body.count('»')
         if self.quote_depth < 0:
             self.quote_depth = 0
-        if self.quote_depth == 0 and body.endswith(('».', '»:', '»·', '»;', '»∙')):
+        if self.quote_depth == 0 and body.endswith(('».', '»:', '»·', '»\u0387', '»;', '»∙')):
             self.flush()
 
     def ends_sentence(self):
