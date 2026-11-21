@@ -185,8 +185,18 @@ class VatLawTests(TestCase):
             found.exclude(to_fragment__act__uid=LAW).exists(),
         )
 
-    def test_expressions_not_public_by_default(self):
-        self.assertFalse(Expression.objects.filter(public=True).exists())
+    def test_public_only_on_ru_of_cyprus_laws_and_kdp(self):
+        """public — только у ru-выражений кипрских законов и ΚΔΠ (отметки могут и не стоять).
+
+        У el/en, у руководства cy/instr/... и у актов ЕС отметки нет.
+        """
+        public = Expression.objects.filter(public=True)
+        self.assertFalse(public.exclude(lang='ru').exists())
+        self.assertFalse(
+            public.exclude(act__uid__startswith='cy/law/')
+            .exclude(act__uid__startswith='cy/kdp/')
+            .exists()
+        )
 
     def active_eids(self, prefix, day):
         found = set()

@@ -1067,5 +1067,6 @@ class DeployCheckTests(TestCase):
             text=True,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('security.W021', result.stderr)
-        self.assertIn('1 issue', result.stderr)
+        # без сборки (npm run build) добавляется django_vite.W001 — к выкладке не относится
+        warnings = set(re.findall(r'\(([a-z_]+\.W\d+)\)', result.stderr))
+        self.assertEqual(warnings - {'django_vite.W001'}, {'security.W021'}, result.stderr)
