@@ -47,6 +47,10 @@
   color: var(--color-neutral-500);
 }
 
+.fragment__texts {
+  max-width: base.$measure;
+}
+
 .fragment__text {
   overflow-wrap: anywhere;
 }

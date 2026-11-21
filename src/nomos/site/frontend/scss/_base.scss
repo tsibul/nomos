@@ -2,6 +2,9 @@
 $break-tablet: 768px;
 $break-desktop: 1024px;
 
+// ширина колонки чтения: около 80 знаков в строке
+$measure: 80ch;
+
 *,
 *::before,
 *::after {
