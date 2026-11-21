@@ -27,6 +27,8 @@ class Expression(models.Model):
     # показывать без входа; по умолчанию текст виден только после входа
     # db_default: вставка из кода без этого поля (другие ветки на общей БД) не падает
     public = models.BooleanField(default=False, db_default=False)
+    # адрес этого текста (страницы или файла акта) у источника; пусто — известен только сайт
+    url = models.URLField(max_length=500, blank=True, db_default='')
 
     class Meta:
         constraints = [
