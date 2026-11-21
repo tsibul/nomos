@@ -3,14 +3,25 @@
 Файлы Formex — маленькие образцы в коде теста: raw/ в git не входит.
 """
 
+import os
 import tempfile
 from io import StringIO
 from pathlib import Path
 
 from django.core.management import call_command
+from unittest import skipUnless
+
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Act, Amendment, Fragment, FragmentText, FragmentVersion, Reference
+from nomos.acts.models import (
+    Act,
+    ActRelation,
+    Amendment,
+    Fragment,
+    FragmentText,
+    FragmentVersion,
+    Reference,
+)
 
 from .eurlex import editions, formex, refs
 
@@ -382,3 +393,47 @@ class CollectTests(TestCase):
             to_fragment__act__uid=ACT,
         )
         self.assertEqual(amending.count(), 2)
+
+
+TEXTS_DIR = Path(os.environ.get('NOMOS_TEXTS_DIR', '/nonexistent'))
+DIRECTIVE = 'eu/dir/2006/112'
+
+
+@skipUnless((TEXTS_DIR / DIRECTIVE / 'act.xml').exists(), 'нет Nomos-texts с директивой НДС')
+class EuVatTextsTests(TestCase):
+    """load_texts на собранных актах ЕС из Nomos-texts (NOMOS_TEXTS_DIR)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=StringIO())
+
+    def test_directive(self):
+        act = Act.objects.get(uid=DIRECTIVE)
+        self.assertEqual(act.kind, Act.Kind.DIRECTIVE)
+        self.assertGreater(act.fragments.count(), 2000)
+        self.assertEqual(
+            set(act.expressions.values_list('lang', flat=True)),
+            {'en', 'el'},
+        )
+
+    def test_act_amending_two_acts(self):
+        targets = set(
+            ActRelation.objects.filter(from_act__uid='eu/dir/2020/285')
+            .values_list('to_act__uid', flat=True)
+        )
+        self.assertEqual(targets, {DIRECTIVE, ACT})
+
+    def test_editions_of_directive(self):
+        keys = set(
+            FragmentVersion.objects.filter(fragment__act__uid=DIRECTIVE)
+            .values_list('key', flat=True)
+        )
+        self.assertTrue({'base', '2025-01-01', '2025-03-20', '2025-04-14'} <= keys)
+
+    def test_references_between_eu_acts(self):
+        references = Reference.objects.filter(
+            from_text__version__fragment__act__uid='eu/dir/2020/285',
+            to_act__uid=DIRECTIVE,
+        )
+        self.assertGreater(references.count(), 0)
+        self.assertFalse(references.filter(resolved=False).exists())

@@ -6,8 +6,8 @@
 Первая редакция — база (`key="base"`, изменение `<акт>#base`). Каждая следующая сравнивается с
 предыдущей: изменённый, новый или исчезнувший фрагмент получает редакцию с ключом — датой
 начала сводной (START.DATE). Причина — акт, метки которого появились в этой сводной
-(у сводной, продолжающей действовать, SOURCE.END нет); если такой не один — SOURCE.END
-предыдущей;
+(у сводной, продолжающей действовать, SOURCE.END нет); если новых актов нет — акт новых
+меток (следующий этап внесённого акта); иначе — SOURCE.END предыдущей;
 изменение — по метке этого акта на фрагменте (`art_1.pnt_3:replace`), без метки — `#base`.
 """
 
@@ -233,11 +233,29 @@ class History:
         )
         return '%s#%s:%s' % (act_uid, provision, kind), True
 
+    def node_cause(self, node, cause, before):
+        """Акт, изменивший фрагмент: общий акт редакции, если у фрагмента есть его метка;
+        иначе — новая метка другого акта из манифеста (этап раньше принятого изменения)."""
+        if cause_marker(node, cause) is not None:
+            return cause
+        fresh = [
+            marker for marker in node.markers
+            if marker.id not in before.en.markers and marker.doc in self.amending
+        ]
+        return fresh[-1].doc if fresh else cause
+
     def cause(self, before, edition):
         docs = {marker.doc for marker in edition.en.markers.values()}
         docs -= {marker.doc for marker in before.en.markers.values()}
         if len(docs) == 1:
             return docs.pop()
+        # новых актов нет (новый этап уже внесённого): акт новых меток, если он один
+        fresh = {
+            marker.doc for marker_id, marker in edition.en.markers.items()
+            if marker_id not in before.en.markers
+        }
+        if not docs and len(fresh) == 1:
+            return fresh.pop()
         self.report.append('%s: новых изменяющих актов в метках %d (%s), причина — %s' % (
             edition.start, len(docs), ', '.join(sorted(docs)), before.source_end,
         ))
@@ -255,26 +273,35 @@ class History:
             order.append(node.eid)
         changed = 0
         unmarked = []
+        # изменения по меткам других актов (например, этап более раннего акта): акт → число
+        others = {}
         for node in nodes:
             state = current[node.eid]
             if previous.get(node.eid) == state:
                 self.fragment(node)
                 continue
             changed += 1
-            if act_uid is None:
+            node_cause = self.node_cause(node, cause, before)
+            if node_cause == cause:
+                node_dates = (act_uid, valid_from, applies_from, known_from)
+            else:
+                node_dates = self.dates(node_cause, edition.start)
+                others[node_cause] = others.get(node_cause, 0) + 1
+            node_uid, node_valid_from, node_applies_from, node_known_from = node_dates
+            if node_uid is None:
                 continue
-            amendment, marked = self.amendment(act_uid, cause, node, applies_from)
+            amendment, marked = self.amendment(node_uid, node_cause, node, node_applies_from)
             if not marked:
                 unmarked.append(node.eid)
             num, heading, texts = state
             self.fragment(node).versions.append(Version(
-                key=applies_from,
+                key=node_applies_from,
                 amendment=amendment,
                 num=num,
                 heading=heading,
-                valid_from=valid_from,
-                applies_from=applies_from,
-                known_from=known_from,
+                valid_from=node_valid_from,
+                applies_from=node_applies_from,
+                known_from=node_known_from,
                 texts=texts,
             ))
         gone = [eid for eid in previous if eid not in current]
@@ -308,6 +335,8 @@ class History:
             len(unmarked),
             (': ' + ', '.join(unmarked[:12])) if unmarked else '',
         ))
+        for other, count in sorted(others.items()):
+            self.report.append('%s: из них по меткам %s — %d' % (edition.start, other, count))
         result = dict(current)
         return result
 

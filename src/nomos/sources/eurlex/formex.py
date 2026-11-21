@@ -28,8 +28,12 @@ DIVISION_WORDS = {
     'υποτμημα': 'sbs',
     'μεροσ': 'prt',
 }
-DIVISION_RE = re.compile(r'^\s*(\S+)\s+([0-9IVXLΙΧ]+[A-Za-zα-ω]?)\b')
+# «Section -1» (2006/112, гл. 1 разд. XII, вставлен 2020/285): номер с минусом
+DIVISION_RE = re.compile(r'^\s*(\S+)\s+(-?[0-9IVXLΙΧ]+[A-Za-zα-ω]?)\b')
 ARTICLE_RE = re.compile(r'(\d+[a-z]*)\s*$', re.I)
+# часть приложения: GR.SEQ с заголовком «PART A» / «ΜΕΡΟΣ Α» (приложения IX–XI 2006/112)
+ANNEX_PART_RE = re.compile(r'^\s*(?:PART|ΜΕΡΟΣ)\s+(\S+)\s*$', re.I)
+GREEK_LETTERS = str.maketrans('ΑΒΓΔΕΖ', 'ABCDEF')
 ANNEX_RE = re.compile(r'([IVXLΙΧ]+[A-Za-z]?|\d+)\s*$')
 
 # элементы-блоки: всё прочее внутри текста — строчная разметка
@@ -312,8 +316,30 @@ class Reader:
         node = self.start(Node('anx', token, num=token), parent)
         node.heading = ' '.join(lines)
         contents = element.find('CONTENTS')
-        if contents is not None:
-            self.content(node, list(contents))
+        if contents is None:
+            return
+        elements = list(contents)
+        if not any(annex_part(child) for child in elements):
+            self.content(node, elements)
+            return
+        before = []
+        for child in elements:
+            token = annex_part(child)
+            if token is None:
+                before.append(child)
+                continue
+            if before:
+                self.content(node, before)
+                before = []
+            self.annex_part(child, token, node)
+        if before:
+            self.content(node, before)
+
+    def annex_part(self, element, token, parent):
+        """Часть приложения: узел prt, содержимое — дети GR.SEQ без заголовка."""
+        node = self.start(Node('prt', token, num=token), parent)
+        node.heading = ' '.join(plain(p) for p in element.find('TITLE').iter('P'))
+        self.content(node, [child for child in element if child.tag != 'TITLE'])
 
     # содержимое: абзацы, списки, таблицы
 
@@ -331,7 +357,8 @@ class Reader:
             if element.tag == 'ALINEA':
                 segments.append(Segment())
                 self.alinea(element, segments)
-            elif element.tag in ('P', 'LIST', 'DLIST', 'TBL', 'QUOT.S', 'GR.SEQ', 'TXT'):
+            # NP вне списка (приложение XI 2006/112, часть A) — абзац текста
+            elif element.tag in ('P', 'LIST', 'DLIST', 'TBL', 'QUOT.S', 'GR.SEQ', 'TXT', 'NP'):
                 if not segments or (element.tag in ('P', 'TXT') and segments[-1].lists):
                     segments.append(Segment())
                 self.block(element, segments)
@@ -613,6 +640,19 @@ def item_token(num):
     token = num.strip().strip('()').rstrip('.').strip().lower()
     token = re.sub(r'\s+', '', token)
     return token or '0'
+
+
+def annex_part(element):
+    """Номер части приложения (A, B…), если element — GR.SEQ «PART A»; иначе None."""
+    if element.tag != 'GR.SEQ':
+        return None
+    title = element.find('TITLE')
+    if title is None or title.find('TI') is None:
+        return None
+    match = ANNEX_PART_RE.match(plain(title.find('TI')))
+    if match is None:
+        return None
+    return match.group(1).translate(GREEK_LETTERS)
 
 
 def strip_accents(word):
