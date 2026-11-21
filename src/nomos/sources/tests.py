@@ -843,6 +843,24 @@ class RefsTests(SimpleTestCase):
             marked, '<ref id="r2" to="art_9">статьи 9</ref> и <ref id="r1" to="art_8">8</ref>',
         )
 
+    def test_translation_base_law_named_main(self):
+        """«статье 5 основного закона» — тот же базовый закон, что «базового Закона»."""
+        _, found, _ = self.amending(['В статье 5 основного закона'], refs.RU)
+        self.assertEqual(found, [LAW + '#art_5'])
+
+    def test_translation_capital_word_decided_by_greek(self):
+        """Заглавное слово после упоминания: ссылка, только если она есть в оригинале."""
+        text = ['применения статьи 5 Генеральный директор, статьи 6, или (и) Совет']
+        marker = refs.Marker(refs.Targets(REF_EIDS), refs.RU)
+        self.assertEqual(marker.mark_text(text, 'art_1')[1], [])
+        marker.agreed = {'art_5', 'art_6'}
+        marked, found = marker.mark_text(text, 'art_1')
+        self.assertEqual(found, ['art_5', 'art_6'])
+        self.assertNotIn('(и)</ref>', marked[0])
+        marker.agreed = set()
+        _, found, _ = self.amending(['положений пункта (2) статьи 5 того же Закона'], refs.RU)
+        self.assertEqual(found, [])
+
     def test_translation_file_text_unchanged(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'ru.xml'
