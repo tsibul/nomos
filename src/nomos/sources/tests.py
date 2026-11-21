@@ -425,6 +425,27 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(texts['art_42.par_1'], ['(α) Πρόσωπο:'])
         self.assertNotIn('art_42.par_1.pnt_a', texts)
 
+    def test_definitions_in_article_without_subsections(self):
+        """Ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи."""
+        root = parse_body(
+            '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
+            '«Οργανισμός» σημαίνει τον Οργανισμό Ασφάλισης Υγείας·',
+            '«Υπουργός» σημαίνει τον Υπουργό Υγείας.',
+            '3. Άλλο.',
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        eids = [node.eid for node in root.walk() if node.eid.startswith('art_2')]
+        self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_ypoyrgos'])
+
+    def test_article_2_without_definitions(self):
+        """Ст. 2 без εδαφίων и без терминов (приказ ΚΔΠ 392/2024) — как есть."""
+        root = parse_body('2. Οι βασικές αποδοχές ορίζονται.', '3. Άλλο.')
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        self.assertFalse(any(node.kind == 'def' for node in article.walk()))
+        self.assertIn('αποδοχές', article.text())
+
     def test_doubled_greek_numbering_is_own_level(self):
         """«(αα)», «(ββ)» под «(i)» — свой уровень, а не продолжение «(α)»."""
         root = parse_body('7.-(1)(α) α:', '(i) πρώτο:', '(αα) ένα·', '(ββ) δύο·', '(ii) β.',
@@ -595,6 +616,22 @@ class GazetteTests(SimpleTestCase):
         points = root.children[2].children
         self.assertEqual([point.num for point in points], ['(α)', '(β)'])
         self.assertTrue(points[0].paragraphs[0].endswith('αναλογιών.»\u0387'))
+
+    def test_quote_closed_at_line_end_and_middle_dot(self):
+        """«‘όρος᾽ σημαίνει …∙» — цитата закрыта; «»ꞏ» (U+A78F) — конец фразы (53/2025)."""
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('Τροποποίηση', '2. Το άρθρο 2 τροποποιείται ως ακολούθως:'),
+            ('', '(α) με την προσθήκη του ακόλουθου νέου όρου και του ορισμού του:'),
+            ('', '«‘αρμόδια αρχή᾽ σημαίνει τον Υπουργό∙»'),
+            ('', '(β) με την αντικατάσταση της λέξης «Επίτροπος» με τη λέξη «αρχή»\ua78f'),
+            ('', '(γ) με την κατάργηση του όρου «Γραφείο».'),
+            ('Τροποποίηση', '3. Ο βασικός νόμος τροποποιείται.'),
+        )
+        articles = [node for node in root.children if node.kind == 'art']
+        self.assertEqual([article.num for article in articles], ['1', '2', '3'])
+        points = articles[1].children
+        self.assertEqual([point.num for point in points], ['(α)', '(β)', '(γ)'])
 
     def test_subsections_outside_quote(self):
         root = self.parse(
@@ -1182,3 +1219,73 @@ class BasicEarningsOrderTests(TestCase):
             version__fragment=fragment, expression__lang='el',
         ).body
         self.assertIn('€220,76', text)
+
+
+HEALTH_LAW = 'cy/law/2001/89_I'
+
+
+@skipUnless((TEXTS_DIR / HEALTH_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 89(Ι)/2001')
+class HealthSystemLawTests(TestCase):
+    """Закон о ГеСИ 89(Ι)/2001 с изменениями 29, 53, 118, 139(Ι)/2025 и 60(Ι)/2026."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', HEALTH_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=HEALTH_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / HEALTH_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / HEALTH_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and ':note →' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+            or 'положения нет' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_dental_proviso_from_law_29_2025(self):
+        eid = 'art_22.par_5A'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 3, 30)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 3, 31)).state, 'active')
+
+    def test_competent_authority_by_law_53_2025(self):
+        self.assertIsNone(self.version('art_70', datetime.date(2025, 4, 24)))
+        self.assertEqual(self.version('art_70', datetime.date(2025, 4, 25)).state, 'active')
+        self.assertEqual(self.version('art_45', datetime.date(2025, 4, 24)).state, 'active')
+        self.assertIsNone(self.version('art_45', datetime.date(2025, 4, 25)))
+        eid = 'art_44.par_1'
+        self.assertIn('ο Επίτροπος', self.text(eid, datetime.date(2025, 4, 24)))
+        self.assertIn('η αρμόδια αρχή', self.text(eid, datetime.date(2025, 4, 25)))
+
+    def test_subparagraph_by_law_118_2025(self):
+        eid = 'art_19.par_4.pnt_b.sub_2'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 7, 10)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 7, 11)).state, 'active')

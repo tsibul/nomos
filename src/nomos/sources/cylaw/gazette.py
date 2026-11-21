@@ -30,6 +30,10 @@ INNER_GAP_RE = re.compile(r'\S(\s{4,})\S')
 # газеты, по которым собраны тексты до правил поля внутри цитаты, первого пункта (α),
 # цитаты после «:» и перечня «(4) και»: разбираются прежними правилами, их файлы не меняются
 LEGACY_GAZETTES = {'cy/law/2025/104_I', 'cy/kdp/2026/168'}
+# цитата закрыта в конце строки: «…του∙», «…ορισμού.»ꞏ και»
+QUOTE_CLOSED_RE = re.compile(r'»[.:;·∙\u0387\ua78f]?(\s+(και|ή))?$')
+# знак конца фразы перед закрывающей кавычкой: «…εκπρόσωπό του∙»
+PUNCT_QUOTE_RE = re.compile(r'([.:;·∙])»$')
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -175,13 +179,16 @@ class GazetteParser:
         )
         self.paragraph.append(body)
         self.quote_depth += body.count('«') - body.count('»')
-        if opens and self.quote_depth == 0 and not body.rstrip().endswith('».'):
+        closed = QUOTE_CLOSED_RE.search(body.rstrip())
+        if opens and self.quote_depth == 0 and not closed:
             # «γονική άδεια» σημαίνει- после «ορισμό:» — кавычка цитаты совпала с
             # кавычкой термина; цитата закрывается позже
             self.quote_depth = 1
         if self.quote_depth < 0:
             self.quote_depth = 0
-        if self.quote_depth == 0 and body.endswith(('».', '»:', '»·', '»\u0387', '»;', '»∙')):
+        if self.quote_depth == 0 and body.endswith(
+            ('».', '»:', '»·', '»\u0387', '»\ua78f', '»;', '»∙')
+        ):
             self.flush()
 
     def after_colon(self):
@@ -191,9 +198,12 @@ class GazetteParser:
     def ends_sentence(self):
         if not self.paragraph:
             return True
-        # «και» на своей строке; ano teleia (U+0387) — как «·»
-        last = ' ' + self.paragraph[-1].rstrip().replace('\u0387', '·')
-        if not self.legacy and LABEL_AND_RE.search(last):
+        if self.legacy:
+            return layout.ends_sentence(' ' + self.paragraph[-1].rstrip().replace('\u0387', '·'))
+        # «και» на своей строке; ano teleia (U+0387) и «ꞏ» (U+A78F) — как «·»
+        last = self.paragraph[-1].rstrip().replace('\u0387', '·').replace('\ua78f', '·')
+        last = ' ' + PUNCT_QUOTE_RE.sub(r'\1', last)
+        if LABEL_AND_RE.search(last):
             return False
         return layout.ends_sentence(last)
 
