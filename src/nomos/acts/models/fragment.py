@@ -21,6 +21,7 @@ class Fragment(models.Model):
         CITATION = 'cit', 'Преамбула'
         FOOTNOTE = 'fnt', 'Сноска акта'
         SCHEDULE = 'sch', 'Παράρτημα'
+        FIELD = 'fld', 'Поле формы'
 
     class Axis(models.TextChoices):
         APPLIES = 'applies', 'Применяется'
