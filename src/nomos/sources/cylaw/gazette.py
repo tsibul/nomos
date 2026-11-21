@@ -94,9 +94,13 @@ def text_start(line):
     """Начало текста строки: после поля внутри цитаты, если оно есть, иначе отступ."""
     indent = len(line) - len(line.lstrip())
     match = INNER_GAP_RE.search(line, indent)
-    if match and not LABEL_RE.match(line[indent:match.start(1) + 1].strip()):
-        return match.end(1) - 1
-    return indent
+    if match is None:
+        return indent
+    left = line[indent:match.start(1) + 1].strip()
+    # «(δ)   χρηματική   επιβάρυνση     για» — пробелы выключки после номера пункта, не поле
+    if LABEL_RE.match(left) or ITEM_RE.match(left):
+        return indent
+    return match.end(1) - 1
 
 
 def neighbour(lines, index, step):

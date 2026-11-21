@@ -69,6 +69,10 @@ class Language:
     this_act: str = r'(?!)'
     # после упоминания слово с заглавной: другой акт, если в оригинале нет той же ссылки
     capital: str = r'(?!)'
+    # ΚΔΠ: «Κανονισμοί δυνάμει των άρθρων 10, 78…» — статьи уполномочивающего закона
+    enabling_before: str = r'(?!)'
+    # «статьи 3 Закона, как…» — без названия: базовый ли закон, решает оригинал
+    bare_law: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -84,6 +88,8 @@ class Language:
         self.base_re = re.compile(self.base)
         self.this_act_re = re.compile(self.this_act)
         self.capital_re = re.compile(self.capital)
+        self.enabling_before_re = re.compile(self.enabling_before)
+        self.bare_law_re = re.compile(self.bare_law)
 
 
 def ordinal_pattern(ordinals):
@@ -119,6 +125,7 @@ EL = Language(
         r'(?!\s*\(Τροποποιητικ))'
     ),
     this_act=r'^\s+(?:(?:του|της)\s+)?παρόντος',
+    enabling_before=r'(?<![\wά-ώ])Κανονισμοί\s+δυνάμει\s+(?:των|του)\s+$',
 )
 
 RU = Language(
@@ -166,6 +173,7 @@ RU = Language(
     this_act=r'^\s+настоящ\w+',
     # «статьи 5 Части…» — другое; «статьи 33 Генеральный директор» — свой закон
     capital=r'^\s+[А-ЯЁ]',
+    bare_law=r'^\s+[Зз]акона(?=\s*[,;:.)]|\s+(?:как|в\s+редакции)(?![\wё]))',
 )
 
 
@@ -315,6 +323,8 @@ class Marker:
         reason = self.external(text, end, start)
         if reason:
             return reason
+        if self.implicit and self.language.enabling_before_re.search(text[:start]):
+            return FOREIGN
         if quoted or self.implicit:
             return None
         return 'акт не указан'
@@ -364,6 +374,8 @@ class Marker:
         """Причина «другой акт», CAPITAL — решает оригинал, или None."""
         if start is not None and self.language.external_before_re.search(text[:start]):
             return FOREIGN
+        if self.language.bare_law_re.match(text[end:]):
+            return CAPITAL
         if self.language.external_re.match(text[end:]):
             return FOREIGN
         if self.language.capital_re.match(text[end:]):

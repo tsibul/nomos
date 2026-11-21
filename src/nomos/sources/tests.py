@@ -861,6 +861,26 @@ class RefsTests(SimpleTestCase):
         _, found, _ = self.amending(['положений пункта (2) статьи 5 того же Закона'], refs.RU)
         self.assertEqual(found, [])
 
+    def test_translation_bare_law_decided_by_greek(self):
+        """«статьи 5 Закона, как…» — базовый закон, если так размечено в оригинале."""
+        text = ['пункта (2) статьи 5 Закона, как он действовал']
+        _, found, _ = self.amending(text, refs.RU)
+        self.assertEqual(found, [])
+        marker = refs.Marker(refs.Targets(REF_EIDS), refs.RU, LAW)
+        marker.agreed = {LAW + '#art_5.par_2'}
+        self.assertEqual(marker.mark_text(text, 'art_1')[1], [LAW + '#art_5.par_2'])
+        _, found, _ = self.amending(['статьи 5 Закона о специальном взносе'], refs.RU)
+        self.assertEqual(found, [])
+
+    def test_regulations_enabling_articles_not_base(self):
+        """ΚΔΠ: «Κανονισμοί δυνάμει των άρθρων 5, 6…» — статьи закона, не базовых правил."""
+        _, found, skipped = self.amending(
+            ['Κανονισμοί δυνάμει των άρθρων 5, 6 και 8 Το Υπουργικό Συμβούλιο, το άρθρο 9'],
+            implicit=True,
+        )
+        self.assertEqual(found, [LAW + '#art_9'])
+        self.assertEqual(skipped['похоже на другой акт'], 3)
+
     def test_translation_file_text_unchanged(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'ru.xml'
@@ -1552,6 +1572,15 @@ class IncomeTaxParsingTests(SimpleTestCase):
 
 
 class IncomeTaxGazetteTests(SimpleTestCase):
+    def test_justified_item_line_not_inner_margin(self):
+        """243(Ι)/2025: пробелы выключки в строке «(δ) …» — не поле; перенос не теряется."""
+        lines = [
+            ' ' * 41 + '(δ)   χρηματική   επιβάρυνση     για    εκπρόθεσμη       υποβολή',
+            ' ' * 47 + 'φορολογικής δήλωσης·',
+            ' ' * 41 + '(ε)   αρχικό ποσό του φόρου και πρόσθετου φόρου που',
+        ]
+        self.assertIsNone(gazette.inner_margin(lines, 1, 40))
+
     def test_skipped_article_number(self):
         """244(Ι)/2025: за ст. 13 идёт 16 — статья с заголовком на поле принимается."""
         lines = gazette_lines(
