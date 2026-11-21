@@ -9,7 +9,7 @@
 
 import re
 
-from . import layout, numbering
+from . import layout, leginet, numbering
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
@@ -65,8 +65,9 @@ SCHEDULE_ORDINALS = [
 SCHEDULE_RE = re.compile(
     r'^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ)$'
 )
-# «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже
-ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ (?P<num>[IVXΙΧ]+)$')
+# «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже;
+# единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера
+ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?$')
 PART_RE = re.compile(r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$')
 SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
@@ -91,11 +92,14 @@ def roman_schedule(block):
     match = ROMAN_SCHEDULE_RE.match(block.text)
     if match is None or block.indent < 25:
         return None
+    if match.group('num') is None:
+        return 1
     return numbering.roman_value(match.group('num').replace('Ι', 'I').replace('Χ', 'X'))
 
 
 def is_page_furniture(line):
-    return bool(HEADER_RE.match(line))
+    # '\f' — разрыв страницы в строках сводки Leginet
+    return line == leginet.PAGE_BREAK or bool(HEADER_RE.match(line))
 
 
 def is_history(text):
@@ -700,9 +704,11 @@ def mark_definitions(article):
         current.add(node)
 
 
-def parse(path, act_uid):
+def parse(path, act_uid, source='cylaw'):
+    """`source` — откуда сводка: 'cylaw' или 'leginet' (у них разная раскладка PDF)."""
     parser = Parser(act_uid)
-    root = parser.parse(layout.pdf_lines(path))
+    lines = leginet.pdf_lines(path) if source == 'leginet' else layout.pdf_lines(path)
+    root = parser.parse(lines)
     article = next(node for node in root.walk() if node.eid == 'art_2')
     mark_definitions(article)
     return root, parser.history, parser.notes

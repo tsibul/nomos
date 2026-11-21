@@ -34,6 +34,14 @@ SOURCES = {
         'terms_url': 'https://www.cylaw.org',
         'attribution': 'Сводная редакция CyLaw (www.cylaw.org, ΚΙΝΟΠ), неофициальная',
     },
+    # leginet.eu: на каждой странице PDF «Copyright © Leginet Ltd … All rights reserved»;
+    # условия использования не выяснены (125(Ι)/1999)
+    'leginet': {
+        'name': 'Leginet — неофициальная сводная редакция',
+        'url': 'https://www.leginet.eu',
+        'publisher': 'Leginet Ltd',
+        'attribution': 'Сводная редакция Leginet (www.leginet.eu), неофициальная',
+    },
     # сайт Государственной типографии, где выходит газета (docs/research/vat-sources.md)
     'cy-gazette': {
         'name': 'Официальная газета Республики Кипр',

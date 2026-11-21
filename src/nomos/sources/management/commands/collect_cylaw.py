@@ -227,7 +227,11 @@ class Command(BaseCommand):
         report = []
 
         info = law_info(manifest)
-        tree, _, notes = consolidated.parse(root_dir / manifest['file'], info.uid)
+        tree, _, notes = consolidated.parse(
+            root_dir / manifest['file'],
+            info.uid,
+            manifest['source'],
+        )
         act_notes, other_notes = split_notes(notes, acts)
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
