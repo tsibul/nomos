@@ -250,7 +250,8 @@ def show_original(request, route):
 def original_source(route):
     """Источник скрытого оригинала — для ссылки «Оригинал: <источник>»; виден — None.
 
-    Адреса статьи у источника в данных нет: ссылка ведёт на адрес источника.
+    Адреса статьи у источника в данных нет: ссылка ведёт на адрес акта у источника
+    (выражения, затем ELI), а если он неизвестен — на адрес источника.
     """
     lang = route.act.structure_lang or reading.DEFAULT_LANG
     if route.lang == lang or access.lang_visible(route.act, lang):
@@ -262,7 +263,7 @@ def original_source(route):
         return None
     return {
         'name': source_text(expression.source.name),
-        'url': expression.source.url,
+        'url': expression.url or route.act.eli or expression.source.url,
     }
 
 
