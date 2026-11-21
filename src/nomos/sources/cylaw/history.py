@@ -63,6 +63,8 @@ class Op:
     old_num: str = None
     # тексты из изменяющего акта: {eid: [абзацы]}; <p for="eid"> — для потомка цели
     texts: dict = field(default_factory=dict)
+    # прежний текст целиком (замена, отмена): {eid: [абзацы]}; <before for="eid"><p>…
+    before: dict = field(default_factory=dict)
 
     @property
     def key(self):
@@ -140,10 +142,10 @@ def make_op(act, item):
         provision=item.get('provision'),
         kind=item.get('kind'),
         target=item.get('target'),
-        old=item.get('old', ''),
-        new=item.get('new', ''),
+        old=spaced(item.get('old', '')),
+        new=spaced(item.get('new', '')),
         at=item.get('at', ''),
-        text=item.get('text', ''),
+        text=spaced(item.get('text', '')),
         valid_from=parse_date(item.get('from')) or act.in_force_from,
         applies_from=parse_date(item.get('applies-from')) or act.applies_from,
         until=parse_date(item.get('until')),
@@ -153,7 +155,13 @@ def make_op(act, item):
         on=item.get('on', ''),
         old_num=item.get('old-num'),
         texts=op_texts(item),
+        before=op_before(item),
     )
+
+
+def spaced(value):
+    """Значения атрибутов в манифесте переносятся по строкам: пробелы — одиночные."""
+    return ' '.join(value.split())
 
 
 def op_texts(item):
@@ -162,6 +170,14 @@ def op_texts(item):
         eid = paragraph.get('for', item.get('target'))
         texts.setdefault(eid, []).append(' '.join(paragraph.text.split()))
     return texts
+
+
+def op_before(item):
+    before = {}
+    for element in item.findall('before'):
+        eid = element.get('for', item.get('target'))
+        before[eid] = [' '.join(paragraph.text.split()) for paragraph in element.findall('p')]
+    return before
 
 
 def ops_by_target(acts):
@@ -220,7 +236,11 @@ def build_versions(node, ops, base_ref, report):
         if op.kind == 'delete':
             version.state = 'repealed'
             version.paragraphs = []
-            text = None
+            text = op.before.get(node.eid)
+            continue
+        if node.eid in op.before:
+            # прежний текст приведён в манифесте (по прежней сводной редакции)
+            text = list(op.before[node.eid])
             continue
         if text is None:
             report.append('%s → %s: не снято, текст раньше уже неизвестен' % (op.ref, node.eid))

@@ -17,7 +17,7 @@ LAW_NUMBER_RE = re.compile(r'^\d+(\([IΙ]\))?/\d{4}$')
 CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
 
 TOP_RE = re.compile(
-    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,3}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–]+\s*)?|[-—–]\s*(?=\())'
+    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,3}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
     r'(?:\((?P<sub>\d+[Α-ΩA-Z]{0,3})\)\s*)?(?P<rest>.*)$'
 )
 ITEM_RES = [
@@ -69,7 +69,13 @@ SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
 
+# акты, собранные прежним разбором: перенос страницы посреди фразы закрывает абзац,
+# пункт в строке статьи («42.—(1)(α)») не отделяется. Их фрагменты и перевод привязаны
+# к прежнему разбору; новые акты (4/1978 и следующие) собираются новым
+LEGACY_ACTS = {'cy/law/2000/95_I'}
+
 HEADING_MAX = 110
+HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
 EXCEPTION_START = 'Εξαιρούνται'
 # колонка заголовков на полях
 MARGIN = 8
@@ -80,8 +86,11 @@ def is_page_furniture(line):
 
 
 def is_history(text):
-    """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»."""
+    """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»; у отменённой
+    статьи — с подписью: «Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018»."""
     cleaned = CORRIGENDUM_RE.sub('', text).replace('Παρ. Ι(Ι), Ε.Ε.', '')
+    if cleaned.startswith(HISTORY_HEADING + ' '):
+        cleaned = cleaned[len(HISTORY_HEADING):]
     tokens = cleaned.split()
     return bool(tokens) and all(LAW_NUMBER_RE.match(token) for token in tokens)
 
@@ -137,14 +146,27 @@ def number_value(num):
 
 def follows(previous, num):
     """Номер `num` может идти за пунктом `previous` того же вида нумерации."""
-    before = number_value(previous.num_plain())
-    after = number_value(num)
+    if is_doubled(num) != is_doubled(previous.num_plain()):
+        # «(αα)» под «(ii)» не продолжает «(α)…(β)»
+        return False
+    if is_doubled(num):
+        # «(ββ)» после «(αα)»: по одной букве
+        return follows_value(number_value(previous.num_plain()[0]), number_value(num[0]))
+    return follows_value(number_value(previous.num_plain()), number_value(num), previous, num)
+
+
+def follows_value(before, after, previous=None, num=''):
     if before is None or after is None:
         return True
     if after == before:
         # «7Α» после «7» или «7Α»
-        return num != previous.num_plain() and not num.isdigit()
+        return previous is not None and num != previous.num_plain() and not num.isdigit()
     return after == before + 1
+
+
+def is_doubled(num):
+    """«αα», «ββ»: удвоенная греческая буква — свой уровень нумерации."""
+    return len(num) == 2 and num[0] == num[1] and 'α' <= num[0] <= 'ω'
 
 
 def looks_like_heading(block, following):
@@ -164,14 +186,48 @@ def looks_like_heading(block, following):
 
 
 EDITOR_NOTE_RE = re.compile(r'^Σημείωση\s+\S+\s+(του|της)\s')
+# «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978)
+LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+\D|$)')
 
 
 def is_editor_note(block):
-    return block.indent <= MARGIN and bool(EDITOR_NOTE_RE.match(block.text))
+    if block.indent > MARGIN:
+        return False
+    # «Σημείωση» бывает на своей строке, номер и закон — ниже (4/1978)
+    text = block.text
+    return bool(EDITOR_NOTE_RE.match(text) or LONE_NOTE_RE.match(text))
+
+
+def join_broken_headings(blocks):
+    """Заголовок на полях, разорванный переносом страницы («… της» / «Δημοκρατίας Νόμου»),
+    — один блок, если за второй частью идёт статья."""
+    result = []
+    for index, block in enumerate(blocks):
+        previous = result[-1] if result else None
+        following = blocks[index + 1] if index + 1 < len(blocks) else None
+        if (
+            previous is not None
+            and following is not None
+            and previous.indent <= MARGIN
+            and block.indent <= MARGIN
+            and following.indent > MARGIN
+            and TOP_RE.match(following.text)
+            and previous.text[-1] not in '.:;·∙˙,—-»'
+            and not is_history(previous.text)
+            and not TOP_RE.match(previous.text)
+            and not match_item(previous.text)[0]
+            and len(previous.text) + len(block.text) <= 3 * HEADING_MAX
+        ):
+            result[-1] = layout.Block(previous.line, previous.indent,
+                                      previous.text + ' ' + block.text)
+            continue
+        result.append(block)
+    return result
 
 
 class Parser:
     def __init__(self, act_uid):
+        self.legacy = act_uid in LEGACY_ACTS
         self.root = Node('act', token=act_uid)
         self.stack = []
         self.container = self.root
@@ -184,18 +240,28 @@ class Parser:
         self.notes = []
 
     def parse(self, lines):
-        all_blocks = layout.blocks(lines, skip=is_page_furniture)
-        start = next(
-            index for index, block in enumerate(all_blocks) if block.text == 'Προοίμιο'
+        all_blocks = layout.blocks(
+            lines,
+            skip=is_page_furniture,
+            join_pages=not self.legacy,
         )
-        all_blocks = [
-            part for block in all_blocks[start + 1:] for part in split_history(block)
-        ]
-        preamble = Node('cit', token='cit_1', heading='Προοίμιο')
-        self.root.add(preamble)
-        self.stack = [preamble]
+        texts = [block.text for block in all_blocks]
+        if 'Προοίμιο' in texts:
+            start = texts.index('Προοίμιο') + 1
+            preamble = Node('cit', token='cit_1', heading='Προοίμιο')
+            self.root.add(preamble)
+            self.stack = [preamble]
+        else:
+            # без преамбулы (4/1978): текст — после списка изменяющих законов под заголовком
+            self.stack = [self.root]
+            start = texts.index(HISTORY_HEADING) + 1
+            while start < len(texts) and is_history(texts[start]):
+                start += 1
+        all_blocks = [part for block in all_blocks[start:] for part in split_history(block)]
+        all_blocks = join_broken_headings(all_blocks)
+        self.has_schedules = any(block.text == 'ΠΑΡΑΡΤΗΜΑΤΑ' for block in all_blocks)
         for index, block in enumerate(all_blocks):
-            if self.in_schedules and is_editor_note(block):
+            if (self.in_schedules or not self.has_schedules) and is_editor_note(block):
                 self.collect_notes(all_blocks[index:])
                 break
             following = next(
@@ -343,9 +409,19 @@ class Parser:
         top = TOP_RE.match(text)
         if top and block.indent <= 14:
             node = self.open_item('top', top.group('num'), block)
+            rest = top.group('rest')
             if top.group('sub'):
                 node = self.open_item('arabic', '(%s)' % top.group('sub'), block)
-            self.set_text(node, top.group('rest'))
+                # «42.—(1)(α)»: и пункт в той же строке
+                inner_name, inner = match_item(rest)
+                if (
+                    not self.legacy
+                    and inner_name
+                    and LEVELS[inner_name] > LEVELS['arabic']
+                ):
+                    node = self.open_item(inner_name, '(%s)' % inner.group('num'), block)
+                    rest = inner.group('rest')
+            self.set_text(node, rest)
             return
         if text.startswith('[Σ.Σ.') and len(self.stack) > 1:
             # отдельный абзац примечания источника относится к последнему пункту

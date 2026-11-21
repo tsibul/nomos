@@ -61,6 +61,30 @@ def existing_uids(path):
     return {item.get('eid'): item.get('uid') for item in root.iter('fragment')}
 
 
+def translated_uids(folder):
+    """uid фрагментов, у которых есть текст перевода (все языки, кроме el)."""
+    found = set()
+    for path in folder.glob('*.xml'):
+        if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
+            continue
+        found.update(uid for uid, _ in read_texts(path))
+    return found
+
+
+def lost_uids(folder, uids):
+    """Фрагменты с переводом, которые пересборка убрала из act.xml: [(eid, uid), …].
+
+    uid хранится только в act.xml: фрагмент, исчезнувший при одной сборке и вернувшийся при
+    другой, получил бы новый uid, и перевод потерял бы привязку."""
+    kept = set(uids.values())
+    translated = translated_uids(folder)
+    return sorted(
+        (eid, uid)
+        for eid, uid in existing_uids(folder / 'act.xml').items()
+        if uid not in kept and uid in translated
+    )
+
+
 def assign_uids(info, nodes, path):
     known = existing_uids(path)
     taken = set(known.values())
