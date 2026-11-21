@@ -30,7 +30,53 @@ def pdf_lines(path):
         capture_output=True,
         text=True,
     )
-    return [line.replace('\f', '') for line in result.stdout.split('\n')]
+    return [fix_lookalikes(line.replace('\f', '')) for line in result.stdout.split('\n')]
+
+
+# латинские буквы, набранные в греческом тексте вместо греческих (CyLaw: «αvαφέρovται»)
+LOOKALIKES = str.maketrans(
+    'ABEHIKMNOPTXYZoveiku',
+    'ΑΒΕΗΙΚΜΝΟΡΤΧΥΖονεικυ',
+)
+LOWER_LOOKALIKES = set('oveiku')
+WORD_RE = re.compile(r'[^\W\d_]+')
+GREEK_RE = re.compile(r'[\u0370-\u03ff\u1f00-\u1fff]')
+LATIN_RE = re.compile(r'[A-Za-z]')
+ROMAN_RE = re.compile(r'^([IVX]+|[ivx]+)$')
+
+
+def fix_lookalikes(line):
+    """Латинские двойники греческих букв → греческие: в словах из обоих алфавитов
+    («Iαvoυαρίoυ») и в латинских словах из одних двойников со строчной буквой рядом с
+    греческим словом («Ev τω», «o Διευθυντής»). Римские цифры и прочая латиница — как есть."""
+    words = list(WORD_RE.finditer(line))
+    if not words or not GREEK_RE.search(line):
+        return line
+    parts = []
+    last = 0
+    for index, match in enumerate(words):
+        word = match.group()
+        if LATIN_RE.search(word) and is_lookalike(word, words, index):
+            parts.append(line[last:match.start()])
+            parts.append(word.translate(LOOKALIKES))
+            last = match.end()
+    parts.append(line[last:])
+    return ''.join(parts)
+
+
+def is_lookalike(word, words, index):
+    latin = [letter for letter in word if LATIN_RE.match(letter)]
+    if any(letter.translate(LOOKALIKES) == letter for letter in latin):
+        return False
+    if ROMAN_RE.match(word.replace('ν', 'v')):
+        # «(νii)», «(iν)»: римская цифра с греческой ν — номер пункта, разбирает numbering
+        return False
+    if GREEK_RE.search(word):
+        return True
+    if not LOWER_LOOKALIKES.intersection(word):
+        return False
+    neighbours = words[max(index - 1, 0):index] + words[index + 1:index + 2]
+    return any(GREEK_RE.search(neighbour.group()) for neighbour in neighbours)
 
 
 ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,3}\s?\.\s)')

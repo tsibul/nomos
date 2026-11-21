@@ -70,6 +70,7 @@ TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
 
 HEADING_MAX = 110
+HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
 EXCEPTION_START = 'Εξαιρούνται'
 # колонка заголовков на полях
 MARGIN = 8
@@ -164,10 +165,43 @@ def looks_like_heading(block, following):
 
 
 EDITOR_NOTE_RE = re.compile(r'^Σημείωση\s+\S+\s+(του|της)\s')
+# «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978)
+LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+\D|$)')
 
 
 def is_editor_note(block):
-    return block.indent <= MARGIN and bool(EDITOR_NOTE_RE.match(block.text))
+    if block.indent > MARGIN:
+        return False
+    # «Σημείωση» бывает на своей строке, номер и закон — ниже (4/1978)
+    text = block.text
+    return bool(EDITOR_NOTE_RE.match(text) or LONE_NOTE_RE.match(text))
+
+
+def join_broken_headings(blocks):
+    """Заголовок на полях, разорванный переносом страницы («… της» / «Δημοκρατίας Νόμου»),
+    — один блок, если за второй частью идёт статья."""
+    result = []
+    for index, block in enumerate(blocks):
+        previous = result[-1] if result else None
+        following = blocks[index + 1] if index + 1 < len(blocks) else None
+        if (
+            previous is not None
+            and following is not None
+            and previous.indent <= MARGIN
+            and block.indent <= MARGIN
+            and following.indent > MARGIN
+            and TOP_RE.match(following.text)
+            and previous.text[-1] not in '.:;·∙˙,—-»'
+            and not is_history(previous.text)
+            and not TOP_RE.match(previous.text)
+            and not match_item(previous.text)[0]
+            and len(previous.text) + len(block.text) <= 3 * HEADING_MAX
+        ):
+            result[-1] = layout.Block(previous.line, previous.indent,
+                                      previous.text + ' ' + block.text)
+            continue
+        result.append(block)
+    return result
 
 
 class Parser:
@@ -185,17 +219,23 @@ class Parser:
 
     def parse(self, lines):
         all_blocks = layout.blocks(lines, skip=is_page_furniture)
-        start = next(
-            index for index, block in enumerate(all_blocks) if block.text == 'Προοίμιο'
-        )
-        all_blocks = [
-            part for block in all_blocks[start + 1:] for part in split_history(block)
-        ]
-        preamble = Node('cit', token='cit_1', heading='Προοίμιο')
-        self.root.add(preamble)
-        self.stack = [preamble]
+        texts = [block.text for block in all_blocks]
+        if 'Προοίμιο' in texts:
+            start = texts.index('Προοίμιο') + 1
+            preamble = Node('cit', token='cit_1', heading='Προοίμιο')
+            self.root.add(preamble)
+            self.stack = [preamble]
+        else:
+            # без преамбулы (4/1978): текст — после списка изменяющих законов под заголовком
+            self.stack = [self.root]
+            start = texts.index(HISTORY_HEADING) + 1
+            while start < len(texts) and is_history(texts[start]):
+                start += 1
+        all_blocks = [part for block in all_blocks[start:] for part in split_history(block)]
+        all_blocks = join_broken_headings(all_blocks)
+        self.has_schedules = any(block.text == 'ΠΑΡΑΡΤΗΜΑΤΑ' for block in all_blocks)
         for index, block in enumerate(all_blocks):
-            if self.in_schedules and is_editor_note(block):
+            if (self.in_schedules or not self.has_schedules) and is_editor_note(block):
                 self.collect_notes(all_blocks[index:])
                 break
             following = next(
