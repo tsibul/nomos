@@ -350,6 +350,19 @@ class LinkerTests(SimpleTestCase):
         )
         self.assertIn('to="art_17">Article 17</ref>', marked)
 
+    def test_second_number_is_paragraph_of_same_article(self):
+        """«άρθρο 17 παράγραφοι 1 και 2», «Article 17(1) and (2)» — пункт 2 статьи 17."""
+        marked = self.mark('el', 'στο άρθρο 1 παράγραφοι 1 και 2 δεν')
+        self.assertIn('to="art_1.par_2">2</ref>', marked)
+        marked = self.mark('en', 'in Article 1(1) and (2) shall')
+        self.assertIn('to="art_1.par_2">(2)</ref>', marked)
+        marked = self.mark('en', 'Article 17(1)(a) and (g)')
+        self.assertIn('to="art_17.par_1.pnt_g">(g)</ref>', marked)
+        # единственное число — перечень статей
+        marked = self.mark('el', 'άρθρο 17 παράγραφος 1 και 1')
+        self.assertIn('to="art_1">1</ref>', marked)
+        self.assertNotIn('(b)</ref>', self.mark('en', 'Article 17 and (b)'))
+
     def test_article_of_unknown_act_after_list(self):
         """Статья перед «of Directive 92/12/EEC» не ссылается на свой акт."""
         marked = self.mark('en', 'Article 17(1) and Article 1 of Directive 92/12/EEC')
