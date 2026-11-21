@@ -34,6 +34,15 @@ LEGACY_GAZETTES = {'cy/law/2025/104_I', 'cy/kdp/2026/168'}
 QUOTE_CLOSED_RE = re.compile(r'»[.:;·∙\u0387\ua78f]?(\s+(και|ή))?$')
 # знак конца фразы перед закрывающей кавычкой: «…εκπρόσωπό του∙»
 PUNCT_QUOTE_RE = re.compile(r'([.:;·∙])»$')
+# поле слилось с текстом (48(Ι)/2025): «Τροποποίηση 2. Το άρθρο 2 … αλφαβητική του άρθρου»,
+# «2 σειρά, … τους: του βασικού νόμου.» — остаток заголовка в конце строк и номер в начале второй
+COLLAPSED_FIRST_RE = re.compile(
+    r'^(?P<margin>[Α-ΩΆ-Ώ][α-ωά-ώ]+) (?P<body>(?P<num>\d+)\.\s*(Ο|Η|Το|Οι)\s.*?)'
+    r'\s(?P<tail>του άρθρου)$'
+)
+COLLAPSED_SECOND_RE = re.compile(
+    r'^(?P<num>\d+[Α-Ω]{0,2}) (?P<body>.*?) (?P<tail>του βασικού νόμου\.)$'
+)
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -57,6 +66,28 @@ def split_line(line, column):
     if indent < column - 3 and len(line.rstrip()) < column and not quoted:
         return line.strip(), ''
     return '', line.strip()
+
+
+def restore_collapsed_margin(lines, column):
+    """Строки со слившимся полем → поле до колонки текста и текст, как в обычной раскладке."""
+    restored = []
+    index = 0
+    while index < len(lines):
+        first = COLLAPSED_FIRST_RE.match(lines[index])
+        second = None
+        if first and index + 1 < len(lines):
+            second = COLLAPSED_SECOND_RE.match(lines[index + 1])
+        if first is None or second is None or not lines[index + 1].startswith(first.group('num')):
+            restored.append(lines[index])
+            index += 1
+            continue
+        width = max(column, len(first.group('margin')) + 4)
+        restored.append(first.group('margin').ljust(width) + first.group('body'))
+        margin = first.group('tail') + ' ' + second.group('num')
+        restored.append(margin.ljust(max(width, len(margin) + 4)) + second.group('body'))
+        restored.append(second.group('tail'))
+        index += 2
+    return restored
 
 
 def text_start(line):
@@ -129,6 +160,8 @@ class GazetteParser:
 
     def parse(self, lines):
         column, self.expected = body_column(lines)
+        if not self.legacy:
+            lines = restore_collapsed_margin(lines, column)
         for index, line in enumerate(lines):
             if END_RE.match(line) and self.article is not None:
                 break

@@ -15,6 +15,8 @@ from .tree import Node
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
 LAW_NUMBER_RE = re.compile(r'^\d+(\([IΙ]\))?/\d{4}$')
 CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
+# «244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075» (118(Ι)/2002, ст. 14Β)
+CORRIGENDUM_FULL_RE = re.compile(r'ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+')
 
 TOP_RE = re.compile(
     r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,3}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
@@ -89,6 +91,9 @@ LEGACY_ACTS = {'cy/law/2000/95_I'}
 # переноса страницы, «ΜΕΡΟΣ» левее середины, «(ν)» после «(iv)»), меняют их фрагменты,
 # к которым привязан перевод; для них не применяются
 BEFORE_118_ACTS = {'cy/law/2000/95_I', 'cy/law/2010/59_I'}
+# акты, собранные до правил оговорок для 117(Ι)/2002 и 118(Ι)/2002 (оговорка N — к пункту
+# оговорки N-1, «Νοείται … ότι,» открывает перечень): правила меняют их фрагменты с переводом
+PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {'cy/law/1978/4', 'cy/law/2001/89_I'}
 
 HEADING_MAX = 110
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
@@ -128,6 +133,7 @@ def is_history(text):
     """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»; у отменённой
     статьи — с подписью: «Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018»."""
     cleaned = CORRIGENDUM_RE.sub('', text).replace('Παρ. Ι(Ι), Ε.Ε.', '')
+    cleaned = CORRIGENDUM_FULL_RE.sub('', cleaned)
     if cleaned.startswith(HISTORY_HEADING + ' '):
         cleaned = cleaned[len(HISTORY_HEADING):]
     tokens = cleaned.split()
@@ -156,11 +162,28 @@ def is_group_heading(text):
     return not TOP_RE.match(text) and not match_item(text)[0]
 
 
-def opens_list(node):
+def opens_list(node, provisos=False):
     """Абзац, за которым следует его собственный список: кончается двоеточием или тире."""
     text = layout.NOTE_RE.sub('', node.text()).rstrip(' .')
     # «…τα ακόλουθα προϊόντα [Σ.Σ.: …].» — перечень без двоеточия
-    return text.endswith((':', '—', '–', '-')) or 'ακόλουθα' in text[-40:]
+    if text.endswith((':', '—', '–', '-')) or 'ακόλουθα' in text[-40:]:
+        return True
+    # «Νοείται περαιτέρω ότι,» (117(Ι)/2002, ст. 3(1)(δ)) — за оговоркой её пункты (i), (ii)
+    return provisos and text.startswith('Νοείται') and text.endswith('ότι,')
+
+
+# «Νοείται ότι» — первая оговорка, «Νοείται περαιτέρω ότι» — вторая,
+# «Νοείται έτι περαιτέρω ότι» — третья, каждое «έτι» — ещё одна
+PROVISO_RE = re.compile(r'^Νοείται\s+(?P<eti>(?:έτι\s+)*)(?P<further>περαιτέρω\s+)?ότι')
+
+
+def proviso_ordinal(text):
+    match = PROVISO_RE.match(text)
+    if match is None:
+        return None
+    if not match.group('further'):
+        return 1 if not match.group('eti') else None
+    return 2 + len(match.group('eti').split())
 
 
 def match_item(text):
@@ -271,6 +294,7 @@ class Parser:
     def __init__(self, act_uid):
         self.legacy = act_uid in LEGACY_ACTS
         self.earlier = act_uid in BEFORE_118_ACTS
+        self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
         self.root = Node('act', token=act_uid)
         self.stack = []
         self.container = self.root
@@ -582,7 +606,7 @@ class Parser:
             return previous.level
         # «(iv) … να είναι:» + «(1) …»: новый список под пунктом, оканчивающимся «:»
         last = self.stack[-1]
-        if len(self.stack) > 1 and last.level >= level and opens_list(last):
+        if len(self.stack) > 1 and last.level >= level and self.opens_list(last):
             return last.level + 1
         return level
 
@@ -603,14 +627,14 @@ class Parser:
         if (
             len(self.stack) > 1
             and self.stack[-1].unnumbered
-            and not opens_list(self.stack[-1])
+            and not self.opens_list(self.stack[-1])
         ):
             # пункт после безномерного абзаца продолжает список родителя
             self.stack.pop()
         while len(self.stack) > 1 and self.stack[-1].level >= level:
             if (
                 self.stack[-1].unnumbered
-                and opens_list(self.stack[-1])
+                and self.opens_list(self.stack[-1])
                 and level > self.stack[-1].parent.level
             ):
                 # «Νοείται περαιτέρω ότι …:» и пункты под ним: список внутри абзаца;
@@ -670,7 +694,7 @@ class Parser:
                 self.in_schedules
                 and not text.startswith('Νοείται')
                 and not self.stack[-1].parent.unnumbered
-                and opens_list(self.stack[-1])
+                and self.opens_list(self.stack[-1])
                 and all(child.unnumbered for child in self.stack[-1].children)
             )
         ):
@@ -679,6 +703,7 @@ class Parser:
             # «Στην υπεύθυνη δήλωση επισυνάπτονται:» (i)…(vii) «… Νόμο.» + абзац:
             # перечень закончен, абзац — следующий у владельца вводного абзаца
             del self.stack[-2:]
+        self.attach_proviso(text)
         owner = self.stack[-1]
         if not owner.children and not owner.paragraphs:
             # вводный абзац — текст самого пункта
@@ -686,6 +711,21 @@ class Parser:
             return
         # каждый следующий абзац без номера — свой фрагмент (ответ координатора на вопрос 1)
         self.open_unnumbered(owner, text, indent)
+
+    def opens_list(self, node):
+        return opens_list(node, self.provisos)
+
+    def attach_proviso(self, text):
+        """Оговорка N — к тому же пункту, что оговорка N-1, хотя бы и с бо́льшим отступом,
+        чем пункты предыдущей оговорки (118(Ι)/2002, ст. 10(2)(ια)(δ): «έτι» ×6 после (δ))."""
+        ordinal = proviso_ordinal(text)
+        if not self.provisos or ordinal is None or ordinal < 2:
+            return
+        for index in range(len(self.stack) - 1, 0, -1):
+            unnumbered = [child for child in self.stack[index].children if child.unnumbered]
+            if unnumbered and proviso_ordinal(unnumbered[-1].text()) == ordinal - 1:
+                del self.stack[index + 1:]
+                return
 
     def starts_definition(self, text):
         article = self.current_top()
@@ -713,7 +753,7 @@ class Parser:
             and bool(last.paragraphs)
             and last.paragraphs[-1].endswith('.')
             and opener.unnumbered
-            and opens_list(opener)
+            and self.opens_list(opener)
         )
 
     def open_unnumbered(self, owner, text, indent):
@@ -763,6 +803,8 @@ def mark_definitions(article):
             node.token = 'def_' + numbering.slug(match.group('term'))
             owner.add(node)
             current = node
+            # оговорки после нового определения — его, а не абзаца после прежнего перечня
+            closing = None
             continue
         if closing is not None and LIST_END_RE.search(closing.paragraphs[-1]):
             # «… Μέρος ή» / «Παράρτημα …» — одно предложение, разорванное на две строки

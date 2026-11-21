@@ -1629,13 +1629,16 @@ class IncomeTaxLawTests(TestCase):
         self.assertEqual(self.version(eid, datetime.date(2025, 1, 1)).state, 'active')
 
     def test_incentive_proviso_by_law_67_2026(self):
-        eid = 'art_20D.par_1.sub_2.pnt_iv.sub_1'
+        eid = 'art_20D.par_1.sub_3'
         phrase = 'εντός έξι (6) μηνών από την ημερομηνία έναρξης'
         self.assertIn(phrase, self.text(eid, datetime.date(2026, 4, 13)))
         self.assertNotIn(phrase, self.text(eid, datetime.date(2026, 4, 14)))
         eid = 'art_8.par_11.sub_2'
         self.assertIsNone(self.version(eid, datetime.date(2025, 12, 31)))
         self.assertEqual(self.version(eid, datetime.date(2026, 1, 1)).state, 'active')
+
+
+DEFENCE_PARSE_ACT = 'cy/law/2002/117_I'
 
 
 class DefenceContributionParsingTests(SimpleTestCase):
@@ -1658,6 +1661,89 @@ class DefenceContributionParsingTests(SimpleTestCase):
         consolidated.mark_definitions(article)
         definitions = [node.eid for node in article.children if node.kind == 'def']
         self.assertEqual(definitions, ['art_2.def_anadiarthrwsh', 'art_2.def_etos'])
+
+    @staticmethod
+    def parse_indented(*rows, act_uid=DEFENCE_PARSE_ACT):
+        """Тело сводного текста: (лишний отступ, строка)."""
+        lines = ['Προοίμιο', '', PAD + 'Επειδή.']
+        for indent, line in rows:
+            lines += ['', PAD + ' ' * indent + line]
+        return consolidated.Parser(act_uid).parse(lines)
+
+    def eids(self, root):
+        return [node.eid for node in root.walk() if node.eid]
+
+    def test_next_proviso_after_points_of_previous(self):
+        """Оговорка N — к пункту оговорки N-1, хоть и глубже пунктов этой оговорки;
+        в актах, собранных раньше (4/1978), — по отступу, как прежде."""
+        rows = (
+            (0, '5.-(1) Πρόσωπο.'),
+            (0, 'Νοείται ότι, πρώτη.'),
+            (0, 'Νοείται περαιτέρω ότι-'),
+            (6, '(α) ένα·'),
+            (6, '(β) δύο.'),
+            (12, 'Νοείται έτι περαιτέρω ότι, τρίτη.'),
+        )
+        self.assertIn('art_5.par_1.sub_3', self.eids(self.parse_indented(*rows)))
+        earlier = self.parse_indented(*rows, act_uid='cy/law/1978/4')
+        self.assertIn('art_5.par_1.sub_2.pnt_b.sub_1', self.eids(earlier))
+        self.assertEqual(consolidated.proviso_ordinal('Νοείται ότι, άλλο'), 1)
+        self.assertEqual(consolidated.proviso_ordinal('Νοείται περαιτέρω ότι-'), 2)
+        self.assertEqual(consolidated.proviso_ordinal('Νοείται έτι έτι περαιτέρω ότι,'), 4)
+
+    def test_proviso_ending_with_comma_opens_list(self):
+        """«Νοείται ότι,» + (i), (ii) — пункты самой оговорки."""
+        rows = (
+            (0, '5.-(1) Πρόσωπο.'),
+            (0, 'Νοείται ότι,'),
+            (6, '(i) ένα·'),
+            (6, '(ii) δύο.'),
+        )
+        eids = self.eids(self.parse_indented(*rows))
+        self.assertIn('art_5.par_1.sub_1.pnt_ii', eids)
+        self.assertNotIn('art_5.par_1.pnt_i', eids)
+
+    def test_proviso_after_definition_following_closing_paragraph(self):
+        """Абзац после перечня, затем определение: оговорка — к определению."""
+        root = self.parse_indented(
+            (0, '2. Στον παρόντα Νόμο-'),
+            (0, 'Εκτός αν προκύπτει διαφορετικά.'),
+            (0, '«έτος» σημαίνει το φορολογικό έτος:'),
+            (0, 'Νοείται ότι, άλλο.'),
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        self.assertIn('art_2.def_etos.sub_1', self.eids(root))
+
+    def test_full_corrigendum_in_history(self):
+        """«244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075» на полях — список изменений."""
+        self.assertTrue(
+            consolidated.is_history('244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075')
+        )
+
+    def test_margin_merged_into_article_line(self):
+        """48(Ι)/2025: «Τροποποίηση 2. Το άρθρο 2 … του άρθρου» — поле слилось с текстом."""
+        lines = gazette_lines(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+        )
+        lines += [
+            'Τροποποίηση 2. Το άρθρο 2 του βασικού νόμου τροποποιείται με την προσθήκη, '
+            'στην κατάλληλη αλφαβητική του άρθρου',
+            '2 σειρά, των ακόλουθων νέων όρων: του βασικού νόμου.',
+        ]
+        lines += gazette_lines(('Τροποποίηση', '3. Το άρθρο 3 τροποποιείται.'))
+        root = gazette.GazetteParser('cy/law/2025/1_I').parse(lines)
+        articles = [node for node in root.children if node.kind == 'art']
+        self.assertEqual([node.num for node in articles], ['1', '2', '3'])
+        self.assertEqual(articles[1].heading, 'Τροποποίηση του άρθρου 2 του βασικού νόμου.')
+        self.assertEqual(
+            articles[1].paragraphs,
+            [
+                'Το άρθρο 2 του βασικού νόμου τροποποιείται με την προσθήκη, '
+                'στην κατάλληλη αλφαβητική σειρά, των ακόλουθων νέων όρων:'
+            ],
+        )
 
 
 DEFENCE_LAW = 'cy/law/2002/117_I'
