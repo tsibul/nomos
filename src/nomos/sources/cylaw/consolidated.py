@@ -69,6 +69,11 @@ SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
 
+# акты, собранные прежним разбором: перенос страницы посреди фразы закрывает абзац,
+# пункт в строке статьи («42.—(1)(α)») не отделяется. Их фрагменты и перевод привязаны
+# к прежнему разбору; новые акты (4/1978 и следующие) собираются новым
+LEGACY_ACTS = {'cy/law/2000/95_I'}
+
 HEADING_MAX = 110
 HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
 EXCEPTION_START = 'Εξαιρούνται'
@@ -222,6 +227,7 @@ def join_broken_headings(blocks):
 
 class Parser:
     def __init__(self, act_uid):
+        self.legacy = act_uid in LEGACY_ACTS
         self.root = Node('act', token=act_uid)
         self.stack = []
         self.container = self.root
@@ -234,7 +240,11 @@ class Parser:
         self.notes = []
 
     def parse(self, lines):
-        all_blocks = layout.blocks(lines, skip=is_page_furniture)
+        all_blocks = layout.blocks(
+            lines,
+            skip=is_page_furniture,
+            join_pages=not self.legacy,
+        )
         texts = [block.text for block in all_blocks]
         if 'Προοίμιο' in texts:
             start = texts.index('Προοίμιο') + 1
@@ -404,7 +414,11 @@ class Parser:
                 node = self.open_item('arabic', '(%s)' % top.group('sub'), block)
                 # «42.—(1)(α)»: и пункт в той же строке
                 inner_name, inner = match_item(rest)
-                if inner_name and LEVELS[inner_name] > LEVELS['arabic']:
+                if (
+                    not self.legacy
+                    and inner_name
+                    and LEVELS[inner_name] > LEVELS['arabic']
+                ):
                     node = self.open_item(inner_name, '(%s)' % inner.group('num'), block)
                     rest = inner.group('rest')
             self.set_text(node, rest)

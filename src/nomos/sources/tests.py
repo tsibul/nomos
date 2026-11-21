@@ -394,12 +394,12 @@ class BeforeTests(SimpleTestCase):
 PAD = ' ' * 12
 
 
-def parse_body(*lines):
+def parse_body(*lines, act_uid='cy/law/1978/4'):
     """Тело сводного текста после «Προοίμιο»: строки с отступом текста."""
     rows = ['Προοίμιο', '', PAD + 'Επειδή.']
     for line in lines:
         rows += ['', PAD + line]
-    return consolidated.Parser('cy/law/1978/4').parse(rows)
+    return consolidated.Parser(act_uid).parse(rows)
 
 
 class ConsolidatedTests(SimpleTestCase):
@@ -411,6 +411,13 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(texts['art_42.par_1.pnt_a'], ['Πρόσωπο:'])
         self.assertEqual(texts['art_42.par_1.pnt_b'], ['άλλο.'])
         self.assertEqual(texts['art_51A.par_1.pnt_a'], ['Ένα.'])
+
+    def test_legacy_act_keeps_point_in_paragraph(self):
+        """95(Ι)/2000 собран прежним разбором: «42.―(1)(α)» — текст εδαφίου (1)."""
+        root = parse_body('42.―(1)(α) Πρόσωπο:', act_uid='cy/law/2000/95_I')
+        texts = {node.eid: node.paragraphs for node in root.walk() if node.eid}
+        self.assertEqual(texts['art_42.par_1'], ['(α) Πρόσωπο:'])
+        self.assertNotIn('art_42.par_1.pnt_a', texts)
 
     def test_doubled_greek_numbering_is_own_level(self):
         """«(αα)», «(ββ)» под «(i)» — свой уровень, а не продолжение «(α)»."""
@@ -444,6 +451,19 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(
             [block.text for block in blocks],
             ['ψηφισθέντος είτε προ είτε κατόπιν.', 'Νοείται ότι άλλο', 'Άλλος.'],
+        )
+
+    def test_page_break_closes_block_without_join_pages(self):
+        """Прежний разбор (95(Ι)/2000): пустая строка перед колонтитулом закрывает блок."""
+        header = 'https://www.cylaw.org/nomoi/enop/non-ind/2000_1_95/full.html'
+        blocks = layout.blocks(
+            ['    ψηφισθέντος είτε προ', '', header, '    είτε κατόπιν.'],
+            skip=consolidated.is_page_furniture,
+            join_pages=False,
+        )
+        self.assertEqual(
+            [block.text for block in blocks],
+            ['ψηφισθέντος είτε προ', 'είτε κατόπιν.'],
         )
 
 
