@@ -414,9 +414,12 @@ def structure_heading(act, version):
     return ''
 
 
-def translated_headings(versions, lang):
-    """Заголовки перевода одним запросом: {id редакции: заголовок}."""
-    if lang == DEFAULT_LANG:
+def translated_headings(versions, lang, original_lang=DEFAULT_LANG):
+    """Заголовки перевода одним запросом: {id редакции: заголовок}.
+
+    original_lang — язык оригинала акта (у актов ЕС — en): на нём перевода нет.
+    """
+    if lang == original_lang:
         return {}
     ids = [version.id for version in versions if version is not None]
     texts = (
@@ -429,7 +432,7 @@ def translated_headings(versions, lang):
 
 def translated_units(structure, lang):
     """id страниц, где переведён хоть один текст (любой редакции); один заголовок не в счёт."""
-    if lang == DEFAULT_LANG:
+    if lang == (structure.act.structure_lang or DEFAULT_LANG):
         return None
     texts = FragmentText.objects.filter(
         version__fragment__act=structure.act,
@@ -549,7 +552,11 @@ def build_toc(structure, route):
         return items
 
     items = walk(structure.roots())
-    headings = translated_headings([item.version for item in flat], route.lang)
+    headings = translated_headings(
+        [item.version for item in flat],
+        route.lang,
+        structure.act.structure_lang or DEFAULT_LANG,
+    )
     translated = translated_units(structure, route.lang)
     for item in flat:
         item.label = fragment_label(item.fragment, item.version, headings, route.lang)

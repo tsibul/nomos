@@ -753,7 +753,11 @@ def history_label(structure, fragment, route):
     """«Статья 5. Заголовок перевода» (без перевода — «Статья 5»), у пункта — «Статья 5, 1»."""
     unit = structure.unit_of(fragment) or fragment
     version = unit.version_on(route.date) or unit.versions.last()
-    headings = reading.translated_headings([version], route.lang)
+    headings = reading.translated_headings(
+        [version],
+        route.lang,
+        route.act.structure_lang or reading.DEFAULT_LANG,
+    )
     label = reading.fragment_label(unit, version, headings, route.lang)
     prefix = reading.KIND_PREFIX.get(route.lang, {}).get(unit.kind)
     if label.lang != route.lang and prefix and version is not None and version.num:
