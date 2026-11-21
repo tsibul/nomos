@@ -1082,3 +1082,59 @@ class DeployCheckTests(TestCase):
         # без сборки (npm run build) добавляется django_vite.W001 — к выкладке не относится
         warnings = set(re.findall(r'\(([a-z_]+\.W\d+)\)', result.stderr))
         self.assertEqual(warnings - {'django_vite.W001'}, {'security.W021'}, result.stderr)
+
+
+class FragmentLabelLangTests(TestCase):
+    """Статья без заголовка: приставка на языке просмотра, если перевод акта есть."""
+
+    @classmethod
+    def setUpTestData(cls):
+        source = Source.objects.create(code='test', name='Тест')
+        cls.act = Act.objects.create(
+            uid='eu/reg/2010/904',
+            jurisdiction='eu',
+            kind='reg',
+            number='904/2010',
+            year='2010',
+            structure_lang='en',
+        )
+        for lang in ('en', 'ru'):
+            Expression.objects.create(
+                act=cls.act,
+                lang=lang,
+                status='official_text',
+                source=source,
+                title='Regulation',
+            )
+        cls.fragment = Fragment.objects.create(
+            uid='eu00000001',
+            act=cls.act,
+            kind='art',
+            eid='art_1',
+        )
+        amendment = Amendment.objects.create(
+            amending_act=cls.act,
+            kind='base',
+            key='base',
+            marker='base',
+        )
+        cls.version = FragmentVersion.objects.create(
+            fragment=cls.fragment,
+            key='base',
+            amendment=amendment,
+            num='1',
+            heading='',
+            known_from=datetime.date(2024, 1, 1),
+        )
+
+    def label(self, lang):
+        return reading.fragment_label(self.fragment, self.version, {}, lang)
+
+    def test_prefix_in_reading_lang(self):
+        label = self.label('ru')
+        self.assertEqual((label.text, label.lang), ('Статья 1', 'ru'))
+
+    def test_original_and_missing_translation_keep_original_prefix(self):
+        self.assertEqual(self.label('en').text, 'Article 1')
+        self.assertEqual(self.label('el').text, 'Article 1')
+        self.assertEqual(reading.fragment_label(self.fragment, self.version).text, 'Article 1')
