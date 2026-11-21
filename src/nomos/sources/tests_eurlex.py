@@ -439,6 +439,15 @@ class EuVatTextsTests(TestCase):
         self.assertGreater(references.count(), 0)
         self.assertFalse(references.filter(resolved=False).exists())
 
+    def test_all_references_between_eu_acts_resolved(self):
+        # все языки, включая ru: цель — существующий фрагмент акта ЕС
+        unresolved = Reference.objects.filter(
+            from_text__version__fragment__act__uid__startswith='eu/',
+            to_act__uid__startswith='eu/',
+            resolved=False,
+        )
+        self.assertEqual(list(unresolved.values_list('from_text__expression__lang', 'anchor')), [])
+
     def test_implementing_regulation(self):
         act = Act.objects.get(uid=IMPLEMENTING)
         self.assertEqual(act.kind, Act.Kind.IMPLEMENTING_REGULATION)
