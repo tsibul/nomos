@@ -965,6 +965,18 @@ class PublicOnlyTests(TestCase):
         self.assertContains(response, 'Оригинал:')
         self.assertNoGreek(response)
 
+    def test_original_link_prefers_act_address(self):
+        self.add_public_ru()
+        Source.objects.filter(code='test').update(url='https://example.org/')
+        greek = self.law.expressions.get(lang='el')
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'href="https://example.org/"')
+        greek.url = 'https://example.org/acts/2000_1_1.pdf'
+        greek.save()
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'href="https://example.org/acts/2000_1_1.pdf"')
+        self.assertNotContains(response, 'href="https://example.org/"')
+
     def test_act_page_and_history_show_no_greek(self):
         self.add_public_ru()
         response = self.client.get(ACT_URL)

@@ -29,11 +29,16 @@ SOURCES = {
     # точный адрес страницы условий не выяснен — корень сайта
     'cylaw': {
         'name': 'CyLaw — неофициальная сводная редакция',
+        'url': 'https://www.cylaw.org',
         'publisher': 'ΚΙΝΟΠ',
         'terms_url': 'https://www.cylaw.org',
         'attribution': 'Сводная редакция CyLaw (www.cylaw.org, ΚΙΝΟΠ), неофициальная',
     },
-    'cy-gazette': {'name': 'Официальная газета Республики Кипр'},
+    # сайт Государственной типографии, где выходит газета (docs/research/vat-sources.md)
+    'cy-gazette': {
+        'name': 'Официальная газета Республики Кипр',
+        'url': 'https://www.mof.gov.cy/mof/gpo/',
+    },
     # правовое уведомление EUR-Lex: сводные тексты — CC BY 4.0, указать источник и изменения;
     # сводный текст документальный, аутентичен только текст в OJ
     'eurlex': {
@@ -147,6 +152,7 @@ class Loader:
                 short_title=item.get('short-title', ''),
                 file=item.get('file', ''),
                 public=item.get('public') == 'true',
+                url=item.get('url', ''),
             )
         for item in element.iter('fragment'):
             parent = item.get('parent')
