@@ -99,12 +99,66 @@ def amending_info(act, law_uid, title):
             key=op.key,
             provision=op.provision,
             kind=op.kind if op.kind != 'add' else 'replace',
-            published_on=act.published_on,
+            published_on=op.known_from,
             in_force_from=op.valid_from,
             applies_from=op.applies_from,
             note=op.note,
         ))
+    for renumber in act.renumbered:
+        info.amendments.append(texts_xml.AmendmentInfo(
+            key=renumber.key,
+            provision=renumber.provision,
+            kind=history.CORRECT,
+            published_on=renumber.correction.published_on,
+            in_force_from=act.in_force_from,
+            note='%s: αναρίθμηση σε άρθρο %s.' % (
+                renumber.correction.published_in, renumber.num),
+        ))
     return info
+
+
+def corrected_version(amending, version, key, published_on):
+    """Редакция положения изменяющего акта по его исправлению (Διόρθωση)."""
+    return history.Version(
+        key=version.valid_from.isoformat() + history.CORRECTED_SUFFIX,
+        amendment='%s#%s' % (amending.uid, key),
+        valid_from=version.valid_from,
+        known_from=published_on,
+        paragraphs=list(version.paragraphs),
+    )
+
+
+def apply_corrections(amending, amending_versions, report):
+    """Исправления текста и номеров статей самого изменяющего акта."""
+    by_eid = {node.eid: (node, versions) for node, versions in amending_versions.items()}
+    for renumber in amending.renumbered:
+        if renumber.provision not in by_eid:
+            report.append('%s#%s: положения нет в разборе акта' % (amending.uid, renumber.key))
+            continue
+        node, versions = by_eid[renumber.provision]
+        version = corrected_version(
+            amending, versions[-1], renumber.key, renumber.correction.published_on,
+        )
+        version.num = renumber.num
+        versions.append(version)
+    for op in amending.ops:
+        if op.kind != history.CORRECT:
+            continue
+        found = [
+            (node, versions)
+            for eid, (node, versions) in by_eid.items()
+            if history.is_inside(eid, op.provision)
+            and '\n'.join(versions[-1].paragraphs).count(op.old) == 1
+        ]
+        if len(found) != 1:
+            report.append('%s: в тексте акта «%s» найдено в %d положениях' % (
+                op.ref, op.old, len(found)))
+            continue
+        node, versions = found[0]
+        version = corrected_version(amending, versions[-1], op.key, op.known_from)
+        version.paragraphs = history.split(
+            '\n'.join(version.paragraphs).replace(op.old, op.new))
+        versions.append(version)
 
 
 def apply_remarks(versions, remarks, base_ref, report):
@@ -256,6 +310,7 @@ class Command(BaseCommand):
                 version.known_from = amending.published_on
                 version.paragraphs = list(node.paragraphs)
                 amending_versions[node] = [version]
+            apply_corrections(amending, amending_versions, report)
             # ссылки на базовый закон; у ΚΔΠ своих статей нет — без указания акта тоже он
             amending_marker = refs.Marker(
                 marker.targets, refs.EL, info.uid, implicit=amending.kind != 'law',

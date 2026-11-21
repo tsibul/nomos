@@ -1628,6 +1628,23 @@ class IncomeTaxLawTests(TestCase):
         self.assertIsNone(self.version(eid, datetime.date(2024, 12, 31)))
         self.assertEqual(self.version(eid, datetime.date(2025, 1, 1)).state, 'active')
 
+    def test_correction_5075_of_law_244_2025(self):
+        """Διόρθωση Ε.Ε. 5075: с 01.01.2026 «εξυπηρετούμενο δάνειο», известно с 27.02.2026;
+        статьи 16–25 закона 244 — 14–23."""
+        fragment = Fragment.objects.get(act__uid=INCOME_TAX_LAW, eid='art_14B.par_3.pnt_e')
+        day = datetime.date(2026, 3, 1)
+        before = fragment.version_on(day, known=datetime.date(2026, 2, 26))
+        after = fragment.version_on(day, known=day)
+        self.assertEqual(before.key, '2026-01-01')
+        self.assertEqual(after.key, '2026-01-01~2')
+        body = FragmentText.objects.get(version=after, expression__lang='el').body
+        self.assertIn('“εξυπηρετούμενο δάνειο”', body)
+        body = FragmentText.objects.get(version=before, expression__lang='el').body
+        self.assertIn('“μη εξυπηρετούμενο δάνειο”', body)
+        article = Fragment.objects.get(act__uid='cy/law/2025/244_I', eid='art_25')
+        self.assertEqual(article.version_on(day, known=day).num, '23')
+        self.assertEqual(article.version_on(day, known=datetime.date(2026, 1, 1)).num, '25')
+
     def test_incentive_proviso_by_law_67_2026(self):
         eid = 'art_20D.par_1.sub_3'
         phrase = 'εντός έξι (6) μηνών από την ημερομηνία έναρξης'
