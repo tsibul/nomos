@@ -294,6 +294,27 @@ class ViewerTests(TestCase):
         self.assertTrue(all(url.endswith('/el/#art_1.par_1') for url in urls))
         self.assertIn(f'{ACT_URL}art_1/el/#art_1.par_1', urls)
 
+    def test_history_shows_changes_of_nested_fragments(self):
+        response = self.client.get(ACT_URL + 'art_1/history/')
+        self.assertNotContains(response, 'Καμία τροποποίηση')
+        self.assertContains(response, 'Αλλαγές σε επιμέρους διατάξεις')
+        self.assertContains(response, 'ιστορικό της διάταξης')
+        nested = response.context['nested']
+        self.assertEqual(nested[0]['start'], datetime.date(2025, 1, 1))
+        self.assertEqual(nested[0]['place'], '(1)')
+        self.assertEqual(nested[0]['version'], self.new)
+        self.assertTrue(nested[0]['introduced']['label'].endswith(', art_2'))
+        self.assertEqual(nested[0]['url'], f'{ACT_URL}art_1/#art_1.par_1')
+        self.assertContains(response, f'href="{ACT_URL}art_1.par_1/history/"')
+        self.assertTrue(all(entry['version'].amendment.kind != 'base' for entry in nested))
+        response = self.client.get(ACT_URL + 'prt_I/history/')
+        self.assertEqual(response.context['nested'][0]['place'], '1(1)')
+
+    def test_history_without_any_changes_says_so(self):
+        response = self.client.get(ACT_URL + 'art_1.par_2/history/')
+        self.assertContains(response, 'Καμία τροποποίηση')
+        self.assertEqual(response.context['nested'], [])
+
     def test_dated_page_shows_way_back(self):
         response = self.client.get(ACT_URL + '@2024-06-01/art_1/')
         self.assertContains(response, 'Βλέπετε την έκδοση της 01.06.2024')
