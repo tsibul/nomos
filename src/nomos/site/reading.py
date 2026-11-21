@@ -202,11 +202,17 @@ def interface_lang():
     return lang if lang in UI_LANGS else READER_LANG
 
 
+def act_number(act):
+    """«95(I)/2000»; у актов ЕС год уже в номере, как в обозначении: «904/2010», «2025/517»."""
+    number = act.number or ''
+    if not act.year or act.year in number.split('/'):
+        return number or act.year or ''
+    return f'{number}/{act.year}' if number else act.year
+
+
 def act_label(act):
     """«Закон 95(I)/2000», «Подзаконный акт (ΚΔΠ) 95/2024»; на el — «Νόμος 95(I)/2000»."""
-    number = act.number
-    if act.year:
-        number = f'{number}/{act.year}' if number else act.year
+    number = act_number(act)
     kind = KIND_NAMES.get(act.kind) or act.get_kind_display()
     return f'{kind} {number}'.strip()
 
@@ -295,7 +301,7 @@ def amending_short_label(act, lang):
         match = EL_SHORT_RE.match(text)
         if match:
             text = match.group(1)
-    number = f'{act.number}/{act.year}' if act.year else act.number
+    number = act_number(act)
     return Label(f'{text} {AMENDING_SUFFIX[base.lang]} {number}', base.lang)
 
 

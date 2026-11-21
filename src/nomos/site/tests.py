@@ -939,3 +939,22 @@ class PublicOnlyTests(TestCase):
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'unit--with-original')
         self.assertFalse(access.is_restricted())
+
+
+class ActNumberTests(TestCase):
+    """Номер в подписи: год не дублируется, если он уже в номере (акты ЕС)."""
+
+    def test_number_with_year(self):
+        cases = [
+            (Act(kind='reg', number='904/2010', year='2010'), '904/2010'),
+            (Act(kind='reg', number='2025/517', year='2025'), '2025/517'),
+            (Act(kind='reg', number='2026/1743', year='2026'), '2026/1743'),
+            (Act(kind='dir', number='2020/285', year='2020'), '2020/285'),
+            (Act(kind='law', number='95(I)', year='2000'), '95(I)/2000'),
+            (Act(kind='kdp', number='159', year='2025'), '159/2025'),
+        ]
+        for act, number in cases:
+            with self.subTest(number=act.number):
+                self.assertEqual(reading.act_number(act), number)
+                label = reading.act_label(act)
+                self.assertTrue(label.endswith(' ' + number), label)
