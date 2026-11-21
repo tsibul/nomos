@@ -1,4 +1,4 @@
-"""Ссылки внутри закона: упоминания статей и приложений → `<ref id="r1" to="eid">`.
+"""Ссылки на статьи и приложения закона → `<ref id="r1" to="eid">`.
 
 Размечается только однозначное: номер статьи (с пунктами в скобках), «εδάφιο (2) του
 άρθρου 6», приложение по порядковому числительному (с частью, таблицей или пунктом).
@@ -6,6 +6,13 @@
 не размечается. Цель — существующий фрагмент закона; пункт, которого нет, сводится
 к ближайшему существующему предку, статья или приложение, которых нет, — не размечаются.
 Ссылка фрагмента на себя или на своего предка не размечается.
+
+Пункт без номера статьи («εδάφιο (1) πιο πάνω») — пункт своей статьи, если он в ней есть.
+
+В изменяющем акте размечаются ссылки на базовый закон, `to="<uid закона>#<eid>"`:
+с указанием «του βασικού νόμου», «του περί Φόρου Προστιθέμενης Αξίας Νόμου» и т. п.;
+без указания акта — внутри кавычек «…» (вставляемый текст закона) и в актах, у которых
+нет своих статей с этими номерами (ΚΔΠ: implicit).
 """
 
 import re
@@ -49,8 +56,14 @@ class Language:
     ordinals: list
     # слово перед упоминанием, после которого речь о другом акте («его статьи 10А»)
     external_before: str = r'(?!)'
-    # пункт без статьи («εδάφιο (1) πιο πάνω»): не размечается, только считается
-    bare: str = r'(?!)'
+    # слово перед пунктом без статьи: «εδάφιο (1) πιο πάνω» — пункт своей статьи
+    bare_word: str = r'(?!)'
+    # после такого пункта уточнение — другая статья или акт: не размечается
+    bare_qualified: str = r'(?!)'
+    # указание базового закона после упоминания (в изменяющем акте)
+    base: str = r'(?!)'
+    # «του παρόντος», «настоящего»: в изменяющем акте вне кавычек — сам этот акт
+    this_act: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -61,7 +74,10 @@ class Language:
         self.schedule_re = re.compile(self.schedule)
         self.external_re = re.compile(self.external)
         self.external_before_re = re.compile(self.external_before)
-        self.bare_re = re.compile(self.bare)
+        self.bare_word_re = re.compile(self.bare_word)
+        self.bare_qualified_re = re.compile(self.bare_qualified)
+        self.base_re = re.compile(self.base)
+        self.this_act_re = re.compile(self.this_act)
 
 
 def ordinal_pattern(ordinals):
@@ -88,15 +104,27 @@ EL = Language(
         r'|\s+αυτού|\s+αυτής|\s+αυτών)'
     ),
     ordinals=EL_ORDINALS,
-    bare=r'(?<![\wά-ώ])(?:εδάφιο|εδαφίου|εδάφια|εδαφίων)\s+\(?\d',
+    bare_word=r'(?<![\wά-ώ])(?:εδάφιο|εδαφίου|εδάφια|εδαφίων)\s+',
+    bare_qualified=r'^\s+(?:(?:του|της|των)\s+(?!παρόντος\s+άρθρου)|αυτού|αυτής)',
+    base=(
+        r'^\s*(?:του|των)\s+(?:βασικ(?:ού|ών)\s+[Νν]όμ(?:ου|ων)'
+        r'|[Νν]όμου(?![\wά-ώ])(?!\s+του\s+\d)'
+        r'|περί\s+Φόρου\s+Προστιθέμενης\s+Αξίας\s+[Νν]όμ(?:ου|ων)(?![\wά-ώ])'
+        r'(?!\s*\(Τροποποιητικ))'
+    ),
+    this_act=r'^\s+(?:(?:του|της)\s+)?παρόντος',
 )
 
 RU = Language(
-    article_word=r'(?<![\wё])[Сс]тат(?:ь(?:я|и|е|ю|ёй|ей|ях|ями|ям)|ей)\s+',
+    # «пункта 20(1)» — номер статьи сразу после слова «пункт», затем номер пункта
+    article_word=(
+        r'(?<![\wё])(?:[Сс]тат(?:ь(?:я|и|е|ю|ёй|ей|ях|ями|ям)|ей)'
+        r'|[Пп]ункт\w*(?=\s+\d+(?:ΣΤ|СТ|[Α-ΩA-ZА-Я]){0,2}\(\d))\s+'
+    ),
     number=r'\d+(?:ΣΤ|СТ|[Α-ΩA-ZА-Я]){0,2}',
     separators=r',?\s+(?:и|или|либо|по|до)\s+|,\s+|\s*[–—-]\s*',
     paragraph_first=(
-        r'(?<![\wё])(?:пункт|подпункт|абзац)\w*'
+        r'(?<![\wё])(?:[Пп]ункт|[Пп]одпункт|[Аа]бзац)\w*'
         r'\s+((?:%s)+)\s+статьи\s+(\d+(?:ΣΤ|СТ|[Α-ΩA-ZА-Я]){0,2})%s(?!\()' % (SUB, END)
     ),
     schedule=(
@@ -113,7 +141,19 @@ RU = Language(
     ),
     ordinals=RU_ORDINALS,
     external_before=r'(?<![\wё])(?:его|её|их|этого|указанного|упомянутого|данного)\s+$',
-    bare=r'(?<![\wё])пункт\w*\s+\(\d',
+    bare_word=r'(?<![\wё])[Пп]ункт\w*\s+',
+    bare_qualified=(
+        r'^\s*(?:(?:,\s*)?стат(?:ьи|ей|ье|ья)(?![\wё])|[A-ZΑ-Ω]'
+        r'|(?:Закона|Законов|Директивы|Регламента|Кодекса|Правил|Постановления|Указа'
+        r'|Конвенции|закона|кодекса|директивы|регламента|указа|постановления'
+        r'|упомянутого|указанного|этого|данного|его|её|их|той\s+же|того\s+же)(?![\wё]))'
+    ),
+    base=(
+        r'^\s*(?:базового\s+[Зз]акона|к\s+базовому\s+[Зз]акону|к\s+[Зз]акону(?![\wё])'
+        r'|[Зз]акон(?:а|ов)\s+о\s+налоге\s+на\s+добавленную\s+стоимость(?![\wё])'
+        r'(?!\s*\(изменя))'
+    ),
+    this_act=r'^\s+настоящ\w+',
 )
 
 
@@ -170,32 +210,45 @@ class Targets:
 
 
 class Marker:
-    """Разметка абзацев одного текста; счётчики пропусков — на весь закон."""
+    """Разметка абзацев одного текста; счётчики пропусков — на весь акт.
 
-    def __init__(self, targets, language):
+    act — uid базового закона, если размечается изменяющий акт (цели — в законе);
+    implicit — упоминание без указания акта тоже ссылка на базовый закон (ΚΔΠ)."""
+
+    def __init__(self, targets, language, act='', implicit=False):
         self.targets = targets
         self.language = language
+        self.act = act
+        self.implicit = implicit
         self.skipped = Counter()
         # {(uid фрагмента, редакция): [цели по порядку]} — заполняет сборщик
         self.found = {}
+        # глубина кавычек «…» в начале текущего абзаца
+        self.depth = 0
 
     def mark_text(self, paragraphs, own):
-        """Абзацы (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
+        """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
         found = []
         marked = []
+        self.depth = 0
         for paragraph in paragraphs:
             plain = OWN_REF_RE.sub(r'\1', paragraph)
             spans = self.spans(plain, own)
             marked.append(self.insert(plain, spans, found))
+            self.depth = max(0, self.depth + plain.count('«') - plain.count('»'))
         return marked, found
+
+    def quoted(self, text, position):
+        return self.depth + text.count('«', 0, position) - text.count('»', 0, position) > 0
 
     def insert(self, text, spans, found):
         parts = []
         position = 0
         for start, end, eid in spans:
-            found.append(eid)
+            target = '%s#%s' % (self.act, eid) if self.act else eid
+            found.append(target)
             parts.append(text[position:start])
-            parts.append('<ref id="r%d" to="%s">%s</ref>' % (len(found), eid, text[start:end]))
+            parts.append('<ref id="r%d" to="%s">%s</ref>' % (len(found), target, text[start:end]))
             position = end
         parts.append(text[position:])
         return ''.join(parts)
@@ -209,20 +262,88 @@ class Marker:
         )
         taken = []
         for start, end, eid in candidates:
-            if any(start < other_end and other_start < end for other_start, other_end, _ in taken):
+            if not self.overlaps(taken, start, end):
+                self.take(taken, start, end, eid, own)
+        # пункты без статьи — после всего остального: «εδάφιο (2) του άρθρου 6» уже взято
+        for start, end, eid, reason in self.bare_spans(text, own):
+            if self.overlaps(taken, start, end):
                 continue
             if eid is None:
+                self.skipped[reason] += 1
                 taken.append((start, end, None))
                 continue
-            if own and (own == eid or own.startswith(eid + '.')):
-                self.skipped['ссылка на себя или своего предка'] += 1
-                taken.append((start, end, None))
-                continue
-            taken.append((start, end, eid))
-        for match in self.language.bare_re.finditer(text):
-            if not any(start <= match.start() < end for start, end, _ in taken):
-                self.skipped['пункт без номера статьи'] += 1
+            self.take(taken, start, end, eid, own)
         return sorted(item for item in taken if item[2] is not None)
+
+    @staticmethod
+    def overlaps(taken, start, end):
+        return any(start < other_end and other_start < end for other_start, other_end, _ in taken)
+
+    def take(self, taken, start, end, eid, own):
+        # в изменяющем акте own — его собственный фрагмент, цель — в законе
+        if eid is not None and own and not self.act and (
+            own == eid or own.startswith(eid + '.')
+        ):
+            self.skipped['ссылка на себя или своего предка'] += 1
+            eid = None
+        taken.append((start, end, eid))
+
+    def foreign(self, text, start, end):
+        """Почему упоминание не размечается (другой акт), или None — размечается."""
+        if not self.act:
+            return 'похоже на другой акт' if self.external(text, end, start) else None
+        tail = text[end:]
+        if self.language.base_re.match(tail):
+            return None
+        quoted = self.quoted(text, start)
+        if self.language.this_act_re.match(tail):
+            return None if quoted else 'ссылка на сам изменяющий акт'
+        if self.external(text, end, start):
+            return 'похоже на другой акт'
+        if quoted or self.implicit:
+            return None
+        return 'акт не указан'
+
+    def bare_spans(self, text, own):
+        """(начало, конец, eid или None, причина): «εδάφιο (1)», «εδάφια (1) και (2)»."""
+        spans = []
+        language = self.language
+        article = own.split('.')[0] if own else ''
+        for word in language.bare_word_re.finditer(text):
+            items = []
+            position = word.end()
+            start = word.start()
+            while True:
+                subs = language.subs_re.match(text, position)
+                if subs is None or not subs.group(0)[1].isdigit():
+                    break
+                items.append((start, subs.end(), re.findall(SUB, subs.group(0))))
+                separator = language.separator_re.match(text, subs.end())
+                if separator is None:
+                    break
+                position = separator.end()
+                start = position
+            if not items:
+                continue
+            end = items[-1][1]
+            reason = None
+            if self.act or not article.startswith('art_'):
+                reason = 'пункт без номера статьи'
+            elif language.bare_qualified_re.match(text[end:]) or (
+                language.external_before_re.search(text[:word.start()])
+            ):
+                reason = 'пункт с уточнением (другая статья или акт)'
+            for item_start, item_end, subs in items:
+                eid = None
+                item_reason = reason
+                if reason is None:
+                    eid, _ = self.targets.resolve(article, subs)
+                    if eid == article:
+                        # первого пункта в своей статье нет — не размечается
+                        eid = None
+                        item_reason = 'пункта нет в своей статье'
+                spans.append((item_start, item_end, eid, item_reason))
+        return spans
 
     def external(self, text, end, start=None):
         if start is not None and self.language.external_before_re.search(text[:start]):
@@ -241,8 +362,9 @@ class Marker:
     def paragraph_spans(self, text):
         spans = []
         for match in self.language.paragraph_re.finditer(text):
-            if self.external(text, match.end(), match.start()):
-                self.skipped['похоже на другой акт'] += 1
+            reason = self.foreign(text, match.start(), match.end())
+            if reason:
+                self.skipped[reason] += 1
                 spans.append((match.start(), match.end(), None))
                 continue
             subs = re.findall(SUB, match.group(1))
@@ -256,8 +378,9 @@ class Marker:
             number = ordinal_value(match.group('ord'), self.language.ordinals)
             if number is None:
                 continue
-            if self.external(text, match.end(), match.start()):
-                self.skipped['похоже на другой акт'] += 1
+            reason = self.foreign(text, match.start(), match.end())
+            if reason:
+                self.skipped[reason] += 1
                 spans.append((match.start(), match.end(), None))
                 continue
             top = 'sch_%d' % number
@@ -303,8 +426,9 @@ class Marker:
                 start = position
             if not items:
                 continue
-            if self.external(text, position, word.start()):
-                self.skipped['похоже на другой акт'] += len(items)
+            reason = self.foreign(text, word.start(), position)
+            if reason:
+                self.skipped[reason] += len(items)
                 spans.extend((item_start, end, None) for item_start, end, _, _ in items)
                 continue
             for item_start, end, item_top, subs in items:
@@ -343,13 +467,13 @@ def strip_own_refs(text):
     return OWN_REF_RE.sub(r'\1', text)
 
 
-def mark_translation(path, targets, eid_by_uid, el_marks):
+def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False):
     """Разметка ссылок в файле перевода; текст вне тегов <ref> не меняется.
 
-    el_marks: {(uid, редакция): [цели el]}.
+    el_marks: {(uid, редакция): [цели el]}; act, implicit — как у Marker.
     Возвращает (пропуски, расхождения с el, число ссылок)."""
     source = path.read_text(encoding='utf-8')
-    marker = Marker(targets, RU)
+    marker = Marker(targets, RU, act, implicit)
     differences = []
     total = [0]
 
@@ -357,15 +481,14 @@ def mark_translation(path, targets, eid_by_uid, el_marks):
         attrs = dict(ATTR_RE.findall(match.group(1)))
         key = (attrs.get('fragment'), attrs.get('version'))
         own = eid_by_uid.get(key[0], '')
-        found_all = []
-
-        def mark_paragraph(paragraph):
-            marked, found = marker.mark_text([paragraph.group(2)], own)
-            shifted = renumber(marked[0], len(found_all))
-            found_all.extend(found)
-            return paragraph.group(1) + shifted + paragraph.group(3)
-
-        body = P_RE.sub(mark_paragraph, match.group(2))
+        # абзацы текста размечаются вместе: кавычки «…» бывают на несколько абзацев
+        paragraphs = [item.group(2) for item in P_RE.finditer(match.group(2))]
+        marked, found_all = marker.mark_text(paragraphs, own)
+        replaced = iter(marked)
+        body = P_RE.sub(
+            lambda item: item.group(1) + next(replaced) + item.group(3),
+            match.group(2),
+        )
         total[0] += len(found_all)
         el_targets = el_marks.get(key, [])
         if key in el_marks and Counter(found_all) != Counter(el_targets):
@@ -379,10 +502,3 @@ def mark_translation(path, targets, eid_by_uid, el_marks):
         path.write_text(result, encoding='utf-8')
     return marker.skipped, differences, total[0]
 
-
-def renumber(text, offset):
-    return re.sub(
-        r'<ref id="r(\d+)"',
-        lambda match: '<ref id="r%d"' % (int(match.group(1)) + offset),
-        text,
-    )
