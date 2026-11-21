@@ -693,7 +693,7 @@ class Parser:
             return False
         if article.num_plain() != '2':
             return False
-        return bool(TERM_RE.match(text)) and article is not self.stack[-1]
+        return bool(match_term(text)) and article is not self.stack[-1]
 
     def owns_definitions(self, node):
         """Ст. 2 или её εδάφιο (1): определения — их абзацы."""
@@ -729,6 +729,14 @@ class Parser:
 
 
 TERM_RE = re.compile(r'^(?:"|\'\'|«|“)(?P<term>[^"«»“”\']+)(?:"|\'\'|»|”)')
+# «αναδιάρθρωση σημαίνει … (117(Ι)/2002): закрывающая кавычка пропущена
+UNCLOSED_TERM_RE = re.compile(r'^«(?P<term>[^"«»“”\']+?) σημαίνει ')
+
+
+def match_term(text):
+    return TERM_RE.match(text) or UNCLOSED_TERM_RE.match(text)
+
+
 LIST_END_RE = re.compile(r'(\sκαι|\sή)$')
 
 
@@ -740,7 +748,7 @@ def mark_definitions(article):
         # ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи;
         # без них (приказ ΚΔΠ 392/2024) — определений нет
         owner = article
-        if not any(TERM_RE.match(node.text()) for node in article.children):
+        if not any(match_term(node.text()) for node in article.children):
             return
     paragraphs = owner.children
     owner.children = []
@@ -748,7 +756,7 @@ def mark_definitions(article):
     closing = None
     for node in paragraphs:
         text = node.text()
-        match = TERM_RE.match(text)
+        match = match_term(text)
         if match:
             node.kind = 'def'
             node.unnumbered = False
