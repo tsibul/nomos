@@ -27,6 +27,9 @@ HYPHEN_RE = re.compile(r'([α-ρσ-ωάέήίόύώϊϋΐΰ])- ([α-ωάέήίό
 # «… των εδαφίων (4) και» — перечень номеров продолжается на следующей строке
 LABEL_AND_RE = re.compile(r'\(\w{1,5}\)\s+(και|ή)$')
 INNER_GAP_RE = re.compile(r'\S(\s{4,})\S')
+# газеты, по которым собраны тексты до правил поля внутри цитаты, первого пункта (α),
+# цитаты после «:» и перечня «(4) και»: разбираются прежними правилами, их файлы не меняются
+LEGACY_GAZETTES = {'cy/law/2025/104_I', 'cy/kdp/2026/168'}
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -109,6 +112,7 @@ def body_column(lines):
 class GazetteParser:
     def __init__(self, act_uid):
         self.act_uid = act_uid
+        self.legacy = act_uid in LEGACY_GAZETTES
         self.root = Node(kind='act')
         self.preamble = self.root.add(Node(kind='cit', token='cit_1'))
         self.article = None
@@ -128,7 +132,7 @@ class GazetteParser:
                 continue
             margin, body = split_line(line, column)
             # в преамбуле (шапка газеты до статьи 1) полей внутри цитат нет
-            if body and not margin and self.article is not None:
+            if body and not margin and self.article is not None and not self.legacy:
                 inner = inner_margin(lines, index, column)
                 if inner is not None:
                     # поле внутри цитаты — не заголовок статьи, в текст не идёт
@@ -146,7 +150,9 @@ class GazetteParser:
                 margin = ''
             point = POINT_RE.match(body) if self.article else None
             # первый пункт статьи — (α): «(β)» из цитаты без (α) — не пункт
-            first = self.point is None and point and point.group('num') != 'α'
+            first = (
+                not self.legacy and self.point is None and point and point.group('num') != 'α'
+            )
             if point and not first and self.ends_sentence():
                 self.open_point(point.group('num'))
                 body = point.group('rest')
@@ -161,7 +167,12 @@ class GazetteParser:
         if self.paragraph and self.quote_depth > 0 and ITEM_RE.match(body):
             if self.ends_sentence():
                 self.flush()
-        opens = self.quote_depth == 0 and body.startswith('«') and self.after_colon()
+        opens = (
+            not self.legacy
+            and self.quote_depth == 0
+            and body.startswith('«')
+            and self.after_colon()
+        )
         self.paragraph.append(body)
         self.quote_depth += body.count('«') - body.count('»')
         if opens and self.quote_depth == 0 and not body.rstrip().endswith('».'):
@@ -182,7 +193,7 @@ class GazetteParser:
             return True
         # «και» на своей строке; ano teleia (U+0387) — как «·»
         last = ' ' + self.paragraph[-1].rstrip().replace('\u0387', '·')
-        if LABEL_AND_RE.search(last):
+        if not self.legacy and LABEL_AND_RE.search(last):
             return False
         return layout.ends_sentence(last)
 

@@ -543,6 +543,20 @@ class GazetteTests(SimpleTestCase):
         self.assertIn('βρίσκεται σε άδεια μητρότητας', text)
         self.assertNotIn('15(Ι)', text)
 
+    def test_legacy_gazette_keeps_old_rules(self):
+        """104(Ι)/2025 и ΚΔΠ 168/2026 собраны прежними правилами: «(β)» без (α) — пункт,
+        поле внутри цитаты не ищется."""
+        lines = gazette_lines(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2. Το άρθρο 6 τροποποιείται ως ακολούθως:'),
+            ('', '(β) με την προσθήκη της φράσης «και των αναλογιών».'),
+        )
+        new = gazette.GazetteParser('cy/law/2025/1_I').parse(lines)
+        old = gazette.GazetteParser('cy/law/2025/104_I').parse(lines)
+        self.assertEqual(new.children[2].children, [])
+        self.assertEqual([point.token for point in old.children[2].children], ['pnt_b'])
+
     def test_quote_ends_with_ano_teleia(self):
         root = self.parse(
             ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
