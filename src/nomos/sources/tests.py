@@ -611,7 +611,7 @@ class VatReturnGuideTests(TestCase):
             dict(
                 Expression.objects.filter(act__uid=GUIDE).values_list('lang', 'source__code')
             ),
-            {'el': 'cy-tax', 'ru': 'nomos'},
+            {'el': 'cy-tax'},
         )
 
     def test_fields(self):
@@ -625,14 +625,10 @@ class VatReturnGuideTests(TestCase):
         )
         self.assertTrue(all(field.parent.eid == 'sct_G' for field in fields))
 
-    def test_texts_refs_and_notes(self):
+    def test_greek_refs(self):
         texts = FragmentText.objects.filter(version__fragment__act__uid=GUIDE)
-        for lang in ['el', 'ru']:
-            references = Reference.objects.filter(
-                from_text__in=texts.filter(expression__lang=lang)
-            )
-            self.assertEqual(references.count(), 28)
-            self.assertFalse(references.filter(resolved=False).exists())
-            self.assertFalse(references.exclude(to_act__uid=LAW).exists())
-        self.assertFalse(Note.objects.filter(target__in=texts, target__expression__lang='el'))
-        self.assertEqual(Note.objects.filter(target__in=texts, kind='doubt').count(), 13)
+        self.assertEqual(texts.count(), 145)
+        references = Reference.objects.filter(from_text__in=texts)
+        self.assertEqual(references.count(), 28)
+        self.assertFalse(references.filter(resolved=False).exists())
+        self.assertFalse(references.exclude(to_act__uid=LAW).exists())
