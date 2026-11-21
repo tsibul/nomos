@@ -9,7 +9,7 @@
 >
   <a
     class="header__brand"
-    href="/{{ lang_query }}"
+    href="{% url 'site:act_list' %}{{ lang_query }}"
   >
     Nomos
   </a>
@@ -54,7 +54,7 @@
       <li class="menu__item">
         <a
           class="menu__link{% if menu_about_current %} menu__link--current{% endif %}"
-          href="/about/{{ lang_query }}"
+          href="{% url 'site:about' %}{{ lang_query }}"
           {% if menu_about_current %}aria-current="page"{% endif %}
         >
           {% translate 'О проекте' %}
@@ -65,7 +65,7 @@
           <form
             class="menu__logout"
             method="post"
-            action="/logout/"
+            action="{% url 'site:logout' %}"
           >
             {% csrf_token %}
             <button

@@ -25,7 +25,7 @@
         {% endif %}
         <a
           class="hero__button"
-          href="/about/{{ lang_query }}"
+          href="{% url 'site:about' %}{{ lang_query }}"
         >
           {% translate 'О проекте' %}
         </a>

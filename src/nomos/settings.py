@@ -162,10 +162,18 @@ USE_I18N = True
 USE_TZ = True
 
 
+# Подпуть сайта за прокси (например /resources/nomos); пусто — сайт в корне домена.
+# Прокси передаёт запросы без подпути, Django добавляет его к ссылкам (FORCE_SCRIPT_NAME).
+_url_prefix = os.environ.get('NOMOS_URL_PREFIX', '').strip().strip('/')
+NOMOS_URL_PREFIX = '/' + _url_prefix if _url_prefix else ''
+
+FORCE_SCRIPT_NAME = NOMOS_URL_PREFIX or None
+
+
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = NOMOS_URL_PREFIX + '/static/'
 
 # сюда collectstatic собирает статику для веб-сервера (по умолчанию — staticfiles/ в корне)
 STATIC_ROOT = os.environ.get('DJANGO_STATIC_ROOT', str(ROOT_DIR / 'staticfiles'))
@@ -191,6 +199,11 @@ CSRF_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 
 CSRF_COOKIE_SAMESITE = 'Lax'
+
+# cookie — только для подпути сайта, а не для всего домена
+SESSION_COOKIE_PATH = NOMOS_URL_PREFIX + '/'
+
+CSRF_COOKIE_PATH = NOMOS_URL_PREFIX + '/'
 
 
 # Заголовки безопасности

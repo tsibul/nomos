@@ -19,7 +19,7 @@ from nomos.acts.models import (
 )
 from nomos.sources.models import Source
 
-from . import access, menu, notices, reading, ui
+from . import access, menu, notices, paths, reading, ui
 
 
 def act_list(request, jurisdiction=None):
@@ -117,7 +117,10 @@ def about(request):
 
 def robots(request):
     """Прототип не индексируется."""
-    return HttpResponse('User-agent: *\nDisallow: /\n', content_type='text/plain')
+    return HttpResponse(
+        f"User-agent: *\nDisallow: {paths.url('/')}\n",
+        content_type='text/plain',
+    )
 
 
 def read(request, path):
@@ -291,6 +294,9 @@ def return_target(path, at, lang):
     """
     if not path.startswith('/') or path.startswith('//'):
         return None
+    path = paths.local(path)
+    if path is None:
+        return None
     try:
         route = reading.parse_path(path)
     except Http404:
@@ -412,10 +418,10 @@ def nav_context(route, toc, current=None):
     sections = dict(menu.SECTIONS)
     query = ui.lang_query(route.lang)
     if jurisdiction in sections:
-        section_url = f'/{jurisdiction}/{query}'
+        section_url = paths.url(f'/{jurisdiction}/') + query
         section_label = menu.section_label(jurisdiction)
     else:
-        section_url = '/' + query
+        section_url = paths.url('/') + query
         section_label = _('Акты')
     if current is not None:
         for item in reading.toc_units(toc):
