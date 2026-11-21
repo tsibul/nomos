@@ -1473,3 +1473,166 @@ class HumanResourcesLawTests(TestCase):
             set(fragment.versions.values_list('known_from', flat=True)),
             {datetime.date(2026, 3, 11)},
         )
+
+
+class IncomeTaxParsingTests(SimpleTestCase):
+    """Правила разбора, добавленные для 118(Ι)/2002; акты до него собираются по-прежнему."""
+
+    def eids(self, root, prefix):
+        return [node.eid for node in root.walk() if node.eid.startswith(prefix)]
+
+    def test_bracketed_and_undotted_article_numbers(self):
+        """«(9A). 1.- …» и «9Β(1) …» — начало статьи с εδάφιο (1)."""
+        root = parse_body('9. Δαπάνες.', '(9A). 1.- Ένα.', '9Β(1) Ανεξαρτήτως δύο.', '10. Άλλο.')
+        texts = {node.eid: node.paragraphs for node in root.walk() if node.eid}
+        self.assertEqual(texts['art_9A.par_1'], ['Ένα.'])
+        self.assertEqual(texts['art_9B.par_1'], ['Ανεξαρτήτως δύο.'])
+
+    def test_reference_with_subsection_is_not_article(self):
+        """«4(1) του …» без буквы в номере — не начало статьи."""
+        root = parse_body('3. Κείμενο που συνεχίζεται.', '4(1) του Νόμου ισχύει.')
+        self.assertNotIn('art_4', self.eids(root, 'art_4'))
+
+    def test_dashed_article_starts_item(self):
+        """«39Α.-(1)» после колонтитула — новый блок; у актов до 118(Ι)/2002 — нет."""
+        self.assertTrue(layout.starts_item('39Α.-(1) Κείμενο.'))
+        self.assertFalse(layout.starts_item('39Α.-(1) Κείμενο.', dashed=False))
+
+    def test_greek_nu_after_roman_four(self):
+        """«(ν)» после «(iv)» — римская «(v)»; у 59(Ι)/2010 — по-прежнему."""
+        lines = ('5.-(1) Κείμενο:', '(i) α·', '(ii) β·', '(iii) γ·', '(iv) δ·', '(ν) ε.')
+        self.assertIn('art_5.par_1.pnt_v', self.eids(parse_body(*lines), 'art_5'))
+        earlier = parse_body(*lines, act_uid='cy/law/2010/59_I')
+        self.assertNotIn('art_5.par_1.pnt_v', self.eids(earlier, 'art_5'))
+
+    def test_definition_after_points_of_definition(self):
+        """Новый термин после пунктов определения — снова определение статьи 2."""
+        root = parse_body(
+            '2. Στον παρόντα Νόμο-',
+            '«κάτοικος» σημαίνει-',
+            '(α) στην περίπτωση ατόμου·',
+            '(β) στην περίπτωση εταιρείας·',
+            '«κηδεμόνας» σημαίνει τον κηδεμόνα.',
+            '3. Άλλο.',
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        definitions = [node.eid for node in article.children if node.kind == 'def']
+        self.assertEqual(definitions, ['art_2.def_katoikos', 'art_2.def_khdemonas'])
+
+    def test_uid_collisions_get_longer_suffix(self):
+        """Третий фрагмент с тем же uid получает «~~», а не зацикливается на «~»."""
+        nodes = [Node(kind='art', num=num) for num in ('1', '2', '3')]
+
+        def make_uid(act, eid):
+            return 'u' + '~' * eid.count('~')
+
+        info = type('Info', (), {'uid': 'cy/law/2000/1_I'})()
+        with patch.object(numbering, 'make_uid', make_uid):
+            uids = texts_xml.assign_uids(info, nodes, Path('/nonexistent/act.xml'))
+        self.assertEqual(sorted(uids.values()), ['u', 'u~', 'u~~'])
+
+
+class IncomeTaxGazetteTests(SimpleTestCase):
+    def test_skipped_article_number(self):
+        """244(Ι)/2025: за ст. 13 идёт 16 — статья с заголовком на поле принимается."""
+        lines = gazette_lines(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2. Το άρθρο 5 τροποποιείται.'),
+            ('Τροποποίηση', '4. Το άρθρο 7 τροποποιείται.'),
+            ('', '6. Το άρθρο 9 χωρίς τίτλο στο περιθώριο.'),
+        )
+        root = gazette.GazetteParser('cy/law/2025/1_I').parse(lines)
+        articles = [node.num for node in root.children if node.kind == 'art']
+        self.assertEqual(articles, ['1', '2', '4'])
+
+
+INCOME_TAX_LAW = 'cy/law/2002/118_I'
+
+
+@skipUnless(
+    (TEXTS_DIR / INCOME_TAX_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 118(Ι)/2002',
+)
+class IncomeTaxLawTests(TestCase):
+    """Закон о подоходном налоге 118(Ι)/2002 с изменениями 2024–2026 гг."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', INCOME_TAX_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=INCOME_TAX_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / INCOME_TAX_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / INCOME_TAX_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and ':note →' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+            or 'положения нет' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=INCOME_TAX_LAW).values_list('eid', flat=True))
+        expected = {
+            'art_9A', 'art_9B', 'art_20D', 'art_21A', 'art_39A', 'art_46A',
+            'art_2.def_katoikos_ths_dhmokratias', 'art_8.par_21B', 'sch_2.par_2',
+        }
+        self.assertLessEqual(expected, eids)
+
+    def test_restructuring_term_by_laws_164_2024_and_219_2025(self):
+        eid = 'art_2.def_anadiarthrwsh.sub_1'
+        self.assertIn('εννέα (9)', self.text(eid, datetime.date(2024, 12, 30)))
+        self.assertIn('δέκα (10)', self.text(eid, datetime.date(2024, 12, 31)))
+        self.assertIn('έντεκα (11)', self.text(eid, datetime.date(2025, 12, 12)))
+
+    def test_new_articles_by_law_244_2025(self):
+        for eid in ('art_20D', 'art_45A', 'art_8.par_20.sub_3'):
+            self.assertIsNone(self.version(eid, datetime.date(2025, 12, 31)), eid)
+            self.assertEqual(self.version(eid, datetime.date(2026, 1, 1)).state, 'active', eid)
+        self.assertIn('δώδεκα και μισό', self.text('sch_2.par_2', datetime.date(2025, 12, 31)))
+        self.assertIn('δεκαπέντε', self.text('sch_2.par_2', datetime.date(2026, 1, 1)))
+        self.assertIsNotNone(self.version('art_46', datetime.date(2025, 12, 31)))
+        self.assertIsNone(self.version('art_46', datetime.date(2026, 1, 1)))
+
+    def test_retroactive_law_17_2026(self):
+        eid = 'art_8.par_21B'
+        self.assertIsNone(self.version(eid, datetime.date(2024, 12, 31)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 1, 1)).state, 'active')
+
+    def test_incentive_proviso_by_law_67_2026(self):
+        eid = 'art_20D.par_1.sub_2.pnt_iv.sub_1'
+        phrase = 'εντός έξι (6) μηνών από την ημερομηνία έναρξης'
+        self.assertIn(phrase, self.text(eid, datetime.date(2026, 4, 13)))
+        self.assertNotIn(phrase, self.text(eid, datetime.date(2026, 4, 14)))
+        eid = 'art_8.par_11.sub_2'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 12, 31)))
+        self.assertEqual(self.version(eid, datetime.date(2026, 1, 1)).state, 'active')

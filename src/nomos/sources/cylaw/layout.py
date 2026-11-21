@@ -80,15 +80,18 @@ def is_lookalike(word, words, index):
 
 
 ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,3}\s?\.\s)')
+# «39Α.-(1) …» — тире сразу за точкой (118(Ι)/2002)
+DASHED_START_RE = re.compile(r'^\s*\d+[^\W\d_]{0,3}\s?\.[-—–―]')
 
 
-def blocks(lines, skip=None, join_pages=True):
+def blocks(lines, skip=None, join_pages=True, dashed=True):
     """Блоки из строк; `skip(line)` — строки колонтитулов, которые выбрасываются.
 
     После колонтитула блок продолжается (абзац перенесён на страницу), если следующая
     строка не начинает нумерованный пункт. Пустая строка перед колонтитулом посреди фразы
     («… ψηφισθέντος είτε προ» / «είτε κατόπιν …») блок не закрывает; `join_pages=False` —
-    закрывает, как в прежнем разборе."""
+    закрывает, как в прежнем разборе. `dashed=False` — «39Α.-(1)» пункта не начинает
+    (акты, собранные до 118(Ι)/2002)."""
     found = []
     current = []
     start = 0
@@ -97,11 +100,11 @@ def blocks(lines, skip=None, join_pages=True):
         if skip and skip(line):
             after_skip = True
             continue
-        if after_skip and current and starts_block(line, current[-1]):
+        if after_skip and current and starts_block(line, current[-1], dashed):
             found.append(make_block(start, current))
             current = []
         after_skip = False
-        if current and ITEM_START_RE.match(line) and ends_sentence(current[-1]):
+        if current and starts_item(line, dashed) and ends_sentence(current[-1]):
             found.append(make_block(start, current))
             current = []
         if not line.strip():
@@ -138,10 +141,14 @@ def continues_after_page(rest, previous, skip):
 TERM_START_RE = re.compile(r'^\s*("|\'\'|«|“)')
 
 
-def starts_block(line, previous):
+def starts_item(line, dashed=True):
+    return bool(ITEM_START_RE.match(line) or (dashed and DASHED_START_RE.match(line)))
+
+
+def starts_block(line, previous, dashed=True):
     """После колонтитула новый блок — нумерованный пункт или новое определение
     («"φόρος εκροών" …» после законченного «… άρθρο 19˙»)."""
-    if ITEM_START_RE.match(line):
+    if starts_item(line, dashed):
         return True
     return bool(TERM_START_RE.match(line)) and ends_sentence(previous)
 

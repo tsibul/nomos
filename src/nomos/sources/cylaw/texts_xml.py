@@ -93,8 +93,10 @@ def assign_uids(info, nodes, path):
         uid = known.get(node.eid)
         if uid is None:
             uid = numbering.make_uid(info.uid, node.eid)
+            suffix = '~'
             while uid in taken:
-                uid = numbering.make_uid(info.uid, node.eid + '~')
+                uid = numbering.make_uid(info.uid, node.eid + suffix)
+                suffix += '~'
             taken.add(uid)
         uids[node] = uid
     return uids
