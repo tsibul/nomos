@@ -6,6 +6,7 @@ import tempfile
 from io import StringIO
 from pathlib import Path
 from unittest import skipUnless
+from unittest.mock import patch
 
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
@@ -15,7 +16,9 @@ from nomos.acts.models import (
 )
 from nomos.translate.models import Note
 
-from .cylaw import consolidated, gazette, history, layout, numbering, refs, texts_xml
+from .cylaw import (
+    consolidated, gazette, history, layout, leginet, numbering, refs, texts_xml,
+)
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
 
@@ -1295,3 +1298,178 @@ class HealthSystemLawTests(TestCase):
         eid = 'art_19.par_4.pnt_b.sub_2'
         self.assertIsNone(self.version(eid, datetime.date(2025, 7, 10)))
         self.assertEqual(self.version(eid, datetime.date(2025, 7, 11)).state, 'active')
+
+
+class LeginetTests(SimpleTestCase):
+    """Сводка Leginet: поле и текст в одной строке (125(Ι)/1999)."""
+
+    BREAK = leginet.PAGE_BREAK
+
+    def test_margin_notes_join_rows(self):
+        """Запись поля — до точки или до пустой строки; строки без поля не прерывают."""
+        rows = [
+            ('Συνοπτικός', '1. Ο παρών Νόμος', 12, self.BREAK),
+            ('', 'συνέχεια', 12, None),
+            ('τίτλος.', 'συνέχεια', 12, None),
+            ('136(Ι) του 2002', '2. Άλλο', 12, ''),
+            ('52(Ι) του 2006.', 'συνέχεια', 12, None),
+            ('Ερμηνεία', '3. Τρίτο', 12, ''),
+            ('Πίνακας.', '(2) Το έμβλημα', 12, ''),
+        ]
+        self.assertEqual(leginet.margin_notes(rows), [
+            (0, 'Συνοπτικός τίτλος.'),
+            (3, '136(Ι) του 2002 52(Ι) του 2006.'),
+            (5, 'Ερμηνεία'),
+            (6, 'Πίνακας.'),
+        ])
+
+    def test_law_references_are_not_headings(self):
+        for text in ('136(Ι) του 2002 52(Ι) του 2006.', '8(α)(β) του 15(Ι) του 2026.',
+                     'Κεφ. 113.', '2 του 15(Ι) του 2026 21(Ι) του 2007.'):
+            self.assertIsNotNone(leginet.LAW_REF_RE.match(text), text)
+        self.assertIsNone(leginet.LAW_REF_RE.match('Ερμηνεία.'))
+
+    def test_article_headings(self):
+        """Заголовок — у абзаца статьи, даже если начат строкой ниже; ссылка «Πίνακας.» у
+        εδαφίου — не заголовок; статья без поля — заголовок из оглавления."""
+        rows = [
+            ('', '1. Ο παρών Νόμος', 12, ''),
+            ('Συνοπτικός', 'συνέχεια', 12, None),
+            ('τίτλος.', 'συνέχεια', 12, None),
+            ('8(α)(β) του 15(Ι) του 2026.', '2. Άλλο', 12, ''),
+            ('Πίνακας.', '(2) Το έμβλημα', 12, ''),
+            ('', '28. Το Δικαστήριο', 12, ''),
+        ]
+        headings = leginet.article_headings(rows, {'2': 'Ερμηνεία', '28': 'Δικαιοδοσία.'})
+        self.assertEqual(headings, {0: 'Συνοπτικός τίτλος.', 3: 'Ερμηνεία.', 5: 'Δικαιοδοσία.'})
+
+    def test_toc_number_in_margin(self):
+        """Оглавление сдвинуто влево: номер статьи — в поле."""
+        rows = [('28.', 'Παροχή δικαιοδοσίας', 0, None), ('28.', 'Άλλο', 0, None)]
+        self.assertEqual(leginet.toc_headings(rows), {'28': 'Παροχή δικαιοδοσίας'})
+
+    def test_pdf_lines(self):
+        """Оглавление отброшено, заголовок — своей строкой, статья изменяющего закона
+        («Ο παρών Νόμος [15(Ι)/2026]») пропущена."""
+        rows = [
+            ('1.', 'Συνοπτικός τίτλος', 0, self.BREAK),
+            ('', 'ΕΠΕΙΔΗ είναι σκόπιμο', 12, self.BREAK),
+            ('Συνοπτικός τίτλος.', '1. Ο παρών Νόμος', 12, ''),
+            ('', '11. Ο παρών Νόμος [15(Ι)/2026] τίθεται σε ισχύ', 12, ''),
+            ('', 'την 6η Απριλίου.', 12, None),
+            ('', '2. Άλλο', 12, ''),
+        ]
+        with patch.object(leginet, 'rows', return_value=rows):
+            lines = leginet.pdf_lines('x.pdf')
+        self.assertEqual(lines, [
+            'Προοίμιο', '', self.BREAK, ' ' * 12 + 'ΕΠΕΙΔΗ είναι σκόπιμο',
+            '', '', ' ' * 6 + 'Συνοπτικός τίτλος.', '', ' ' * 12 + '1. Ο παρών Νόμος',
+            '', ' ' * 12 + '2. Άλλο',
+        ])
+
+    def test_schedule_without_number(self):
+        """Единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» по центру — sch_1."""
+        block = layout.Block(0, 40, 'ΠΙΝΑΚΑΣ (Αρθρο 3(2))')
+        self.assertEqual(consolidated.roman_schedule(block), 1)
+
+
+HRDA_LAW = 'cy/law/1999/125_I'
+HRDA_FEE = 'cy/kdp/2026/128'
+HRDA_AMENDING = 'cy/law/2026/15_I'
+
+
+@skipUnless(
+    all((TEXTS_DIR / act / 'collect.xml').exists() for act in (HRDA_LAW, HRDA_FEE)),
+    'нет Nomos-texts с 125(Ι)/1999 и ΚΔΠ 128/2026',
+)
+class HumanResourcesLawTests(TestCase):
+    """Закон об АРЧР 125(Ι)/1999 по сводке Leginet и регламент о сборе ΚΔΠ 128/2026."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        for act in (HRDA_LAW, HRDA_FEE):
+            call_command('collect_cylaw', act, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        changed = [
+            '%s/%s' % (act, path.name)
+            for act in (HRDA_LAW, HRDA_FEE, HRDA_AMENDING)
+            for path in (self.copy / act).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def heading(self, act, eid, key='base'):
+        fragment = Fragment.objects.get(act__uid=act, eid=eid)
+        return fragment.versions.get(key=key).heading
+
+    def body(self, eid, key):
+        return FragmentText.objects.get(
+            version__fragment__act__uid=HRDA_LAW,
+            version__fragment__eid=eid,
+            version__key=key,
+            expression__lang='el',
+        ).body
+
+    def test_law_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=HRDA_LAW).values_list('eid', flat=True))
+        expected = {'prt_VI', 'art_14A', 'art_20.par_1A', 'art_40', 'sch_1'}
+        self.assertLessEqual(expected, eids)
+        definitions = [eid for eid in eids if eid.startswith('art_2.def_') and eid.count('.') == 1]
+        self.assertEqual(len(definitions), 20)
+
+    def test_law_headings(self):
+        self.assertEqual(
+            self.heading(HRDA_LAW, 'art_20', '2026-04-06'),
+            'Υποχρέωση εργοδοτών και αυτοτελώς εργαζομένων για καταβολή τέλους.',
+        )
+        self.assertEqual(
+            self.heading(HRDA_LAW, 'art_20'),
+            'Υποχρέωση εργοδοτών για καταβολή τέλους.',
+        )
+        # нет на поле — из оглавления
+        self.assertEqual(
+            self.heading(HRDA_LAW, 'art_28'),
+            'Παροχή δικαιοδοσίας στο Δικαστήριο Εργατικών Διαφορών.',
+        )
+
+    def test_amending_law_2026(self):
+        # Ν. 15(Ι)/2026: прежний текст снят с изменений
+        phrase = 'για οποιαδήποτε κατηγορία ή κατηγορίες εργοδοτουμένων'
+        self.assertIn(phrase, self.body('art_5.pnt_d', 'base'))
+        self.assertNotIn(phrase, self.body('art_5.pnt_d', '2026-04-06'))
+        self.assertNotIn('αυτοτελώς', self.body('art_31.par_1', 'base'))
+        fragment = Fragment.objects.get(act__uid=HRDA_LAW, eid='art_20.par_1A')
+        self.assertEqual(
+            sorted(fragment.versions.values_list('key', 'valid_from')),
+            [('2026-04-06', datetime.date(2026, 4, 6))],
+        )
+
+    def test_fee_regulations(self):
+        self.assertTrue(ActRelation.objects.filter(
+            from_act__uid=HRDA_FEE, to_act__uid=HRDA_LAW, kind='based_on',
+        ).exists())
+        eids = set(Fragment.objects.filter(act__uid=HRDA_FEE).values_list('eid', flat=True))
+        expected = {
+            'art_2.par_1.def_periodos_teloys.pnt_g',
+            'art_2.par_1.def_telos',
+            'art_9.par_1.sub_1',
+            'prt_III',
+            'art_11',
+        }
+        self.assertLessEqual(expected, eids)
+        fragment = Fragment.objects.get(act__uid=HRDA_FEE, eid='art_5.par_3')
+        self.assertEqual(
+            set(fragment.versions.values_list('known_from', flat=True)),
+            {datetime.date(2026, 3, 11)},
+        )
