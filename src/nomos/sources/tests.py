@@ -1572,6 +1572,19 @@ class IncomeTaxParsingTests(SimpleTestCase):
 
 
 class IncomeTaxGazetteTests(SimpleTestCase):
+    def test_inserted_article_heading_not_in_text(self):
+        """243(Ι)/2025: «Συλλογή και    4ΑΑ.-(1) …» — заголовок на поле не входит в текст."""
+        lines = [
+            ' ' * 20 + '«Συλλογή και                4ΑΑ.-(1) Η συλλογή και επεξεργασία',
+            ' ' * 20 + 'επεξεργασία             χαρακτήρα από τον Έφορο κατά την άσκηση',
+        ]
+        self.assertEqual(
+            gazette.inner_margin(lines, 0, 24),
+            '«4ΑΑ.-(1) Η συλλογή και επεξεργασία',
+        )
+        lines[0] = ' ' * 16 + '«Φορολογικές              7. Οσάκις εμπoρική ή βιoμηχαvική'
+        self.assertEqual(gazette.inner_margin(lines, 0, 24), '«7. Οσάκις εμπoρική ή βιoμηχαvική')
+
     def test_justified_item_line_not_inner_margin(self):
         """243(Ι)/2025: пробелы выключки в строке «(δ) …» — не поле; перенос не теряется."""
         lines = [

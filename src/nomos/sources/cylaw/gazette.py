@@ -43,6 +43,9 @@ COLLAPSED_FIRST_RE = re.compile(
 COLLAPSED_SECOND_RE = re.compile(
     r'^(?P<num>\d+[Α-Ω]{0,2}) (?P<body>.*?) (?P<tail>του βασικού νόμου\.)$'
 )
+# первая строка вставленной статьи: «Заголовок на поле    7. Текст» / «… 4ΑΑ.-(1) Текст»
+QUOTED_HEADING_RE = re.compile(r'^«[Α-ΩΆ-Ώ][^«»()]{1,29}$')
+QUOTED_ARTICLE_RE = re.compile(r'^\d+[Α-Ω]{0,3}\.(?:-\(\d+\))?\s')
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -132,6 +135,9 @@ def inner_margin(lines, index, column):
         return None
     left = line[indent:match.start(1) + 1].strip()
     start = match.end(1) - 1
+    if QUOTED_HEADING_RE.match(left) and QUOTED_ARTICLE_RE.match(line[start:].lstrip()):
+        # «Συλλογή και    4ΑΑ.-(1) Η συλλογή…» — заголовок вставленной статьи на поле
+        return '«' + line[start:].strip()
     if LABEL_RE.match(left) or len(left) > 30 or '«' in left or '»' in left:
         return None
     if start - indent < 8 or not any(abs(start - other) <= 2 for other in around):
