@@ -448,6 +448,33 @@ class ConsolidatedTests(SimpleTestCase):
             self.assertIsNotNone(consolidated.SCHEDULE_RE.match(heading), heading)
         self.assertIsNone(consolidated.SCHEDULE_RE.match('ΠΙΝΑΚΑΣ'))
 
+    def test_schedule_heading_roman(self):
+        """«ΠΙΝΑΚΑΣ ΙΙ» по центру (ΚΔΠ 289/2010) — приложение sch_2 без «ΠΑΡΑΡΤΗΜΑΤΑ»."""
+        lines = [
+            'Προοίμιο',
+            '',
+            '      Το Υπουργικό Συμβούλιο εκδίδει τους ακόλουθους Κανονισμούς.',
+            '',
+            'Ερμηνεία.',
+            '',
+            '      2.-(1) Στους παρόντες Κανονισμούς «Νόμος» σημαίνει τον Νόμο.',
+            '',
+            '                                   ΠΙΝΑΚΑΣ ΙΙ',
+            '',
+            '                                   (Κανονισμός 17)',
+            '',
+            '      Μήνες εισφορών — Ημερομηνία',
+            '',
+            '      1. Ιανουάριος-Μάρτιος — 10 επόμενου Μαΐου',
+        ]
+        root = consolidated.Parser('x').parse(lines)
+        schedule = root.children[-1]
+        self.assertEqual(schedule.token, 'sch_2')
+        self.assertEqual(schedule.heading, 'ΠΙΝΑΚΑΣ ΙΙ (Κανονισμός 17)')
+        # шапка таблицы — текст приложения, а не заголовок пункта
+        self.assertEqual(schedule.paragraphs, ['Μήνες εισφορών — Ημερομηνία'])
+        self.assertEqual(schedule.children[0].heading, '')
+
     def test_history_with_heading(self):
         self.assertTrue(consolidated.is_history('Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018'))
         self.assertTrue(consolidated.is_history('95(I)/2000 10(I)/2024'))
@@ -1049,3 +1076,58 @@ class SocialInsuranceLawTests(TestCase):
     def test_schedules_parsed(self):
         eids = set(Fragment.objects.filter(act__uid=SOCIAL_LAW).values_list('eid', flat=True))
         self.assertLessEqual({'sch_1', 'sch_7', 'sch_3.par_8'}, eids)
+
+
+CONTRIBUTIONS = 'cy/kdp/2010/289'
+
+
+@skipUnless(
+    (TEXTS_DIR / CONTRIBUTIONS / 'collect.xml').exists(), 'нет Nomos-texts с ΚΔΠ 289/2010',
+)
+class ContributionRegulationsTests(TestCase):
+    """Регламент о взносах ΚΔΠ 289/2010: расшифровка скана, 4Α из ΚΔΠ 52/2012."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', CONTRIBUTIONS, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        changed = [
+            '%s/%s' % (act, path.name)
+            for act in (CONTRIBUTIONS, 'cy/kdp/2012/52')
+            for path in (self.copy / act).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        kinds = set(ActRelation.objects.filter(
+            from_act__uid=CONTRIBUTIONS, to_act__uid=SOCIAL_LAW,
+        ).values_list('kind', flat=True))
+        self.assertEqual(kinds, {'based_on'})
+        self.assertTrue(ActRelation.objects.filter(
+            from_act__uid='cy/kdp/2012/52', to_act__uid=CONTRIBUTIONS, kind='amends',
+        ).exists())
+
+    def test_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=CONTRIBUTIONS).values_list('eid', flat=True))
+        expected = {
+            'art_2.par_1.def_nomos',
+            'art_4A.par_1.pnt_a.pnt_z',
+            'art_4A.par_4',
+            'art_35',
+            'sch_1.par_16',
+            'sch_2',
+        }
+        self.assertLessEqual(expected, eids)
+

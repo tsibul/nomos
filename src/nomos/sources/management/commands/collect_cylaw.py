@@ -65,6 +65,11 @@ def law_info(manifest):
         year=manifest['year'],
         source=manifest['source'],
         title=manifest['title'],
+        # регламент или приказ, собранный из газеты: дата публикации и закон-основание
+        published_on=history.parse_date(manifest.get('published')),
+        published_in=manifest.get('gazette', ''),
+        in_force_from=history.parse_date(manifest.get('in-force') or manifest.get('published')),
+        relations=[('based_on', manifest['based-on'])] if manifest.get('based-on') else [],
     )
     info.amendments.append(base_amendment(info))
     return info

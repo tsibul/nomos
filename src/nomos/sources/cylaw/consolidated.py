@@ -65,6 +65,8 @@ SCHEDULE_ORDINALS = [
 SCHEDULE_RE = re.compile(
     r'^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ)$'
 )
+# «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже
+ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ (?P<num>[IVXΙΧ]+)$')
 PART_RE = re.compile(r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$')
 SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
@@ -76,10 +78,20 @@ REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
 LEGACY_ACTS = {'cy/law/2000/95_I'}
 
 HEADING_MAX = 110
+# столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
+COLUMN_SEPARATOR = ' — '
 HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
 EXCEPTION_START = 'Εξαιρούνται'
 # колонка заголовков на полях
 MARGIN = 8
+
+
+def roman_schedule(block):
+    """Номер приложения «ΠΙΝΑΚΑΣ ΙΙ» по центру строки или None."""
+    match = ROMAN_SCHEDULE_RE.match(block.text)
+    if match is None or block.indent < 25:
+        return None
+    return numbering.roman_value(match.group('num').replace('Ι', 'I').replace('Χ', 'X'))
 
 
 def is_page_furniture(line):
@@ -177,6 +189,9 @@ def looks_like_heading(block, following):
     text = block.text
     if text[-1] in ':;·∙˙,—-' or text.startswith('Νοείται'):
         return False
+    if COLUMN_SEPARATOR in text:
+        # строка таблицы в расшифровке скана (шапка столбцов) — не заголовок
+        return False
     if following is not None and block.indent <= MARGIN and following.indent > MARGIN:
         return bool(TOP_RE.match(following.text))
     if len(text) > HEADING_MAX or text[-1] == '.':
@@ -260,7 +275,10 @@ class Parser:
                 start += 1
         all_blocks = [part for block in all_blocks[start:] for part in split_history(block)]
         all_blocks = join_broken_headings(all_blocks)
-        self.has_schedules = any(block.text == 'ΠΑΡΑΡΤΗΜΑΤΑ' for block in all_blocks)
+        # приложения — после «ΠΑΡΑΡΤΗΜΑΤΑ» или сразу с «ΠΙΝΑΚΑΣ Ι» без общего заголовка
+        self.has_schedules = any(
+            block.text == 'ΠΑΡΑΡΤΗΜΑΤΑ' or roman_schedule(block) for block in all_blocks
+        )
         for index, block in enumerate(all_blocks):
             if (self.in_schedules or not self.has_schedules) and is_editor_note(block):
                 self.collect_notes(all_blocks[index:])
@@ -293,6 +311,8 @@ class Parser:
         if text == 'ΠΑΡΑΡΤΗΜΑΤΑ':
             self.in_schedules = True
             return
+        if roman_schedule(block):
+            self.in_schedules = True
         if self.in_schedules and self.feed_schedule_heading(text, block):
             return
         if not self.in_schedules and block.indent >= 14 and PART_RE.match(text):
@@ -308,8 +328,10 @@ class Parser:
 
     def feed_schedule_heading(self, text, block):
         schedule = SCHEDULE_RE.match(text)
+        number = roman_schedule(block)
         if schedule and schedule.group('ord') in SCHEDULE_ORDINALS:
             number = SCHEDULE_ORDINALS.index(schedule.group('ord')) + 1
+        if number:
             if self.schedule is not None and self.schedule.num == str(number):
                 return True
             self.schedule = Node(
