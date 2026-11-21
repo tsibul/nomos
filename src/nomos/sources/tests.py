@@ -1585,6 +1585,51 @@ class IncomeTaxGazetteTests(SimpleTestCase):
         lines[0] = ' ' * 16 + '«Φορολογικές              7. Οσάκις εμπoρική ή βιoμηχαvική'
         self.assertEqual(gazette.inner_margin(lines, 0, 24), '«7. Οσάκις εμπoρική ή βιoμηχαvική')
 
+    def test_law_citations_in_margin_not_in_text(self):
+        """243, 164, 165: номера законов на поле — и без «(Ι)», и перед текстом при любом сдвиге."""
+        lines = [
+            ' ' * 30 + 'έχουν μεταφερθεί χορηγήσεις από πιστωτικό ίδρυμα·',
+            ' ' * 14 + '22 του 1985',
+            ' ' * 24 + '208(Ι) του 2015.   Νόμου του 2015-',
+            ' ' * 24 + '96(Ι) του 2018.     (β)   οι διατάξεις των άρθρων 2, 3 και 4',
+            ' ' * 50 + 'Εισοδήματος (Τροποποιητικού) (Αρ. 2) Νόμου του 2018',
+        ]
+        self.assertEqual(gazette.inner_margin(lines, 1, 24), '')
+        self.assertEqual(gazette.inner_margin(lines, 2, 24), 'Νόμου του 2015-')
+        self.assertEqual(
+            gazette.inner_margin(lines, 3, 24),
+            '(β)   οι διατάξεις των άρθρων 2, 3 και 4',
+        )
+
+    def test_margin_heading_column_below_text(self):
+        """60(Ι)/2026, ст. 33Γ: столбец заголовка на поле ниже конца текста — не в текст."""
+        lines = [
+            ' ' * 19 + 'Συμβούλιο              εσωτερικούς κανονισμούς.',
+            ' ' * 19 + 'Ιατροτεχνολογικών',
+            ' ' * 19 + 'Προϊόντων και',
+            ' ' * 19 + 'Υγειονομικών',
+            ' ' * 19 + 'Ειδών.',
+        ]
+        for index in range(1, 5):
+            with self.subTest(line=lines[index].strip()):
+                self.assertEqual(gazette.inner_margin(lines, index, 24), '')
+
+    def test_margin_narrow_gap_keeps_text(self):
+        """243(Ι)/2025, ст. 48: «και σφράγιση των   επιχείρηση-» — поле и текст через 3 пробела."""
+        lines = [
+            ' ' * 16 + 'επιχείρησης        να σφραγίσει τα υποστατικά αυτής εφόσον',
+            ' ' * 16 + 'και σφράγιση των   επιχείρηση-',
+            ' ' * 16 + 'υποστατικών της.',
+        ]
+        self.assertEqual(gazette.inner_margin(lines, 1, 24), 'επιχείρηση-')
+        self.assertEqual(gazette.inner_margin(lines, 2, 24), '')
+        item = [
+            ' ' * 59 + 'και',
+            ' ' * 47 + '1277',
+            ' ' * 50 + '(ii)   στην περίπτωση που η προθεσμία υποβολής της',
+        ]
+        self.assertIsNone(gazette.inner_margin(item, 2, 24))
+
     def test_justified_item_line_not_inner_margin(self):
         """243(Ι)/2025: пробелы выключки в строке «(δ) …» — не поле; перенос не теряется."""
         lines = [
