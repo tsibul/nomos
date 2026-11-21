@@ -65,6 +65,11 @@ def law_info(manifest):
         year=manifest['year'],
         source=manifest['source'],
         title=manifest['title'],
+        # регламент или приказ, собранный из газеты: дата публикации и закон-основание
+        published_on=history.parse_date(manifest.get('published')),
+        published_in=manifest.get('gazette', ''),
+        in_force_from=history.parse_date(manifest.get('in-force') or manifest.get('published')),
+        relations=[('based_on', manifest['based-on'])] if manifest.get('based-on') else [],
     )
     info.amendments.append(base_amendment(info))
     return info
@@ -117,6 +122,16 @@ def apply_remarks(versions, remarks, base_ref, report):
             for eid, node_versions in by_eid.items():
                 if eid == target or eid.startswith(target + '.'):
                     node_versions.append(expired_version(day, base_ref))
+
+
+def known_from_publication(versions, published_on, base_ref):
+    """Акт, опубликованный после 01.01.2024 (приказ ΚΔΠ 378/2025), известен с публикации."""
+    if published_on is None or published_on <= history.BASE_KNOWN_FROM:
+        return
+    for node_versions in versions.values():
+        for version in node_versions:
+            if version.amendment == base_ref:
+                version.known_from = max(version.known_from, published_on)
 
 
 def expired_version(day, base_ref):
@@ -217,6 +232,7 @@ class Command(BaseCommand):
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
+        known_from_publication(versions, info.published_on, base_ref)
         marker = refs.Marker(refs.Targets(node.eid for node in versions), refs.EL)
         inline = write(folder, info, versions, other_notes, marker)
         report.extend(mark_translation(folder, marker))

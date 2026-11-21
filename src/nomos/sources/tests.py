@@ -425,6 +425,27 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(texts['art_42.par_1'], ['(α) Πρόσωπο:'])
         self.assertNotIn('art_42.par_1.pnt_a', texts)
 
+    def test_definitions_in_article_without_subsections(self):
+        """Ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи."""
+        root = parse_body(
+            '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
+            '«Οργανισμός» σημαίνει τον Οργανισμό Ασφάλισης Υγείας·',
+            '«Υπουργός» σημαίνει τον Υπουργό Υγείας.',
+            '3. Άλλο.',
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        eids = [node.eid for node in root.walk() if node.eid.startswith('art_2')]
+        self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_ypoyrgos'])
+
+    def test_article_2_without_definitions(self):
+        """Ст. 2 без εδαφίων и без терминов (приказ ΚΔΠ 392/2024) — как есть."""
+        root = parse_body('2. Οι βασικές αποδοχές ορίζονται.', '3. Άλλο.')
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        self.assertFalse(any(node.kind == 'def' for node in article.walk()))
+        self.assertIn('αποδοχές', article.text())
+
     def test_doubled_greek_numbering_is_own_level(self):
         """«(αα)», «(ββ)» под «(i)» — свой уровень, а не продолжение «(α)»."""
         root = parse_body('7.-(1)(α) α:', '(i) πρώτο:', '(αα) ένα·', '(ββ) δύο·', '(ii) β.',
@@ -440,6 +461,40 @@ class ConsolidatedTests(SimpleTestCase):
             'art_7.par_1.pnt_a.pnt_ii',
             'art_7.par_1.pnt_b',
         ])
+
+    def test_schedule_heading_masculine(self):
+        """«ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010) — приложение, как «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ»."""
+        for heading in ('ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ', 'ΔΕΚΑΤΟ ΤΡΙΤΟ ΠΑΡΑΡΤΗΜΑ', 'ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ',
+                        'ΤΕΤΑΡΤΟΣ ΠΙΝΑΚΑΣ'):
+            self.assertIsNotNone(consolidated.SCHEDULE_RE.match(heading), heading)
+        self.assertIsNone(consolidated.SCHEDULE_RE.match('ΠΙΝΑΚΑΣ'))
+
+    def test_schedule_heading_roman(self):
+        """«ΠΙΝΑΚΑΣ ΙΙ» по центру (ΚΔΠ 289/2010) — приложение sch_2 без «ΠΑΡΑΡΤΗΜΑΤΑ»."""
+        lines = [
+            'Προοίμιο',
+            '',
+            '      Το Υπουργικό Συμβούλιο εκδίδει τους ακόλουθους Κανονισμούς.',
+            '',
+            'Ερμηνεία.',
+            '',
+            '      2.-(1) Στους παρόντες Κανονισμούς «Νόμος» σημαίνει τον Νόμο.',
+            '',
+            '                                   ΠΙΝΑΚΑΣ ΙΙ',
+            '',
+            '                                   (Κανονισμός 17)',
+            '',
+            '      Μήνες εισφορών — Ημερομηνία',
+            '',
+            '      1. Ιανουάριος-Μάρτιος — 10 επόμενου Μαΐου',
+        ]
+        root = consolidated.Parser('x').parse(lines)
+        schedule = root.children[-1]
+        self.assertEqual(schedule.token, 'sch_2')
+        self.assertEqual(schedule.heading, 'ΠΙΝΑΚΑΣ ΙΙ (Κανονισμός 17)')
+        # шапка таблицы — текст приложения, а не заголовок пункта
+        self.assertEqual(schedule.paragraphs, ['Μήνες εισφορών — Ημερομηνία'])
+        self.assertEqual(schedule.children[0].heading, '')
 
     def test_history_with_heading(self):
         self.assertTrue(consolidated.is_history('Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018'))
@@ -518,6 +573,38 @@ class GazetteTests(SimpleTestCase):
         )
         self.assertEqual(len(root.children[1].paragraphs), 1)
 
+    def test_margin_crossing_text_column_inside_quote(self):
+        """«15(Ι) του 2024.» заходит за колонку текста (15/2024): поле, а не текст."""
+        lines = gazette_lines(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Προσθήκη.', '2. Μετά το άρθρο 102 προστίθεται το ακόλουθο νέο άρθρο:'),
+            ('', '«103. Οι διατάξεις του περί Δοκιμής Νόμου'),
+            ('', '      του 2024, τυγχάνουν εφαρμογής και σε ασφαλισμένη που βρίσκεται σε'),
+        )
+        lines += [
+            ' ' * 8 + '15(Ι) του 2024.     άδεια μητρότητας κατά την ημερομηνία έναρξης',
+            ' ' * 28 + 'της ισχύος του Νόμου.».',
+        ]
+        root = gazette.GazetteParser('cy/law/2025/1_I').parse(lines)
+        text = ' '.join(root.children[2].paragraphs)
+        self.assertIn('βρίσκεται σε άδεια μητρότητας', text)
+        self.assertNotIn('15(Ι)', text)
+
+    def test_legacy_gazette_keeps_old_rules(self):
+        """104(Ι)/2025 и ΚΔΠ 168/2026 собраны прежними правилами: «(β)» без (α) — пункт,
+        поле внутри цитаты не ищется."""
+        lines = gazette_lines(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2. Το άρθρο 6 τροποποιείται ως ακολούθως:'),
+            ('', '(β) με την προσθήκη της φράσης «και των αναλογιών».'),
+        )
+        new = gazette.GazetteParser('cy/law/2025/1_I').parse(lines)
+        old = gazette.GazetteParser('cy/law/2025/104_I').parse(lines)
+        self.assertEqual(new.children[2].children, [])
+        self.assertEqual([point.token for point in old.children[2].children], ['pnt_b'])
+
     def test_quote_ends_with_ano_teleia(self):
         root = self.parse(
             ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
@@ -529,6 +616,22 @@ class GazetteTests(SimpleTestCase):
         points = root.children[2].children
         self.assertEqual([point.num for point in points], ['(α)', '(β)'])
         self.assertTrue(points[0].paragraphs[0].endswith('αναλογιών.»\u0387'))
+
+    def test_quote_closed_at_line_end_and_middle_dot(self):
+        """«‘όρος᾽ σημαίνει …∙» — цитата закрыта; «»ꞏ» (U+A78F) — конец фразы (53/2025)."""
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('Τροποποίηση', '2. Το άρθρο 2 τροποποιείται ως ακολούθως:'),
+            ('', '(α) με την προσθήκη του ακόλουθου νέου όρου και του ορισμού του:'),
+            ('', '«‘αρμόδια αρχή᾽ σημαίνει τον Υπουργό∙»'),
+            ('', '(β) με την αντικατάσταση της λέξης «Επίτροπος» με τη λέξη «αρχή»\ua78f'),
+            ('', '(γ) με την κατάργηση του όρου «Γραφείο».'),
+            ('Τροποποίηση', '3. Ο βασικός νόμος τροποποιείται.'),
+        )
+        articles = [node for node in root.children if node.kind == 'art']
+        self.assertEqual([article.num for article in articles], ['1', '2', '3'])
+        points = articles[1].children
+        self.assertEqual([point.num for point in points], ['(α)', '(β)', '(γ)'])
 
     def test_subsections_outside_quote(self):
         root = self.parse(
@@ -940,3 +1043,249 @@ class TaxCollectionLawTests(TestCase):
         eid = 'art_50ST.par_1'
         self.assertIn('τέσσερις χιλιάδες ευρώ', self.text(eid, datetime.date(2025, 12, 31)))
         self.assertIn('έξι χιλιάδες ευρώ', self.text(eid, datetime.date(2026, 1, 1)))
+
+
+SOCIAL_LAW = 'cy/law/2010/59_I'
+
+
+@skipUnless(
+    (TEXTS_DIR / SOCIAL_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 59(I)/2010',
+)
+class SocialInsuranceLawTests(TestCase):
+    """Сборка и загрузка закона о социальном страховании 59(Ι)/2010."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', SOCIAL_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=SOCIAL_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / SOCIAL_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / SOCIAL_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """Неизвестен только прежний текст замен целиком; прочие изменения сняты."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_maternity_weeks_by_law_15_2024(self):
+        eid = 'art_29.par_4.pnt_a'
+        self.assertIn('δεκαοκτώ (18)', self.text(eid, datetime.date(2024, 2, 29)))
+        self.assertIn('είκοσι δύο (22)', self.text(eid, datetime.date(2024, 3, 1)))
+
+    def test_fine_by_law_127_2024(self):
+        eid = 'art_85A.par_1'
+        self.assertIn('πεντακόσιων ευρώ', self.text(eid, datetime.date(2024, 11, 14)))
+        self.assertIn('χιλίων ευρώ', self.text(eid, datetime.date(2024, 11, 15)))
+
+    def test_parental_leave_change_from_march_2025(self):
+        eid = 'art_29B.par_2.sub_2'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 3, 30)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 3, 31)).state, 'active')
+
+    def test_schedules_parsed(self):
+        eids = set(Fragment.objects.filter(act__uid=SOCIAL_LAW).values_list('eid', flat=True))
+        self.assertLessEqual({'sch_1', 'sch_7', 'sch_3.par_8'}, eids)
+
+
+CONTRIBUTIONS = 'cy/kdp/2010/289'
+
+
+@skipUnless(
+    (TEXTS_DIR / CONTRIBUTIONS / 'collect.xml').exists(), 'нет Nomos-texts с ΚΔΠ 289/2010',
+)
+class ContributionRegulationsTests(TestCase):
+    """Регламент о взносах ΚΔΠ 289/2010: расшифровка скана, 4Α из ΚΔΠ 52/2012."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', CONTRIBUTIONS, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        changed = [
+            '%s/%s' % (act, path.name)
+            for act in (CONTRIBUTIONS, 'cy/kdp/2012/52')
+            for path in (self.copy / act).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        kinds = set(ActRelation.objects.filter(
+            from_act__uid=CONTRIBUTIONS, to_act__uid=SOCIAL_LAW,
+        ).values_list('kind', flat=True))
+        self.assertEqual(kinds, {'based_on'})
+        self.assertTrue(ActRelation.objects.filter(
+            from_act__uid='cy/kdp/2012/52', to_act__uid=CONTRIBUTIONS, kind='amends',
+        ).exists())
+
+    def test_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=CONTRIBUTIONS).values_list('eid', flat=True))
+        expected = {
+            'art_2.par_1.def_nomos',
+            'art_4A.par_1.pnt_a.pnt_z',
+            'art_4A.par_4',
+            'art_35',
+            'sch_1.par_16',
+            'sch_2',
+        }
+        self.assertLessEqual(expected, eids)
+
+
+
+ORDERS = ('cy/kdp/2024/392', 'cy/kdp/2025/378')
+
+
+@skipUnless(
+    all((TEXTS_DIR / order / 'collect.xml').exists() for order in ORDERS),
+    'нет Nomos-texts с приказами ΚΔΠ 392/2024 и 378/2025',
+)
+class BasicEarningsOrderTests(TestCase):
+    """Приказы о базовых заработках (ст. 20 закона 59(Ι)/2010): ст. 2 без определений."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        for order in ORDERS:
+            call_command('collect_cylaw', order, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        changed = [
+            '%s/%s' % (order, path.name)
+            for order in ORDERS
+            for path in (self.copy / order).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / order / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        for order in ORDERS:
+            self.assertTrue(ActRelation.objects.filter(
+                from_act__uid=order, to_act__uid=SOCIAL_LAW, kind='based_on',
+            ).exists())
+
+    def test_known_from_publication(self):
+        """Опубликован после 01.01.2024 — известен с даты публикации."""
+        fragment = Fragment.objects.get(act__uid='cy/kdp/2025/378', eid='art_2')
+        dates = set(fragment.versions.values_list('known_from', flat=True))
+        self.assertEqual(dates, {datetime.date(2025, 12, 12)})
+        text = FragmentText.objects.get(
+            version__fragment=fragment, expression__lang='el',
+        ).body
+        self.assertIn('€220,76', text)
+
+
+HEALTH_LAW = 'cy/law/2001/89_I'
+
+
+@skipUnless((TEXTS_DIR / HEALTH_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 89(Ι)/2001')
+class HealthSystemLawTests(TestCase):
+    """Закон о ГеСИ 89(Ι)/2001 с изменениями 29, 53, 118, 139(Ι)/2025 и 60(Ι)/2026."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', HEALTH_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=HEALTH_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / HEALTH_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / HEALTH_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and ':note →' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+            or 'положения нет' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_dental_proviso_from_law_29_2025(self):
+        eid = 'art_22.par_5A'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 3, 30)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 3, 31)).state, 'active')
+
+    def test_competent_authority_by_law_53_2025(self):
+        self.assertIsNone(self.version('art_70', datetime.date(2025, 4, 24)))
+        self.assertEqual(self.version('art_70', datetime.date(2025, 4, 25)).state, 'active')
+        self.assertEqual(self.version('art_45', datetime.date(2025, 4, 24)).state, 'active')
+        self.assertIsNone(self.version('art_45', datetime.date(2025, 4, 25)))
+        eid = 'art_44.par_1'
+        self.assertIn('ο Επίτροπος', self.text(eid, datetime.date(2025, 4, 24)))
+        self.assertIn('η αρμόδια αρχή', self.text(eid, datetime.date(2025, 4, 25)))
+
+    def test_subparagraph_by_law_118_2025(self):
+        eid = 'art_19.par_4.pnt_b.sub_2'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 7, 10)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 7, 11)).state, 'active')
