@@ -239,6 +239,59 @@ class EditionsTests(SimpleTestCase):
             {('art_1.pnt_2', 'replace'): ('M2', '2025-01-01')},
         )
 
+    def test_subparagraphs_only_in_en(self):
+        """en: два ALINEA (sub_1, sub_2), el: один ALINEA с двумя P (ст. 61(1) 282/2011);
+        ст. 61a(2): в el нет второго подабзаца, пункты — у первого."""
+        def document(lang, first, second):
+            return (
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<CONS.ACT><INFO.CONSLEG START.DATE="20240101" END.DATE="99999999"/>'
+                '<CONS.DOC><TITLE><TI><P>T</P></TI></TITLE><ENACTING.TERMS>'
+                '<ARTICLE IDENTIFIER="061"><TI.ART>%s 61</TI.ART>'
+                '<PARAG IDENTIFIER="061.001"><NO.PARAG>1.</NO.PARAG>%s</PARAG>'
+                '<PARAG IDENTIFIER="061.002"><NO.PARAG>2.</NO.PARAG>%s</PARAG>'
+                '</ARTICLE></ENACTING.TERMS></CONS.DOC></CONS.ACT>'
+            ) % ('Article' if lang == 'en' else 'Άρθρο', first, second)
+
+        def points(a, b):
+            return (
+                '<P><LIST TYPE="alpha">'
+                '<ITEM><NP><NO.P>%s</NO.P><TXT>x</TXT></NP></ITEM>'
+                '<ITEM><NP><NO.P>%s</NO.P><TXT>y</TXT></NP></ITEM>'
+                '</LIST></P>'
+            ) % (a, b)
+
+        en = document(
+            'en',
+            '<ALINEA>One.</ALINEA><ALINEA>Two.</ALINEA>',
+            '<ALINEA><P>Lead.</P>%s<P>After.</P></ALINEA>' % points('(a)', '(b)'),
+        )
+        el = document(
+            'el',
+            '<ALINEA><P>Ένα.</P><P>Δύο.</P></ALINEA>',
+            '<ALINEA><P>Αρχή.</P>%s</ALINEA>' % points('α)', 'β)'),
+        )
+        edition = editions.Edition(
+            start='20240101',
+            end='99999999',
+            source_end='',
+            en=parse_text(en, 'en'),
+            el=parse_text(el, 'el'),
+        )
+        report = []
+        history = editions.History(ACT, [edition], {}, report)
+        texts = {
+            fragment.eid: fragment.versions[0].texts
+            for fragment in history.build()
+        }
+        self.assertEqual(texts['art_61.par_1.sub_1']['el'][0], ['Ένα.'])
+        self.assertEqual(texts['art_61.par_1.sub_2']['el'][0], ['Δύο.'])
+        self.assertEqual(texts['art_61.par_1']['el'][0], [])
+        self.assertEqual(texts['art_61.par_2.sub_1']['el'][0], ['Αρχή.'])
+        self.assertEqual(texts['art_61.par_2.sub_1.pnt_b']['el'][0], ['y'])
+        self.assertNotIn('el', texts['art_61.par_2.sub_2'])
+        self.assertEqual(report, ['20240101: нет el для art_61.par_2.sub_2'])
+
     def test_loc_to_eid(self):
         self.assertEqual(editions.loc_to_eid('AR:24b;PA:2;PT:a'), 'art_24b.par_2.pnt_a')
         self.assertEqual(editions.loc_to_eid('AX:0;PT:9'), '')

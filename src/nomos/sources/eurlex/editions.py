@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from nomos.sources.cylaw.history import BASE_KEY
+from nomos.sources.eurlex import formex
 
 ACTIONS = {
     'INSERTED': 'insert',
@@ -104,6 +105,46 @@ def renumber_notes(paragraphs):
     ]
 
 
+def split_subparagraphs(en_node, el_node):
+    """В en абзацы — подабзацы sub_N (несколько ALINEA), в el — один ALINEA с теми же P
+    (ст. 61(1) 282/2011): el-абзацы делятся по подабзацам en по порядку, пункты el —
+    подабзацу en, у которого пункты того же вида.
+
+    Без этого у подабзацев нет el-текста, а у владельца — en-текста. Подабзац, на который
+    el-абзацев не хватило, остаётся без el (ст. 61a(2) 282/2011: в el нет второго)."""
+    subs = [child for child in en_node.children if child.kind == 'sub']
+    if not subs or en_node.paragraphs or not el_node.paragraphs:
+        return
+    if any(child.kind == 'sub' for child in el_node.children):
+        return
+    if sum(len(sub.paragraphs) for sub in subs) < len(el_node.paragraphs):
+        return
+    owners = {}
+    for sub in subs:
+        for child in sub.children:
+            owners.setdefault(child.kind, sub)
+    if any(child.kind not in owners for child in el_node.children):
+        return
+    paragraphs = el_node.paragraphs
+    children = el_node.children
+    el_node.paragraphs = []
+    el_node.children = []
+    start = 0
+    for sub in subs:
+        end = start + len(sub.paragraphs)
+        own = [child for child in children if owners[child.kind] is sub]
+        if start >= len(paragraphs) and not own:
+            break
+        node = formex.Node('sub', sub.token, num=sub.num, parent=el_node)
+        node.paragraphs = paragraphs[start:end]
+        node.markers = list(el_node.markers)
+        for child in own:
+            child.parent = node
+        node.children = own
+        el_node.children.append(node)
+        start = end
+
+
 def align(en, el, report, label):
     """eid опорного en → узел el; по порядку детей одного вида."""
     found = {}
@@ -112,6 +153,7 @@ def align(en, el, report, label):
     extras = []
 
     def walk(en_node, el_node):
+        split_subparagraphs(en_node, el_node)
         groups = {}
         for child in el_node.children:
             groups.setdefault(child.kind, []).append(child)
