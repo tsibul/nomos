@@ -666,7 +666,10 @@ LIST_END_RE = re.compile(r'(\sκαι|\sή)$')
 def mark_definitions(article):
     """Определения ст. 2(1): абзац с термином — `def_<slug>`, оговорки и продолжения —
     его потомки `sub_K`; абзацы после перечня — `sub_K` самого пункта."""
-    owner = next(node for node in article.children if node.token == 'par_1')
+    owner = next((node for node in article.children if node.token == 'par_1'), None)
+    if owner is None:
+        # ст. 2 без εδαφίων (приказ ΚΔΠ 392/2024) — определений нет
+        return
     paragraphs = owner.children
     owner.children = []
     current = None

@@ -1131,3 +1131,54 @@ class ContributionRegulationsTests(TestCase):
         }
         self.assertLessEqual(expected, eids)
 
+
+
+ORDERS = ('cy/kdp/2024/392', 'cy/kdp/2025/378')
+
+
+@skipUnless(
+    all((TEXTS_DIR / order / 'collect.xml').exists() for order in ORDERS),
+    'нет Nomos-texts с приказами ΚΔΠ 392/2024 и 378/2025',
+)
+class BasicEarningsOrderTests(TestCase):
+    """Приказы о базовых заработках (ст. 20 закона 59(Ι)/2010): ст. 2 без определений."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        for order in ORDERS:
+            call_command('collect_cylaw', order, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        changed = [
+            '%s/%s' % (order, path.name)
+            for order in ORDERS
+            for path in (self.copy / order).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / order / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        for order in ORDERS:
+            self.assertTrue(ActRelation.objects.filter(
+                from_act__uid=order, to_act__uid=SOCIAL_LAW, kind='based_on',
+            ).exists())
+
+    def test_known_from_publication(self):
+        """Опубликован после 01.01.2024 — известен с даты публикации."""
+        fragment = Fragment.objects.get(act__uid='cy/kdp/2025/378', eid='art_2')
+        dates = set(fragment.versions.values_list('known_from', flat=True))
+        self.assertEqual(dates, {datetime.date(2025, 12, 12)})
+        text = FragmentText.objects.get(
+            version__fragment=fragment, expression__lang='el',
+        ).body
+        self.assertIn('€220,76', text)

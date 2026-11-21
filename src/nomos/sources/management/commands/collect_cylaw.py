@@ -124,6 +124,16 @@ def apply_remarks(versions, remarks, base_ref, report):
                     node_versions.append(expired_version(day, base_ref))
 
 
+def known_from_publication(versions, published_on, base_ref):
+    """Акт, опубликованный после 01.01.2024 (приказ ΚΔΠ 378/2025), известен с публикации."""
+    if published_on is None or published_on <= history.BASE_KNOWN_FROM:
+        return
+    for node_versions in versions.values():
+        for version in node_versions:
+            if version.amendment == base_ref:
+                version.known_from = max(version.known_from, published_on)
+
+
 def expired_version(day, base_ref):
     return history.Version(
         key=day.isoformat(),
@@ -222,6 +232,7 @@ class Command(BaseCommand):
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
+        known_from_publication(versions, info.published_on, base_ref)
         marker = refs.Marker(refs.Targets(node.eid for node in versions), refs.EL)
         inline = write(folder, info, versions, other_notes, marker)
         report.extend(mark_translation(folder, marker))
