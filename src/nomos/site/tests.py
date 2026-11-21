@@ -731,3 +731,15 @@ class ViewerTests(TestCase):
         # форма даты переносит начало цепочки на новую страницу
         response = self.client.get(ACT_URL + 'art_1/', {'on': '2024-06-01', **chain})
         self.assertIn('start=', response['Location'])
+
+    def test_about_in_greek(self):
+        Source.objects.filter(code='test').update(name='Официальная газета Республики Кипр')
+        response = self.client.get('/about/', {'lang': 'el'})
+        self.assertContains(response, 'Σχετικά με το έργο')
+        self.assertContains(response, 'Δημιουργός του έργου: Ilia Tsigelnitskii.')
+        self.assertContains(response, 'Επίσημη Εφημερίδα της Κυπριακής Δημοκρατίας')
+        self.assertContains(response, '(<a href="https://www.cylaw.org" rel="external">')
+        article = re.search(r'<article.*</article>', response.content.decode(), re.S).group()
+        self.assertIsNone(re.search('[а-яё]', article, re.I))
+        # по-русски страница прежняя
+        self.assertContains(self.client.get('/about/'), 'Автор проекта — Ilia Tsigelnitskii.')

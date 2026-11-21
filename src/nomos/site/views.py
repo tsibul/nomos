@@ -4,6 +4,7 @@ import re
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils import translation
+from django.utils.html import format_html
 from django.utils.http import urlencode
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy, gettext_noop
@@ -80,11 +81,21 @@ def about(request):
     sources = [
         {
             'source': source,
+            'name': source_text(source.name),
             'count': len(source.expressions.all()),
         }
         for source in Source.objects.prefetch_related('expressions').order_by('name')
     ]
-    return render(request, 'site/about.html', {'sources': sources})
+    context = {
+        'sources': sources,
+        # ссылка внутри переводимой фразы: в каталоге — только место {{ link }}
+        'cylaw_link': format_html(
+            '<a href="{}" rel="external">{}</a>',
+            'https://www.cylaw.org',
+            'www.cylaw.org',
+        ),
+    }
+    return render(request, 'site/about.html', context)
 
 
 def robots(request):
