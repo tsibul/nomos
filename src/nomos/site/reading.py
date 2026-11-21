@@ -202,6 +202,11 @@ def interface_lang():
     return lang if lang in UI_LANGS else READER_LANG
 
 
+def original_lang(act):
+    """Язык оригинала акта: у кипрских — el, у актов ЕС — en (structure_lang)."""
+    return act.structure_lang or DEFAULT_LANG
+
+
 def act_number(act):
     """«95(I)/2000»; у актов ЕС год уже в номере, как в обозначении: «904/2010», «2025/517»."""
     number = act.number or ''
@@ -369,12 +374,14 @@ class Label:
         return self.text
 
 
-def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
+def fragment_label(fragment, version, headings=None, lang=None):
     """«Άρθρο 45. Παραβάσεις»; с переведённым заголовком — «Статья 45. Нарушения».
 
     headings — {id редакции: заголовок на языке lang} (см. translated_headings).
+    lang — язык просмотра; не задан — язык оригинала.
     """
     structure_lang = fragment.act.structure_lang or DEFAULT_LANG
+    lang = lang or structure_lang
     if version is None:
         return Label(fragment.eid, structure_lang)
     heading = structure_heading(fragment.act, version)
@@ -382,6 +389,9 @@ def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
     if not access.lang_visible(fragment.act, structure_lang):
         # оригинал скрыт: приставка («Статья») — на языке перевода или интерфейса
         label_lang = lang if lang != structure_lang else interface_lang()
+    elif not heading and lang != structure_lang and lang in access.visible_langs(fragment.act):
+        # заголовка нет вовсе, перевод акта есть: «Статья 1», а не «Article 1»
+        label_lang = lang
     translated = (headings or {}).get(version.id)
     if translated:
         heading = translated
@@ -409,9 +419,12 @@ def structure_heading(act, version):
     return ''
 
 
-def translated_headings(versions, lang):
-    """Заголовки перевода одним запросом: {id редакции: заголовок}."""
-    if lang == DEFAULT_LANG:
+def translated_headings(versions, lang, original_lang=DEFAULT_LANG):
+    """Заголовки перевода одним запросом: {id редакции: заголовок}.
+
+    original_lang — язык оригинала акта (у актов ЕС — en): на нём перевода нет.
+    """
+    if lang == original_lang:
         return {}
     ids = [version.id for version in versions if version is not None]
     texts = (
@@ -424,7 +437,7 @@ def translated_headings(versions, lang):
 
 def translated_units(structure, lang):
     """id страниц, где переведён хоть один текст (любой редакции); один заголовок не в счёт."""
-    if lang == DEFAULT_LANG:
+    if lang == (structure.act.structure_lang or DEFAULT_LANG):
         return None
     texts = FragmentText.objects.filter(
         version__fragment__act=structure.act,
@@ -544,7 +557,11 @@ def build_toc(structure, route):
         return items
 
     items = walk(structure.roots())
-    headings = translated_headings([item.version for item in flat], route.lang)
+    headings = translated_headings(
+        [item.version for item in flat],
+        route.lang,
+        structure.act.structure_lang or DEFAULT_LANG,
+    )
     translated = translated_units(structure, route.lang)
     for item in flat:
         item.label = fragment_label(item.fragment, item.version, headings, route.lang)
@@ -726,7 +743,8 @@ def build_nodes(structure, unit, route):
 def has_translation(node):
     """Есть ли на странице хоть один переведённый текст (одного заголовка мало)."""
     text = node.text
-    if text is not None and text.expression.lang != DEFAULT_LANG and text.body:
+    original = original_lang(node.fragment.act)
+    if text is not None and text.expression.lang != original and text.body:
         return True
     return any(has_translation(child) for child in node.children)
 
@@ -770,8 +788,8 @@ def attach_texts(nodes, route):
         by_version.setdefault(text.version_id, []).append(text)
     for node in nodes:
         found = by_version.get(node.version.id, [])
-        original = pick_text(found, DEFAULT_LANG)
-        if route.lang == DEFAULT_LANG:
+        original = pick_text(found, original_lang(route.act))
+        if route.lang == original_lang(route.act):
             node.text = original
         else:
             node.text = pick_text(found, route.lang)

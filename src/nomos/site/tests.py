@@ -1082,3 +1082,202 @@ class DeployCheckTests(TestCase):
         # без сборки (npm run build) добавляется django_vite.W001 — к выкладке не относится
         warnings = set(re.findall(r'\(([a-z_]+\.W\d+)\)', result.stderr))
         self.assertEqual(warnings - {'django_vite.W001'}, {'security.W021'}, result.stderr)
+
+
+class FragmentLabelLangTests(TestCase):
+    """Статья без заголовка: приставка на языке просмотра, если перевод акта есть."""
+
+    @classmethod
+    def setUpTestData(cls):
+        source = Source.objects.create(code='test', name='Тест')
+        cls.act = Act.objects.create(
+            uid='eu/reg/2010/904',
+            jurisdiction='eu',
+            kind='reg',
+            number='904/2010',
+            year='2010',
+            structure_lang='en',
+        )
+        for lang in ('en', 'ru'):
+            Expression.objects.create(
+                act=cls.act,
+                lang=lang,
+                status='official_text',
+                source=source,
+                title='Regulation',
+            )
+        cls.fragment = Fragment.objects.create(
+            uid='eu00000001',
+            act=cls.act,
+            kind='art',
+            eid='art_1',
+        )
+        amendment = Amendment.objects.create(
+            amending_act=cls.act,
+            kind='base',
+            key='base',
+            marker='base',
+        )
+        cls.version = FragmentVersion.objects.create(
+            fragment=cls.fragment,
+            key='base',
+            amendment=amendment,
+            num='1',
+            heading='',
+            known_from=datetime.date(2024, 1, 1),
+        )
+
+    def label(self, lang):
+        return reading.fragment_label(self.fragment, self.version, {}, lang)
+
+    def test_prefix_in_reading_lang(self):
+        label = self.label('ru')
+        self.assertEqual((label.text, label.lang), ('Статья 1', 'ru'))
+
+    def test_original_and_missing_translation_keep_original_prefix(self):
+        self.assertEqual(self.label('en').text, 'Article 1')
+        self.assertEqual(self.label('el').text, 'Article 1')
+        self.assertEqual(reading.fragment_label(self.fragment, self.version).text, 'Article 1')
+
+    def test_greek_heading_of_eu_act(self):
+        """У акта ЕС оригинал en: греческий — перевод, его заголовки берутся (раздел, глава)."""
+        el = Expression.objects.create(
+            act=self.act,
+            lang='el',
+            status='official_translation',
+            source=Source.objects.get(code='test'),
+            title='Κανονισμός',
+        )
+        FragmentText.objects.create(
+            version=self.version,
+            expression=el,
+            heading='Αντικείμενο',
+            body='<p>Κείμενο</p>',
+            text_hash='el',
+        )
+        headings = reading.translated_headings([self.version], 'el', 'en')
+        self.assertEqual(headings, {self.version.id: 'Αντικείμενο'})
+        self.assertEqual(reading.translated_headings([self.version], 'en', 'en'), {})
+        label = reading.fragment_label(self.fragment, self.version, headings, 'el')
+        self.assertEqual((label.text, label.lang), ('Άρθρο 1. Αντικείμενο', 'el'))
+        response = self.client.get(reading.build_url(self.act, lang='el'))
+        self.assertContains(response, 'Άρθρο 1. Αντικείμενο')
+        self.assertNotContains(response, 'Article 1')
+
+
+class EuOriginalLangTests(TestCase):
+    """У акта ЕС оригинал — английский: он рядом с переводом, на en-странице оригинала нет."""
+
+    @classmethod
+    def setUpTestData(cls):
+        source = Source.objects.create(code='test', name='Тест')
+        cls.act = Act.objects.create(
+            uid='eu/dir/2006/112',
+            jurisdiction='eu',
+            kind='dir',
+            number='2006/112',
+            year='2006',
+            structure_lang='en',
+        )
+        fragment = Fragment.objects.create(
+            uid='eu00000002',
+            act=cls.act,
+            kind='art',
+            eid='art_1',
+        )
+        amendment = Amendment.objects.create(
+            amending_act=cls.act,
+            kind='base',
+            key='base',
+            marker='base',
+        )
+        version = FragmentVersion.objects.create(
+            fragment=fragment,
+            key='base',
+            amendment=amendment,
+            num='1',
+            heading='',
+            known_from=datetime.date(2024, 1, 1),
+        )
+        bodies = {
+            'en': ('official_text', 'English text'),
+            'el': ('official_text', 'Ελληνικό κείμενο'),
+            'ru': ('our_translation', 'Русский текст'),
+        }
+        for lang, (status, body) in bodies.items():
+            expression = Expression.objects.create(
+                act=cls.act,
+                lang=lang,
+                status=status,
+                source=source,
+                title='Directive',
+            )
+            FragmentText.objects.create(
+                version=version,
+                expression=expression,
+                body=f'<p>{body}</p>',
+                text_hash=lang,
+            )
+
+    def page(self, lang, **query):
+        return self.client.get(reading.build_url(self.act, eid='art_1', lang=lang), query)
+
+    def test_en_page_has_no_original(self):
+        response = self.page('en', orig='1')
+        self.assertContains(response, 'English text')
+        self.assertNotContains(response, 'fragment__original')
+        self.assertNotContains(response, 'Ελληνικό κείμενο')
+        self.assertNotContains(response, 'data-original-toggle')
+        self.assertNotContains(response, 'draft-warning')
+
+    def test_ru_page_shows_english_original(self):
+        response = self.page('ru', orig='1')
+        self.assertContains(response, 'Русский текст')
+        self.assertContains(response, 'fragment__original')
+        self.assertContains(response, 'English text')
+        self.assertNotContains(response, 'Ελληνικό κείμενο')
+        self.assertContains(response, 'Скрыть английский текст')
+        self.assertContains(response, 'data-show-text="Показать английский текст рядом"')
+        self.assertContains(response, str(notices.TRANSLATION_NOTICE_EU))
+        self.assertNotContains(response, 'греческий')
+
+    def test_el_page_is_official_with_english_alongside(self):
+        response = self.page('el', orig='1')
+        self.assertContains(response, 'Ελληνικό κείμενο')
+        self.assertContains(response, 'English text')
+        self.assertContains(response, 'fragment__original')
+        self.assertContains(response, 'data-original-toggle')
+        self.assertNotContains(response, 'draft-warning')
+
+    def test_untranslated_lang_reports_english(self):
+        """Без перевода на языке страницы показан английский оригинал, а не греческий."""
+        FragmentText.objects.filter(expression__lang='ru').delete()
+        response = self.page('ru')
+        self.assertContains(response, 'показан официальный английский текст')
+        self.assertContains(response, 'English text')
+
+
+class EuDisclaimerTests(EuOriginalLangTests):
+    """Подвал акта ЕС: Официальный журнал ЕС на языке страницы; у кипрских — прежний."""
+
+    def footer(self, response):
+        content = response.content.decode()
+        return content[content.index('footer__disclaimer'):]
+
+    def test_eu_act_pages(self):
+        expected = {
+            'ru': 'Официальном журнале Европейского союза (EUR-Lex)',
+            'en': 'Official Journal of the European Union (EUR-Lex)',
+            'el': 'Επίσημη Εφημερίδα της Ευρωπαϊκής Ένωσης (EUR-Lex)',
+        }
+        for lang, text in expected.items():
+            with self.subTest(lang=lang):
+                footer = self.footer(self.page(lang))
+                self.assertIn(text, footer)
+                self.assertNotIn('Εφημερίδα της Δημοκρατίας', footer)
+                self.assertNotIn('Республики Кипр', footer)
+
+    def test_eu_section_and_cyprus(self):
+        self.assertIn('Официальном журнале', self.footer(self.client.get('/eu/')))
+        self.assertIn('Республики Кипр', self.footer(self.client.get('/')))
+        self.assertEqual(notices.disclaimer('cy'), notices.DISCLAIMER)

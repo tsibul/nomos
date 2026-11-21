@@ -61,7 +61,7 @@
       <div class="fragment__texts">
         <div
           class="fragment__text"
-          lang="{{ node.text.expression.lang|default:'el' }}"
+          lang="{{ node.text.expression.lang|default:structure_lang }}"
         >
           {{ node.body|safe }}
         </div>
@@ -78,7 +78,11 @@
 
     {% if node.no_translation and not node.unknown and not untranslated %}
       <p class="fragment__flag">
-        {% translate 'Перевода нет — показан греческий текст' %}
+        {% if structure_lang == 'el' %}
+          {% translate 'Перевода нет — показан греческий текст' %}
+        {% else %}
+          {% translate 'Перевода нет — показан английский текст' %}
+        {% endif %}
       </p>
     {% endif %}
 

@@ -65,6 +65,7 @@ def act_list(request, jurisdiction=None):
             'section': section,
             'is_home': jurisdiction is None,
             'has_acts': bool(acts),
+            'disclaimer': notices.disclaimer(jurisdiction),
         },
     )
 
@@ -232,6 +233,7 @@ def base_context(request, route):
         'back': back_link(request, route.lang, route.chain),
         'chain_start': chain_start_link(route),
         'source_credit': source_credit(act),
+        'disclaimer': notices.disclaimer(act.jurisdiction),
     }
 
 
@@ -544,7 +546,8 @@ def unit_page(request, route, structure, unit):
             'next': unit_link(next_unit, route),
             'future_dates': future_dates(root),
             'untranslated': (
-                route.lang != reading.DEFAULT_LANG and not reading.has_translation(root)
+                route.lang != reading.original_lang(route.act)
+                and not reading.has_translation(root)
             ),
             'translation': translation_expression(route),
         }
@@ -563,7 +566,7 @@ def toc_label(toc_items, fragment, version):
 
 def translation_expression(route):
     """Выражение перевода страницы — для строки «Источник перевода»."""
-    if route.lang == reading.DEFAULT_LANG:
+    if route.lang == reading.original_lang(route.act):
         return None
     expressions = route.act.expressions.select_related('source').filter(lang=route.lang)
     return access.expression_queryset(expressions).first()
@@ -753,7 +756,11 @@ def history_label(structure, fragment, route):
     """«Статья 5. Заголовок перевода» (без перевода — «Статья 5»), у пункта — «Статья 5, 1»."""
     unit = structure.unit_of(fragment) or fragment
     version = unit.version_on(route.date) or unit.versions.last()
-    headings = reading.translated_headings([version], route.lang)
+    headings = reading.translated_headings(
+        [version],
+        route.lang,
+        route.act.structure_lang or reading.DEFAULT_LANG,
+    )
     label = reading.fragment_label(unit, version, headings, route.lang)
     prefix = reading.KIND_PREFIX.get(route.lang, {}).get(unit.kind)
     if label.lang != route.lang and prefix and version is not None and version.num:

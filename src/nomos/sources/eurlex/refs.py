@@ -5,7 +5,7 @@
 Цель внутри известного акта проверяется по его адресам; если точного адреса нет, берётся
 ближайший существующий предок. Цель в акте, которого нет в базе (директива 2006/112), строится
 по номерам без проверки и остаётся неразрешённой, пока акт не загружен.
-Ссылки на прочие акты («Article 24 of Regulation (EU) 2017/1939») не ставятся.
+Ссылки ставятся на акты из EU_ACTS; на прочие («Article 24 of Regulation (EU) 2017/1939») — нет.
 """
 
 import re
@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from nomos.sources.eurlex.formex import strip_accents
 
 DIRECTIVE = 'eu/dir/2006/112'
+
+# акты ЕС базы: номер в обозначении → адрес; ссылки «of Regulation (EU) No 904/2010» ставятся
+EU_ACTS = {
+    '2006/112': DIRECTIVE,
+    '904/2010': 'eu/reg/2010/904',
+    '282/2011': 'eu/reg/2011/282',
+}
 
 # греческие буквенные номера: α=1 … θ=9, ι=10, κ=20; στ=6
 GREEK_VALUES = [
@@ -33,14 +40,19 @@ GREEK_VALUES = [
 ]
 
 EN_NUM = r'\d+[a-z]{0,2}\b(?:\(\w{1,4}\))*'
+# «(4)» в «Article 284(3) and (4)» — пункт той же статьи
+EN_SUB = r'(?:\(\w{1,4}\))+'
+EN_OF = (
+    r' of (?:this Regulation|this Directive|Directive 2006/112/EC|that Directive'
+    r'|(?:Council |Commission )?(?:Implementing )?(?:Directive|Regulation|Decision)'
+    r'(?: \((?:EU|EC|EEC)\))?(?: No)? \d+/\d+(?:/\w+)?)'
+)
 EN_ARTICLE = re.compile(
     r'(?P<pre>points? \((?P<pnt>[a-z0-9]{1,4})\)(?:(?:, | and | or )\([a-z0-9]{1,4}\))*'
     r'(?: of)?(?: the \w+ subparagraph(?: of)?)? )?'
     r'(?P<word>Articles?) '
-    r'(?P<list>' + EN_NUM + r'(?:(?:, | and | or | to )' + EN_NUM + r')*)'
-    r'(?P<of> of (?:this Regulation|this Directive|Directive 2006/112/EC|that Directive'
-    r'|(?:Council |Commission )?(?:Implementing )?(?:Directive|Regulation|Decision)'
-    r'(?: \((?:EU|EC|EEC)\))?(?: No)? \d+/\d+(?:/\w+)?))?'
+    r'(?P<list>' + EN_NUM + r'(?:(?:, | and | or | to )(?:' + EN_NUM + r'|' + EN_SUB + r'))*)'
+    r'(?P<of>' + EN_OF + r')?'
 )
 EN_PARAGRAPH = re.compile(
     r'\b(?P<word>paragraphs?) (?P<list>\d+[a-z]?(?:(?:, | and | or | to )\d+[a-z]?)*)\b'
@@ -50,18 +62,21 @@ EN_ANNEX = re.compile(r'\b(?P<word>Annex) (?P<list>[IVX]+)\b')
 EL_LETTERS = r'[α-ω]{1,4}'
 EL_NUM = (
     r'\d+(?:' + EL_LETTERS + r')?\b'
-    r'(?: παράγραφο[ςι]? \d+(?:' + EL_LETTERS + r')?\b)?'
+    r'(?:,? παράγραφο[ςι]? \d+(?:' + EL_LETTERS + r')?\b)?'
     r'(?: (?:στοιχείο|σημείο) (?:' + EL_LETTERS + r'\)|\d+))?'
+)
+EL_OF = (
+    r' (?:του παρόντος κανονισμού|της παρούσας οδηγίας|της οδηγίας 2006/112/ΕΚ'
+    r'|της εν λόγω οδηγίας|της οδηγίας αυτής|του εν λόγω κανονισμού|της εν λόγω απόφασης'
+    r'|(?:του|της) (?:εκτελεστικού )?(?:κανονισμού|οδηγίας|απόφασης)'
+    r'(?: \((?:ΕΕ|ΕΚ|ΕΟΚ)\))?(?: αριθ\.)? \d+/\d+(?:/\w+)?)'
 )
 EL_ARTICLE = re.compile(
     r'(?P<pre>στοιχεί(?:ο|α|ου|ων) (?P<pnt>' + EL_LETTERS + r')\)'
     r'(?:(?:, | και | ή )' + EL_LETTERS + r'\))* (?:του|των|στο|στα) )?'
     r'(?P<word>άρθρ(?:ο|ου|α|ων)) '
     r'(?P<list>' + EL_NUM + r'(?:(?:, | και | ή | έως )' + EL_NUM + r')*)'
-    r'(?P<of> (?:του παρόντος κανονισμού|της παρούσας οδηγίας|της οδηγίας 2006/112/ΕΚ'
-    r'|της εν λόγω οδηγίας|της οδηγίας αυτής|του εν λόγω κανονισμού|της εν λόγω απόφασης'
-    r'|(?:του|της) (?:εκτελεστικού )?(?:κανονισμού|οδηγίας|απόφασης)'
-    r'(?: \((?:ΕΕ|ΕΚ|ΕΟΚ)\))?(?: αριθ\.)? \d+/\d+(?:/\w+)?))?'
+    r'(?P<of>' + EL_OF + r')?'
 )
 EL_PARAGRAPH = re.compile(
     r'(?<!\d )\b(?P<word>παράγραφ(?:ο|ος|ου|οι|ους|ων)) '
@@ -70,7 +85,25 @@ EL_PARAGRAPH = re.compile(
 )
 EL_ANNEX = re.compile(r'\b(?P<word>(?:Π|π)αράρτημ(?:α|ατος)) (?P<list>[IVXΙΧ]+)\b')
 
-SEPARATORS = re.compile(r', | and | or | to | και | ή | έως ')
+# уточнения и связки между номером статьи и «of …» или следующей статьёй перечня:
+# «Article 54(1), second subparagraph, of Directive», «Article 56(2) and Articles 58 and 59 of»
+EN_FILLER = (
+    r'(?:,|\s|\(\w{1,4}\)|\b(?:and|or|in|under|by|to|the|first|second|third|fourth|fifth'
+    r'|subparagraphs?|paragraphs?|points?|of|with|accordance)\b)*?'
+)
+EL_FILLER = (
+    r'(?:,|\s|\d+|[α-ω]{1,3}\)|(?<!\w)(?:και|ή|στο|στα|στον|του|των|το|τα|από|της|πρώτο'
+    r'|δεύτερο|τρίτο|τέταρτο|πέμπτο|εδάφιο|εδάφια|παράγραφος|παράγραφο|παραγράφου'
+    r'|στοιχείο|στοιχεία)(?!\w))*?'
+)
+EN_TAIL = re.compile(r'(?P<gap>' + EN_FILLER + r')(?P<of>' + EN_OF + r')')
+EL_TAIL = re.compile(r'(?P<gap>' + EL_FILLER + r')(?P<of>' + EL_OF + r')')
+EN_LINK = re.compile(EN_FILLER + r'$')
+EL_LINK = re.compile(EL_FILLER + r'$')
+FILLER_LIMIT = 60
+NOT_NAMED = object()
+
+SEPARATORS = re.compile(r', (?!παράγραφ)| and | or | to | και | ή | έως ')
 TAG_RE = re.compile(r'(<[^>]+>)')
 
 
@@ -150,8 +183,7 @@ class Linker:
         else:
             article_re, paragraph_re, annex_re = EN_ARTICLE, EN_PARAGRAPH, EN_ANNEX
         spans = []
-        for match in article_re.finditer(text):
-            act = self.article_act(match.group('of'), default_act)
+        for match, act in self.article_acts(text, article_re, default_act):
             if act is None:
                 continue
             spans.extend(self.article_spans(match, act))
@@ -194,6 +226,40 @@ class Linker:
         result.append(text[position:])
         return ''.join(result)
 
+    def article_acts(self, text, article_re, default_act):
+        """(совпадение, акт) для каждой статьи. Статья без «of …» берёт акт из «of …» после
+        уточнений («Article 54(1), second subparagraph, of Directive 2006/112/EC») или от
+        следующей статьи перечня, если между ними только связки («Article 56(2) and
+        Articles 58 and 59 of Directive 2006/112/EC»)."""
+        if self.lang == 'el':
+            tail_re, link_re = EL_TAIL, EL_LINK
+        else:
+            tail_re, link_re = EN_TAIL, EN_LINK
+        matches = list(article_re.finditer(text))
+        acts = [None] * len(matches)
+        # акт, названный явно у следующей статьи (None — акт неизвестен, ссылки не будет)
+        following = NOT_NAMED
+        for index in range(len(matches) - 1, -1, -1):
+            match = matches[index]
+            of = match.group('of')
+            act = NOT_NAMED
+            if of:
+                act = self.article_act(of, default_act)
+            else:
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+                tail = tail_re.match(text, match.end(), end)
+                if tail and len(tail.group('gap')) <= FILLER_LIMIT:
+                    act = self.article_act(tail.group('of'), default_act)
+                elif following is not NOT_NAMED:
+                    gap = text[match.end():end]
+                    if len(gap) <= FILLER_LIMIT and link_re.match(gap):
+                        act = following
+            following = act
+            if act is NOT_NAMED:
+                act = default_act
+            acts[index] = act
+        return list(zip(matches, acts))
+
     def article_act(self, of, default_act):
         if not of:
             return default_act
@@ -202,7 +268,10 @@ class Linker:
             return default_act
         if 'this directive' in plain:
             return default_act
-        if '2006/112' in plain or 'that directive' in plain:
+        for number, uid in EU_ACTS.items():
+            if re.search(r'\b%s\b' % re.escape(number), plain):
+                return uid
+        if 'that directive' in plain:
             return DIRECTIVE
         if 'οδηγιασ' in plain and ('εν λογω' in plain or 'αυτησ' in plain):
             return DIRECTIVE
@@ -213,8 +282,17 @@ class Linker:
         items = list(self.list_items(match))
         spans = []
         point = match.group('pnt')
+        previous = ''
+        paragraphs = False
         for index, (start, end, token) in enumerate(items):
-            eid = self.article_eid(token)
+            eid = self.sibling_eid(token, previous, paragraphs)
+            if eid is None and token.startswith('('):
+                # «Article 5 and (b)»: продолжать нечего
+                break
+            if eid is None:
+                eid = self.article_eid(token)
+                paragraphs = 'παράγραφοι' in token
+            previous = eid
             if index == 0:
                 start = match.start()
                 if point and len(items) == 1:
@@ -224,6 +302,29 @@ class Linker:
                 end = match.end('of')
             spans.append((start, end, Target(act, eid)))
         return spans
+
+    def sibling_eid(self, token, previous, paragraphs):
+        """Номер перечня, продолжающий предыдущий адрес: «Article 284(3) and (4)» → par_4,
+        «Article 98(1)(a) and (b)» → pnt_b, «άρθρο 98 παράγραφοι 1 και 2» → par_2.
+        None — номер статьи."""
+        if not previous:
+            return None
+        levels = previous.split('.')
+        if self.lang == 'el':
+            if not paragraphs or not re.fullmatch(r'\d+[α-ω]*', token):
+                return None
+            numbers = [el_token(token)]
+        else:
+            if not token.startswith('('):
+                return None
+            numbers = re.findall(r'\((\w+)\)', token)
+        if len(numbers) >= len(levels):
+            return None
+        head = levels[:len(levels) - len(numbers)]
+        tail = levels[len(levels) - len(numbers):]
+        for level, number in zip(tail, numbers):
+            head.append('%s_%s' % (level.split('_')[0], number))
+        return '.'.join(head)
 
     def list_items(self, match):
         """(начало, конец, номер) каждого номера в группе list."""
@@ -262,6 +363,8 @@ class Linker:
         eids = self.known.get(target.act)
         eid = target.eid
         if eids is not None:
+            if eid not in eids:
+                eid = hidden_levels(eid, eids) or eid
             while eid and eid not in eids:
                 eid = eid.rpartition('.')[0]
             if not eid:
@@ -269,6 +372,25 @@ class Linker:
         if target.act == self.own_uid:
             return eid
         return '%s#%s' % (target.act, eid)
+
+
+def collapse(eid, kinds):
+    """art_284.par_3.sub_1.pnt_a без уровней kinds (sub) → art_284.par_3.pnt_a."""
+    return '.'.join(part for part in eid.split('.') if part.split('_')[0] not in kinds)
+
+
+def hidden_levels(eid, eids):
+    """Адрес с пропущенными в ссылке уровнями: «point (a) of Article 284(3)» —
+    art_284.par_3.sub_1.pnt_a, «point (b) of Article 214» — art_214.par_1.pnt_b.
+
+    Сначала пропускаются только подабзацы, затем и абзацы; берётся единственный кандидат."""
+    for kinds in (('sub',), ('sub', 'par')):
+        found = [item for item in eids if item != eid and collapse(item, kinds) == eid]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            return None
+    return None
 
 
 def points_to_self(resolved, own_eid):

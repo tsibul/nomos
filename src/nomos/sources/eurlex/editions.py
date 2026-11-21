@@ -6,8 +6,8 @@
 Первая редакция — база (`key="base"`, изменение `<акт>#base`). Каждая следующая сравнивается с
 предыдущей: изменённый, новый или исчезнувший фрагмент получает редакцию с ключом — датой
 начала сводной (START.DATE). Причина — акт, метки которого появились в этой сводной
-(у сводной, продолжающей действовать, SOURCE.END нет); если такой не один — SOURCE.END
-предыдущей;
+(у сводной, продолжающей действовать, SOURCE.END нет); если новых актов нет — акт новых
+меток (следующий этап внесённого акта); иначе — SOURCE.END предыдущей;
 изменение — по метке этого акта на фрагменте (`art_1.pnt_3:replace`), без метки — `#base`.
 """
 
@@ -15,6 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from nomos.sources.cylaw.history import BASE_KEY
+from nomos.sources.eurlex import formex
 
 ACTIONS = {
     'INSERTED': 'insert',
@@ -104,11 +105,55 @@ def renumber_notes(paragraphs):
     ]
 
 
+def split_subparagraphs(en_node, el_node):
+    """В en абзацы — подабзацы sub_N (несколько ALINEA), в el — один ALINEA с теми же P
+    (ст. 61(1) 282/2011): el-абзацы делятся по подабзацам en по порядку, пункты el —
+    подабзацу en, у которого пункты того же вида.
+
+    Без этого у подабзацев нет el-текста, а у владельца — en-текста. Подабзац, на который
+    el-абзацев не хватило, остаётся без el (ст. 61a(2) 282/2011: в el нет второго)."""
+    subs = [child for child in en_node.children if child.kind == 'sub']
+    if not subs or en_node.paragraphs or not el_node.paragraphs:
+        return
+    if any(child.kind == 'sub' for child in el_node.children):
+        return
+    if sum(len(sub.paragraphs) for sub in subs) < len(el_node.paragraphs):
+        return
+    owners = {}
+    for sub in subs:
+        for child in sub.children:
+            owners.setdefault(child.kind, sub)
+    if any(child.kind not in owners for child in el_node.children):
+        return
+    paragraphs = el_node.paragraphs
+    children = el_node.children
+    el_node.paragraphs = []
+    el_node.children = []
+    start = 0
+    for sub in subs:
+        end = start + len(sub.paragraphs)
+        own = [child for child in children if owners[child.kind] is sub]
+        if start >= len(paragraphs) and not own:
+            break
+        node = formex.Node('sub', sub.token, num=sub.num, parent=el_node)
+        node.paragraphs = paragraphs[start:end]
+        node.markers = list(el_node.markers)
+        for child in own:
+            child.parent = node
+        node.children = own
+        el_node.children.append(node)
+        start = end
+
+
 def align(en, el, report, label):
     """eid опорного en → узел el; по порядку детей одного вида."""
     found = {}
+    # без пары по порядку: en-узлы и лишние el-узлы
+    missing = []
+    extras = []
 
     def walk(en_node, el_node):
+        split_subparagraphs(en_node, el_node)
         groups = {}
         for child in el_node.children:
             groups.setdefault(child.kind, []).append(child)
@@ -118,18 +163,37 @@ def align(en, el, report, label):
             positions[child.kind] = index + 1
             candidates = groups.get(child.kind, [])
             if index >= len(candidates):
-                report.append('%s: нет el для %s' % (label, child.eid))
+                missing.append(child)
+                # в el абзац не разбит на подабзацы (ст. 61а 282/2011): дети — у родителя
+                if child.kind == 'sub' and 'sub' not in groups:
+                    walk(child, el_node)
                 continue
             found[child.eid] = candidates[index]
             walk(child, candidates[index])
         for kind, candidates in groups.items():
-            extra = len(candidates) - positions.get(kind, 0)
-            if extra > 0:
-                report.append('%s: в el лишних %s: %d у %s' % (
-                    label, kind, extra, en_node.eid or 'акта',
-                ))
+            extras.extend(candidates[positions.get(kind, 0):])
 
     walk(en.root, el.root)
+    # раздел, вынесенный в el не на своё место («ΤΜΗΜΑ 3» главы XI 282/2011 — на верх акта):
+    # пара по виду и номеру среди лишних el-узлов
+    for child in missing:
+        pair = None
+        for candidate in extras:
+            if candidate.kind == child.kind and candidate.num == child.num:
+                pair = candidate
+                break
+        if pair is None:
+            report.append('%s: нет el для %s' % (label, child.eid))
+            continue
+        extras.remove(pair)
+        report.append('%s: el для %s взят не со своего места' % (label, child.eid))
+        found[child.eid] = pair
+        walk(child, pair)
+    paired = {id(node) for node in found.values()}
+    for candidate in extras:
+        if id(candidate) in paired:
+            continue
+        report.append('%s: в el лишний %s %s' % (label, candidate.kind, candidate.num))
     return found
 
 
@@ -233,11 +297,29 @@ class History:
         )
         return '%s#%s:%s' % (act_uid, provision, kind), True
 
+    def node_cause(self, node, cause, before):
+        """Акт, изменивший фрагмент: общий акт редакции, если у фрагмента есть его метка;
+        иначе — новая метка другого акта из манифеста (этап раньше принятого изменения)."""
+        if cause_marker(node, cause) is not None:
+            return cause
+        fresh = [
+            marker for marker in node.markers
+            if marker.id not in before.en.markers and marker.doc in self.amending
+        ]
+        return fresh[-1].doc if fresh else cause
+
     def cause(self, before, edition):
         docs = {marker.doc for marker in edition.en.markers.values()}
         docs -= {marker.doc for marker in before.en.markers.values()}
         if len(docs) == 1:
             return docs.pop()
+        # новых актов нет (новый этап уже внесённого): акт новых меток, если он один
+        fresh = {
+            marker.doc for marker_id, marker in edition.en.markers.items()
+            if marker_id not in before.en.markers
+        }
+        if not docs and len(fresh) == 1:
+            return fresh.pop()
         self.report.append('%s: новых изменяющих актов в метках %d (%s), причина — %s' % (
             edition.start, len(docs), ', '.join(sorted(docs)), before.source_end,
         ))
@@ -255,26 +337,35 @@ class History:
             order.append(node.eid)
         changed = 0
         unmarked = []
+        # изменения по меткам других актов (например, этап более раннего акта): акт → число
+        others = {}
         for node in nodes:
             state = current[node.eid]
             if previous.get(node.eid) == state:
                 self.fragment(node)
                 continue
             changed += 1
-            if act_uid is None:
+            node_cause = self.node_cause(node, cause, before)
+            if node_cause == cause:
+                node_dates = (act_uid, valid_from, applies_from, known_from)
+            else:
+                node_dates = self.dates(node_cause, edition.start)
+                others[node_cause] = others.get(node_cause, 0) + 1
+            node_uid, node_valid_from, node_applies_from, node_known_from = node_dates
+            if node_uid is None:
                 continue
-            amendment, marked = self.amendment(act_uid, cause, node, applies_from)
+            amendment, marked = self.amendment(node_uid, node_cause, node, node_applies_from)
             if not marked:
                 unmarked.append(node.eid)
             num, heading, texts = state
             self.fragment(node).versions.append(Version(
-                key=applies_from,
+                key=node_applies_from,
                 amendment=amendment,
                 num=num,
                 heading=heading,
-                valid_from=valid_from,
-                applies_from=applies_from,
-                known_from=known_from,
+                valid_from=node_valid_from,
+                applies_from=node_applies_from,
+                known_from=node_known_from,
                 texts=texts,
             ))
         gone = [eid for eid in previous if eid not in current]
@@ -308,6 +399,8 @@ class History:
             len(unmarked),
             (': ' + ', '.join(unmarked[:12])) if unmarked else '',
         ))
+        for other, count in sorted(others.items()):
+            self.report.append('%s: из них по меткам %s — %d' % (edition.start, other, count))
         result = dict(current)
         return result
 

@@ -3,14 +3,25 @@
 Файлы Formex — маленькие образцы в коде теста: raw/ в git не входит.
 """
 
+import os
 import tempfile
 from io import StringIO
 from pathlib import Path
 
 from django.core.management import call_command
+from unittest import skipUnless
+
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Act, Amendment, Fragment, FragmentText, FragmentVersion, Reference
+from nomos.acts.models import (
+    Act,
+    ActRelation,
+    Amendment,
+    Fragment,
+    FragmentText,
+    FragmentVersion,
+    Reference,
+)
 
 from .eurlex import editions, formex, refs
 
@@ -33,7 +44,8 @@ WORDS = {
         'par_1': 'This Regulation lays down rules.',
         'par_2': 'The authorities referred to in paragraph 1 shall cooperate.',
         'intro': 'For the purposes of this Regulation:',
-        'pnt_a': 'information under Article 1(2) and Article 143 of Directive 2006/112/EC;',
+        'pnt_a': 'information under Article 1(2) of this Regulation and Article 143 of Directive'
+                 ' 2006/112/EC;',
         'pnt_b_old': 'old text;',
         'pnt_b_new': 'new text under Articles 33 and 34 of Directive 2006/112/EC;',
         'points': ('(a)', '(b)'),
@@ -227,6 +239,59 @@ class EditionsTests(SimpleTestCase):
             {('art_1.pnt_2', 'replace'): ('M2', '2025-01-01')},
         )
 
+    def test_subparagraphs_only_in_en(self):
+        """en: два ALINEA (sub_1, sub_2), el: один ALINEA с двумя P (ст. 61(1) 282/2011);
+        ст. 61a(2): в el нет второго подабзаца, пункты — у первого."""
+        def document(lang, first, second):
+            return (
+                '<?xml version="1.0" encoding="utf-8"?>'
+                '<CONS.ACT><INFO.CONSLEG START.DATE="20240101" END.DATE="99999999"/>'
+                '<CONS.DOC><TITLE><TI><P>T</P></TI></TITLE><ENACTING.TERMS>'
+                '<ARTICLE IDENTIFIER="061"><TI.ART>%s 61</TI.ART>'
+                '<PARAG IDENTIFIER="061.001"><NO.PARAG>1.</NO.PARAG>%s</PARAG>'
+                '<PARAG IDENTIFIER="061.002"><NO.PARAG>2.</NO.PARAG>%s</PARAG>'
+                '</ARTICLE></ENACTING.TERMS></CONS.DOC></CONS.ACT>'
+            ) % ('Article' if lang == 'en' else 'Άρθρο', first, second)
+
+        def points(a, b):
+            return (
+                '<P><LIST TYPE="alpha">'
+                '<ITEM><NP><NO.P>%s</NO.P><TXT>x</TXT></NP></ITEM>'
+                '<ITEM><NP><NO.P>%s</NO.P><TXT>y</TXT></NP></ITEM>'
+                '</LIST></P>'
+            ) % (a, b)
+
+        en = document(
+            'en',
+            '<ALINEA>One.</ALINEA><ALINEA>Two.</ALINEA>',
+            '<ALINEA><P>Lead.</P>%s<P>After.</P></ALINEA>' % points('(a)', '(b)'),
+        )
+        el = document(
+            'el',
+            '<ALINEA><P>Ένα.</P><P>Δύο.</P></ALINEA>',
+            '<ALINEA><P>Αρχή.</P>%s</ALINEA>' % points('α)', 'β)'),
+        )
+        edition = editions.Edition(
+            start='20240101',
+            end='99999999',
+            source_end='',
+            en=parse_text(en, 'en'),
+            el=parse_text(el, 'el'),
+        )
+        report = []
+        history = editions.History(ACT, [edition], {}, report)
+        texts = {
+            fragment.eid: fragment.versions[0].texts
+            for fragment in history.build()
+        }
+        self.assertEqual(texts['art_61.par_1.sub_1']['el'][0], ['Ένα.'])
+        self.assertEqual(texts['art_61.par_1.sub_2']['el'][0], ['Δύο.'])
+        self.assertEqual(texts['art_61.par_1']['el'][0], [])
+        self.assertEqual(texts['art_61.par_2.sub_1']['el'][0], ['Αρχή.'])
+        self.assertEqual(texts['art_61.par_2.sub_1.pnt_b']['el'][0], ['y'])
+        self.assertNotIn('el', texts['art_61.par_2.sub_2'])
+        self.assertEqual(report, ['20240101: нет el для art_61.par_2.sub_2'])
+
     def test_loc_to_eid(self):
         self.assertEqual(editions.loc_to_eid('AR:24b;PA:2;PT:a'), 'art_24b.par_2.pnt_a')
         self.assertEqual(editions.loc_to_eid('AX:0;PT:9'), '')
@@ -300,6 +365,63 @@ class LinkerTests(SimpleTestCase):
         marked = self.mark('en', 'text<fn id="fn1">OJ, see Article 1</fn> and Article 17')
         self.assertIn('<fn id="fn1">OJ, see Article 1</fn>', marked)
         self.assertIn('to="art_17"', marked)
+
+    def test_act_named_after_qualifiers_or_list(self):
+        """«of Directive …» после уточнений или в конце перечня относится ко всем статьям."""
+        marked = self.mark(
+            'en',
+            'in Article 54(1), second subparagraph, Article 56(2), first subparagraph,'
+            ' and Articles 58 and 59 of Directive 2006/112/EC',
+        )
+        self.assertIn('to="eu/dir/2006/112#art_54.par_1">Article 54(1)</ref>', marked)
+        self.assertIn('to="eu/dir/2006/112#art_56.par_2">Article 56(2)</ref>', marked)
+        marked = self.mark('en', 'by Article 53 and Article 54(1) of Directive 2006/112/EC')
+        self.assertIn('to="eu/dir/2006/112#art_53">Article 53</ref>', marked)
+        marked = self.mark(
+            'en',
+            'Article 56 and point (g) of the first paragraph of Article 59'
+            ' of Directive 2006/112/EC',
+        )
+        self.assertIn('to="eu/dir/2006/112#art_56">Article 56</ref>', marked)
+        marked = self.mark(
+            'el',
+            'στο άρθρο 54 παράγραφος 1 δεύτερο εδάφιο, στο άρθρο 56 παράγραφος 2'
+            ' πρώτο εδάφιο και στα άρθρα 58 και 59 της οδηγίας 2006/112/ΕΚ',
+        )
+        self.assertIn('to="eu/dir/2006/112#art_54.par_1"', marked)
+        self.assertIn('to="eu/dir/2006/112#art_56.par_2"', marked)
+        marked = self.mark('el', 'του άρθρου 17, παράγραφος 1 του παρόντος κανονισμού')
+        self.assertIn('to="art_17.par_1">άρθρου 17, παράγραφος 1', marked)
+
+    def test_own_articles_before_foreign_list_stay_own(self):
+        marked = self.mark('en', 'Article 17 of this Regulation and Article 1')
+        self.assertIn('to="art_17"', marked)
+        self.assertIn('to="art_1">Article 1</ref>', marked)
+        marked = self.mark(
+            'en',
+            'under Article 17, the rules of Article 59 of Directive 2006/112/EC',
+        )
+        self.assertIn('to="art_17">Article 17</ref>', marked)
+
+    def test_second_number_is_paragraph_of_same_article(self):
+        """«άρθρο 17 παράγραφοι 1 και 2», «Article 17(1) and (2)» — пункт 2 статьи 17."""
+        marked = self.mark('el', 'στο άρθρο 1 παράγραφοι 1 και 2 δεν')
+        self.assertIn('to="art_1.par_2">2</ref>', marked)
+        marked = self.mark('en', 'in Article 1(1) and (2) shall')
+        self.assertIn('to="art_1.par_2">(2)</ref>', marked)
+        marked = self.mark('en', 'Article 17(1)(a) and (g)')
+        self.assertIn('to="art_17.par_1.pnt_g">(g)</ref>', marked)
+        # единственное число — перечень статей
+        marked = self.mark('el', 'άρθρο 17 παράγραφος 1 και 1')
+        self.assertIn('to="art_1">1</ref>', marked)
+        self.assertNotIn('(b)</ref>', self.mark('en', 'Article 17 and (b)'))
+
+    def test_article_of_unknown_act_after_list(self):
+        """Статья перед «of Directive 92/12/EEC» не ссылается на свой акт."""
+        marked = self.mark('en', 'Article 17(1) and Article 1 of Directive 92/12/EEC')
+        self.assertNotIn('<ref', marked)
+        marked = self.mark('el', 'το άρθρο 17 παράγραφος 1 και το άρθρο 1 της οδηγίας 92/12/ΕΟΚ')
+        self.assertNotIn('<ref', marked)
 
 
 class CollectTests(TestCase):
@@ -382,3 +504,80 @@ class CollectTests(TestCase):
             to_fragment__act__uid=ACT,
         )
         self.assertEqual(amending.count(), 2)
+
+
+TEXTS_DIR = Path(os.environ.get('NOMOS_TEXTS_DIR', '/nonexistent'))
+DIRECTIVE = 'eu/dir/2006/112'
+IMPLEMENTING = 'eu/reg/2011/282'
+
+
+@skipUnless((TEXTS_DIR / DIRECTIVE / 'act.xml').exists(), 'нет Nomos-texts с директивой НДС')
+class EuVatTextsTests(TestCase):
+    """load_texts на собранных актах ЕС из Nomos-texts (NOMOS_TEXTS_DIR)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=StringIO())
+
+    def test_directive(self):
+        act = Act.objects.get(uid=DIRECTIVE)
+        self.assertEqual(act.kind, Act.Kind.DIRECTIVE)
+        self.assertGreater(act.fragments.count(), 2000)
+        self.assertTrue(
+            {'en', 'el'} <= set(act.expressions.values_list('lang', flat=True)),
+        )
+
+    def test_act_amending_two_acts(self):
+        targets = set(
+            ActRelation.objects.filter(from_act__uid='eu/dir/2020/285')
+            .values_list('to_act__uid', flat=True)
+        )
+        self.assertEqual(targets, {DIRECTIVE, ACT})
+
+    def test_editions_of_directive(self):
+        keys = set(
+            FragmentVersion.objects.filter(fragment__act__uid=DIRECTIVE)
+            .values_list('key', flat=True)
+        )
+        self.assertTrue({'base', '2025-01-01', '2025-03-20', '2025-04-14'} <= keys)
+
+    def test_references_between_eu_acts(self):
+        references = Reference.objects.filter(
+            from_text__version__fragment__act__uid='eu/dir/2020/285',
+            to_act__uid=DIRECTIVE,
+        )
+        self.assertGreater(references.count(), 0)
+        self.assertFalse(references.filter(resolved=False).exists())
+
+    def test_all_references_between_eu_acts_resolved(self):
+        # все языки, включая ru: цель — существующий фрагмент акта ЕС
+        unresolved = Reference.objects.filter(
+            from_text__version__fragment__act__uid__startswith='eu/',
+            to_act__uid__startswith='eu/',
+            resolved=False,
+        )
+        self.assertEqual(list(unresolved.values_list('from_text__expression__lang', 'anchor')), [])
+
+    def test_implementing_regulation(self):
+        act = Act.objects.get(uid=IMPLEMENTING)
+        self.assertEqual(act.kind, Act.Kind.IMPLEMENTING_REGULATION)
+        self.assertGreater(act.fragments.count(), 500)
+        keys = set(
+            FragmentVersion.objects.filter(fragment__act__uid=IMPLEMENTING)
+            .values_list('key', flat=True)
+        )
+        self.assertEqual(keys, {'base', '2025-04-14'})
+        targets = set(
+            ActRelation.objects.filter(from_act__uid='eu/reg/2025/518')
+            .values_list('to_act__uid', flat=True)
+        )
+        self.assertEqual(targets, {IMPLEMENTING})
+
+    def test_section_out_of_place_in_greek(self):
+        # «ΤΜΗΜΑ 3» главы XI в el вынесен на верх акта; el взят по виду и номеру
+        version = FragmentVersion.objects.get(
+            fragment__act__uid=IMPLEMENTING,
+            fragment__eid='cpt_XI.sct_3',
+            key='base',
+        )
+        self.assertTrue(version.texts.filter(expression__lang='el').exists())
