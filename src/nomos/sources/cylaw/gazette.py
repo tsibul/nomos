@@ -46,6 +46,11 @@ COLLAPSED_SECOND_RE = re.compile(
 # первая строка вставленной статьи: «Заголовок на поле    7. Текст» / «… 4ΑΑ.-(1) Текст»
 QUOTED_HEADING_RE = re.compile(r'^«[Α-ΩΆ-Ώ][^«»()]{1,29}$')
 QUOTED_ARTICLE_RE = re.compile(r'^\d+[Α-Ω]{0,3}\.(?:-\(\d+\))?\s')
+NARROW_GAP_RE = re.compile(r' {2,}(?=\S)')
+# номер закона на поле внутри цитаты: строкой целиком или перед текстом через 3+ пробела
+LAW_CITATION = r'^\s*\d+\s*(?:\([ΙI]\))?\s+του\s*\d{4}\.?'
+LAW_CITATION_RE = re.compile(LAW_CITATION + r'\s*$')
+LAW_CITATION_PREFIX_RE = re.compile(LAW_CITATION + r'(?=\s{3,}\S)')
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -115,23 +120,59 @@ def neighbour(lines, index, step):
     return ''
 
 
+def margin_run_start(lines, index):
+    """Начало текста над столбцом строк поля: «Ιατροτεχνολογικών», «Προϊόντων και» под
+    строкой «Συμβούλιο      εσωτερικούς κανονισμούς.» — сравнение с первой строкой не из поля."""
+    line = lines[index]
+    indent = len(line) - len(line.lstrip())
+    step = index - 1
+    while step >= 0:
+        above = lines[step]
+        if above.strip():
+            above_indent = len(above) - len(above.lstrip())
+            whole = INNER_GAP_RE.search(above, above_indent) is None
+            if not (whole and len(above.strip()) <= 30 and abs(above_indent - indent) <= 3):
+                return text_start(above)
+        step -= 1
+    return indent
+
+
 def inner_margin(lines, index, column):
     """Поле внутри цитаты: левее текста соседних строк, отбито пробелами.
 
     В цитате с отступом ссылки на законы и Επίσημη Εφημερίδα стоят своей колонкой
     («216(Ι) του 2022    (α)   γονική άδεια …»). Возвращает текст без поля или None."""
     line = lines[index]
+    if LAW_CITATION_RE.match(line):
+        # «22 του 1985» — номер закона на поле, и без «(Ι)»
+        return ''
+    cited = LAW_CITATION_PREFIX_RE.match(line)
+    if cited:
+        # «208(Ι) του 2015.   Νόμου…», «96(Ι) του 2018.     (β) …» — при любом выравнивании
+        return line[cited.end():].strip()
     indent = len(line) - len(line.lstrip())
     match = INNER_GAP_RE.search(line, indent)
+    if match is None:
+        # строка поля целиком: «Τρίτο (Ι):»; столбец поля цитаты бывает и левее колонки
+        # текста акта (60(Ι)/2026, ст. 33Γ: поле на 19, колонка 24, текст цитаты на 42)
+        run_start = margin_run_start(lines, index)
+        if indent < run_start - 8:
+            for gap in NARROW_GAP_RE.finditer(line, indent):
+                left = line[indent:gap.start()]
+                if LABEL_RE.match(left) or ITEM_RE.match(left):
+                    # «(ii)   στην περίπτωση …» — номер пункта, не поле
+                    return None
+                if abs(gap.end() - run_start) <= 2:
+                    # «και σφράγιση των   επιχείρηση-» — узкий разрыв, текст по колонке выше
+                    return line[gap.end():].strip()
+        short = len(line.strip()) <= 30 and '«' not in line and '»' not in line
+        if short and indent < run_start - 8:
+            return ''
     if indent < column - 3 and (match is None or match.end(1) - 1 < column):
         # поле левее колонки текста, заходящее за неё («15(Ι) του 2024.      άδεια …»)
         return None
     around = [text_start(neighbour(lines, index, step)) for step in (-1, 1)]
     if match is None:
-        # строка поля целиком: «Τρίτο (Ι):»
-        short = len(line.strip()) <= 30 and '«' not in line and '»' not in line
-        if short and indent < around[0] - 8:
-            return ''
         return None
     left = line[indent:match.start(1) + 1].strip()
     start = match.end(1) - 1

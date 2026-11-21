@@ -495,7 +495,9 @@ def align_ids(text, el_targets):
     return re.sub(r'<ref id="r(\d+)" to="([^"]*)">', replace, text)
 
 
-TEXT_RE = re.compile(r'(<text\b[^>]*>)(.*?)(</text>)', re.S)
+# «<text … />» (запись только с заголовком) — не начало текста: иначе тело следующей
+# записи размечается по её ключу и целям el
+TEXT_RE = re.compile(r'(<text\b[^>]*(?<!/)>)(.*?)(</text>)', re.S)
 P_RE = re.compile(r'(<p>)(.*?)(</p>)', re.S)
 ATTR_RE = re.compile(r'\b(fragment|version)="([^"]*)"')
 
