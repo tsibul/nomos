@@ -148,7 +148,7 @@ class GazetteParser:
     def feed(self, margin, body):
         if body and self.quote_depth == 0:
             match = ARTICLE_RE.match(body)
-            if match and match.group('num') == str(self.expected):
+            if match and self.is_next_article(int(match.group('num')), margin):
                 self.open_article(match.group('num'), margin)
                 body = match.group('rest')
                 margin = ''
@@ -191,6 +191,14 @@ class GazetteParser:
         ):
             self.flush()
 
+    def is_next_article(self, num, margin):
+        """Следующая статья; закон может пропустить номер (244(Ι)/2025: за 13 идёт 16) —
+        тогда номер не дальше двух вперёд и у статьи заголовок на поле."""
+        if num == self.expected:
+            return True
+        skipped = self.expected < num <= self.expected + 2
+        return skipped and not self.legacy and bool(margin.strip())
+
     def after_colon(self):
         last = self.paragraph[-1] if self.paragraph else self.last_text
         return last.rstrip().endswith(':')
@@ -211,7 +219,7 @@ class GazetteParser:
         self.flush()
         self.article = self.root.add(Node(kind='art', num=num))
         self.point = None
-        self.expected += 1
+        self.expected = int(num) + 1
         self.heading_open = True
         if margin:
             self.add_heading(margin)

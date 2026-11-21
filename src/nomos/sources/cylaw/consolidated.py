@@ -72,11 +72,23 @@ PART_RE = re.compile(r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>[IVXΙΧΑ]+)\s*:?\s*(
 SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
+# «(9A). 1.- …» — номер статьи в скобках, εδάφιο через точку (118(Ι)/2002, ст. 9Α)
+BRACKETED_TOP_RE = re.compile(
+    r'^\((?P<num>\d+[Α-ΩA-Z]{1,3})\)\.\s*(?P<sub>\d+)\.\s*[-—–―]+\s*(?P<rest>.*)$'
+)
+# «9Β(1) Ανεξαρτήτως …» — без точки после номера (118(Ι)/2002); только с буквой в номере,
+# иначе спутается со ссылкой «4(1) του Ν. …»
+UNDOTTED_TOP_RE = re.compile(r'^(?P<num>\d+[Α-ΩA-Z]{1,3})\((?P<sub>\d+)\)\s+(?P<rest>.*)$')
+LATIN_TO_GREEK = str.maketrans('ABEZHIKMNOPTYX', 'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ')
 
 # акты, собранные прежним разбором: перенос страницы посреди фразы закрывает абзац,
 # пункт в строке статьи («42.—(1)(α)») не отделяется. Их фрагменты и перевод привязаны
 # к прежнему разбору; новые акты (4/1978 и следующие) собираются новым
 LEGACY_ACTS = {'cy/law/2000/95_I'}
+# акты, собранные до 118(Ι)/2002: правила, добавленные для него («39Α.-(1)» после
+# переноса страницы, «ΜΕΡΟΣ» левее середины, «(ν)» после «(iv)»), меняют их фрагменты,
+# к которым привязан перевод; для них не применяются
+BEFORE_118_ACTS = {'cy/law/2000/95_I', 'cy/law/2010/59_I'}
 
 HEADING_MAX = 110
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
@@ -100,6 +112,16 @@ def roman_schedule(block):
 def is_page_furniture(line):
     # '\f' — разрыв страницы в строках сводки Leginet
     return line == leginet.PAGE_BREAK or bool(HEADER_RE.match(line))
+
+
+def normalize_top(block):
+    """«(9A). 1.- Δαπάνες …», «9Β(1) …» → «9Α.-(1) …»: обычный вид начала статьи."""
+    match = BRACKETED_TOP_RE.match(block.text) or UNDOTTED_TOP_RE.match(block.text)
+    if match is None:
+        return block
+    num = match.group('num').translate(LATIN_TO_GREEK)
+    text = '%s.-(%s) %s' % (num, match.group('sub'), match.group('rest'))
+    return layout.Block(block.line, block.indent, text)
 
 
 def is_history(text):
@@ -248,6 +270,7 @@ def join_broken_headings(blocks):
 class Parser:
     def __init__(self, act_uid):
         self.legacy = act_uid in LEGACY_ACTS
+        self.earlier = act_uid in BEFORE_118_ACTS
         self.root = Node('act', token=act_uid)
         self.stack = []
         self.container = self.root
@@ -264,6 +287,7 @@ class Parser:
             lines,
             skip=is_page_furniture,
             join_pages=not self.legacy,
+            dashed=not self.earlier,
         )
         texts = [block.text for block in all_blocks]
         if 'Προοίμιο' in texts:
@@ -277,7 +301,11 @@ class Parser:
             start = texts.index(HISTORY_HEADING) + 1
             while start < len(texts) and is_history(texts[start]):
                 start += 1
-        all_blocks = [part for block in all_blocks[start:] for part in split_history(block)]
+        all_blocks = [
+            part if self.earlier else normalize_top(part)
+            for block in all_blocks[start:]
+            for part in split_history(block)
+        ]
         all_blocks = join_broken_headings(all_blocks)
         # приложения — после «ΠΑΡΑΡΤΗΜΑΤΑ» или сразу с «ΠΙΝΑΚΑΣ Ι» без общего заголовка
         self.has_schedules = any(
@@ -319,7 +347,7 @@ class Parser:
             self.in_schedules = True
         if self.in_schedules and self.feed_schedule_heading(text, block):
             return
-        if not self.in_schedules and block.indent >= 14 and PART_RE.match(text):
+        if not self.in_schedules and self.is_part(block):
             self.open_part(text)
             return
         if not self.in_schedules and block.indent >= 25 and is_group_heading(text):
@@ -392,6 +420,15 @@ class Parser:
         self.container = node
         self.stack = [node]
         self.pending_heading = []
+
+    def is_part(self, block):
+        """«ΜΕΡΟΣ IX …» по центру; длинное заглавное название, перенесённое на несколько
+        строк, начинается левее (118(Ι)/2002)."""
+        if not PART_RE.match(block.text):
+            return False
+        if block.indent >= 14:
+            return True
+        return not self.earlier and block.indent > MARGIN and block.text.isupper()
 
     def open_part(self, text):
         part = PART_RE.match(text)
@@ -473,6 +510,8 @@ class Parser:
             if name == 'greek' and self.is_roman_in_greek(num):
                 name = 'roman'
                 num = num.replace('ι', 'i')
+            if name == 'greek' and self.is_roman_five(num):
+                name = 'roman'
             if name == 'roman':
                 # «(νii)»: греческая ню вместо латинской «v»
                 num = num.replace('ν', 'v')
@@ -495,6 +534,13 @@ class Parser:
         if len(self.stack) > 1 and self.stack[-1].level >= LEVELS['greek']:
             siblings = [node.num_plain() for node in self.stack[-2].children]
         return 'θ' not in siblings
+
+    def is_roman_five(self, num):
+        """«(ν)» греческой ню после «(iv)» — римская «(v)» (118(Ι)/2002, ст. 2)."""
+        if self.earlier or num != 'ν':
+            return False
+        previous = self.same_style_node('roman')
+        return previous is not None and previous.num_plain() == 'iv'
 
     def continues_schedule_numbering(self, num):
         if not self.in_schedules or not num.isdigit():
@@ -604,6 +650,11 @@ class Parser:
         self.attach_paragraph(block.text, block.indent)
 
     def attach_paragraph(self, text, indent):
+        if self.starts_definition(text):
+            # «κηδεμόνας» после «κάτοικος … (β) …»: термины и пункты определения стоят
+            # с одним отступом; новое определение — снова у владельца определений
+            while len(self.stack) > 1 and not self.owns_definitions(self.stack[-1]):
+                self.stack.pop()
         if self.in_schedules and text.startswith(EXCEPTION_START) and len(self.stack) > 1:
             # каждая оговорка «Εξαιρούνται…» вводилась и истекала отдельно — свой фрагмент
             del self.stack[2:]
@@ -635,6 +686,20 @@ class Parser:
             return
         # каждый следующий абзац без номера — свой фрагмент (ответ координатора на вопрос 1)
         self.open_unnumbered(owner, text, indent)
+
+    def starts_definition(self, text):
+        article = self.current_top()
+        if self.earlier or self.in_schedules or article is None:
+            return False
+        if article.num_plain() != '2':
+            return False
+        return bool(TERM_RE.match(text)) and article is not self.stack[-1]
+
+    def owns_definitions(self, node):
+        """Ст. 2 или её εδάφιο (1): определения — их абзацы."""
+        if node.kind == 'art':
+            return True
+        return node.kind == 'par' and node.parent.kind == 'art' and node.num_plain() == '1'
 
     def closes_list(self, text):
         """Абзац после последнего пункта перечня, введённого абзацем без номера."""
