@@ -65,6 +65,7 @@ def act_list(request, jurisdiction=None):
             'section': section,
             'is_home': jurisdiction is None,
             'has_acts': bool(acts),
+            'disclaimer': notices.disclaimer(jurisdiction),
         },
     )
 
@@ -232,6 +233,7 @@ def base_context(request, route):
         'back': back_link(request, route.lang, route.chain),
         'chain_start': chain_start_link(route),
         'source_credit': source_credit(act),
+        'disclaimer': notices.disclaimer(act.jurisdiction),
     }
 
 
