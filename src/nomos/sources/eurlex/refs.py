@@ -40,6 +40,8 @@ GREEK_VALUES = [
 ]
 
 EN_NUM = r'\d+[a-z]{0,2}\b(?:\(\w{1,4}\))*'
+# «(4)» в «Article 284(3) and (4)» — пункт той же статьи
+EN_SUB = r'(?:\(\w{1,4}\))+'
 EN_OF = (
     r' of (?:this Regulation|this Directive|Directive 2006/112/EC|that Directive'
     r'|(?:Council |Commission )?(?:Implementing )?(?:Directive|Regulation|Decision)'
@@ -49,7 +51,7 @@ EN_ARTICLE = re.compile(
     r'(?P<pre>points? \((?P<pnt>[a-z0-9]{1,4})\)(?:(?:, | and | or )\([a-z0-9]{1,4}\))*'
     r'(?: of)?(?: the \w+ subparagraph(?: of)?)? )?'
     r'(?P<word>Articles?) '
-    r'(?P<list>' + EN_NUM + r'(?:(?:, | and | or | to )' + EN_NUM + r')*)'
+    r'(?P<list>' + EN_NUM + r'(?:(?:, | and | or | to )(?:' + EN_NUM + r'|' + EN_SUB + r'))*)'
     r'(?P<of>' + EN_OF + r')?'
 )
 EN_PARAGRAPH = re.compile(
@@ -280,8 +282,17 @@ class Linker:
         items = list(self.list_items(match))
         spans = []
         point = match.group('pnt')
+        previous = ''
+        paragraphs = False
         for index, (start, end, token) in enumerate(items):
-            eid = self.article_eid(token)
+            eid = self.sibling_eid(token, previous, paragraphs)
+            if eid is None and token.startswith('('):
+                # «Article 5 and (b)»: продолжать нечего
+                break
+            if eid is None:
+                eid = self.article_eid(token)
+                paragraphs = 'παράγραφοι' in token
+            previous = eid
             if index == 0:
                 start = match.start()
                 if point and len(items) == 1:
@@ -291,6 +302,29 @@ class Linker:
                 end = match.end('of')
             spans.append((start, end, Target(act, eid)))
         return spans
+
+    def sibling_eid(self, token, previous, paragraphs):
+        """Номер перечня, продолжающий предыдущий адрес: «Article 284(3) and (4)» → par_4,
+        «Article 98(1)(a) and (b)» → pnt_b, «άρθρο 98 παράγραφοι 1 και 2» → par_2.
+        None — номер статьи."""
+        if not previous:
+            return None
+        levels = previous.split('.')
+        if self.lang == 'el':
+            if not paragraphs or not re.fullmatch(r'\d+[α-ω]*', token):
+                return None
+            numbers = [el_token(token)]
+        else:
+            if not token.startswith('('):
+                return None
+            numbers = re.findall(r'\((\w+)\)', token)
+        if len(numbers) >= len(levels):
+            return None
+        head = levels[:len(levels) - len(numbers)]
+        tail = levels[len(levels) - len(numbers):]
+        for level, number in zip(tail, numbers):
+            head.append('%s_%s' % (level.split('_')[0], number))
+        return '.'.join(head)
 
     def list_items(self, match):
         """(начало, конец, номер) каждого номера в группе list."""
