@@ -4,6 +4,7 @@ import html
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -16,7 +17,13 @@ class Block:
 
 
 def pdf_lines(path):
-    """Строки PDF с сохранённой раскладкой (poppler pdftotext)."""
+    """Строки PDF с сохранённой раскладкой (poppler pdftotext).
+
+    Скан без текстового слоя заменяется выверенной расшифровкой `.txt` в той же
+    раскладке: поля слева, текст с отступом.
+    """
+    if Path(path).suffix == '.txt':
+        return Path(path).read_text(encoding='utf-8').split('\n')
     result = subprocess.run(
         ['pdftotext', '-layout', str(path), '-'],
         check=True,

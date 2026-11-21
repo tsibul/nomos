@@ -15,6 +15,9 @@ GAP_RE = re.compile(r'\S(\s{3,})\S')
 FIRST_ARTICLE_RE = re.compile(r'(?<!\S)(?P<num>[12])\.\s*(Ο|Η|Το|Οι)\s+παρ')
 ARTICLE_RE = re.compile(r'^(?P<num>\d+)\.\s*(?:[-—–]\s*)?(?P<rest>.*)$')
 POINT_RE = re.compile(r'^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$')
+# строка поля из одного номера закона: «82(I) του 2020», «25(Ι) του 2022.»
+LAW_NUMBER_RE = re.compile(r'^\s*\d+\s*\([ΙI]\)\s+του\s+\d{4}\.?\s*$')
+SUBSECTION_RE = re.compile(r'^\(\d+\)\s')
 ITEM_RE = re.compile(r'^(«\s*)?(\(\w{1,5}\)|\d+[Α-Ω]{0,3}\.)')
 END_RE = re.compile(r'^\s*(_{5,}|[TΤ]υπώθηκε)')
 HEADER_RE = re.compile(r'^\s*(Ε\.Ε\.\s*Παρ\.|Αρ\.\s*\d+,|Αριθμός\s+\d+|\d{3,5}\s*$)')
@@ -27,7 +30,7 @@ def split_line(line, column):
     """Строка → (поле, текст). Короткая строка без разрыва левее текста — поле."""
     if not line.strip():
         return '', ''
-    if DATE_RE.match(line):
+    if DATE_RE.match(line) or LAW_NUMBER_RE.match(line):
         return line.strip(), ''
     match = GAP_RE.search(line)
     if match and match.start(1) < column:
@@ -93,6 +96,10 @@ class GazetteParser:
             self.add_heading(margin)
         if not body:
             return
+        # «(2) …» вне цитаты после конца предложения — новое εδάφιο, новый абзац
+        if self.paragraph and self.quote_depth == 0 and SUBSECTION_RE.match(body):
+            if self.ends_sentence():
+                self.flush()
         if self.paragraph and self.quote_depth > 0 and ITEM_RE.match(body):
             if self.ends_sentence():
                 self.flush()
@@ -104,7 +111,11 @@ class GazetteParser:
             self.flush()
 
     def ends_sentence(self):
-        return not self.paragraph or layout.ends_sentence(self.paragraph[-1])
+        if not self.paragraph:
+            return True
+        # «και» на своей строке; ano teleia (U+0387) — как «·»
+        last = ' ' + self.paragraph[-1].rstrip().replace('\u0387', '·')
+        return layout.ends_sentence(last)
 
     def open_article(self, num, margin):
         self.flush()
