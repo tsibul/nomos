@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from django.contrib.auth.models import User
 from django.test import RequestFactory, TestCase, override_settings
+from django.test.utils import override_script_prefix
 from django.utils import translation
 
 from nomos.acts.models import (
@@ -1281,3 +1282,214 @@ class EuDisclaimerTests(EuOriginalLangTests):
         self.assertIn('Официальном журнале', self.footer(self.client.get('/eu/')))
         self.assertIn('Республики Кипр', self.footer(self.client.get('/')))
         self.assertEqual(notices.disclaimer('cy'), notices.DISCLAIMER)
+
+
+PREFIX = '/resources/nomos'
+
+# Сайт в подпути: так settings.py выводит значения из NOMOS_URL_PREFIX=/resources/nomos.
+# Прокси передаёт запрос без подпути — тестовый клиент тоже запрашивает пути от корня.
+prefix_settings = override_settings(
+    NOMOS_URL_PREFIX=PREFIX,
+    FORCE_SCRIPT_NAME=PREFIX,
+    STATIC_URL=PREFIX + '/static/',
+    SESSION_COOKIE_PATH=PREFIX + '/',
+    CSRF_COOKIE_PATH=PREFIX + '/',
+)
+
+
+
+def under_prefix(cls):
+    """Настройки подпути и префикс reverse(): тестовый клиент, в отличие от WSGI-сервера,
+    префикс адресов из FORCE_SCRIPT_NAME сам не ставит."""
+    return prefix_settings(override_script_prefix(PREFIX + '/')(cls))
+
+
+ADDRESS_RE = re.compile(r'(?:href|action|src)="([^"]*)"')
+
+
+HOME_URL = 'https://vatelse.eu/'
+
+HOME_LINK_RE = re.compile(r'href="([^"]*)"\s+data-home-link\s*>\s*([^<]*?)\s*</a>')
+
+
+class UrlPrefixMixin:
+    """Ссылки, перенаправления и cookie сайта: в корне домена и в подпути."""
+
+    prefix = ''
+
+    setUpTestData = classmethod(ViewerTests.setUpTestData.__func__)
+    add_version = classmethod(ViewerTests.add_version.__func__)
+
+    def site(self, path):
+        return self.prefix + path
+
+    def assert_addresses_in_site(self, page):
+        """Все адреса сайта на странице начинаются с подпути; чужих путей от «/» нет."""
+        response = self.client.get(page)
+        self.assertEqual(response.status_code, 200, page)
+        for address in ADDRESS_RE.findall(response.content.decode()):
+            address = html.unescape(address)
+            if address == '' or address.startswith(('?', '#', 'http://', 'https://', 'mailto:')):
+                continue
+            self.assertTrue(address.startswith(self.site('/')), f'{page}: {address}')
+            self.assertFalse(address.startswith('//'), f'{page}: {address}')
+
+    def test_page_addresses(self):
+        self.assert_addresses_in_site('/login/')
+        self.client.force_login(self.reader)
+        pages = [
+            '/',
+            '/cy/',
+            '/about/',
+            ACT_URL,
+            ACT_URL + 'art_1/',
+            ACT_URL + '@2025-06-01/art_1/?orig=1',
+            ACT_URL + 'art_1.par_1/history/',
+        ]
+        for page in pages:
+            with self.subTest(page=page):
+                self.assert_addresses_in_site(page)
+
+    def test_menu_and_language_links(self):
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, f'href="{self.site("/cy/")}')
+        self.assertContains(response, f'href="{self.site("/about/")}')
+        self.assertContains(response, f'href="{self.site(ACT_URL + "art_1.par_1/history/")}')
+        self.assertContains(response, 'menu__link--current')
+        # статика и сборка Vite (в разработке — адрес dev-сервера с тем же путём)
+        self.assertContains(response, f'{self.site("/static/")}js/main')
+
+    def test_reference_leads_there_and_back(self):
+        text = FragmentText.objects.get(version=self.new)
+        text.body = '<p>Βλ. <ref id="r1">άρθρο 2</ref>.</p>'
+        text.save()
+        Reference.objects.create(
+            from_text=text,
+            anchor='r1',
+            to_act=self.amending,
+            to_fragment=self.amending.fragments.get(eid='art_2'),
+            resolved=True,
+        )
+        page = ACT_URL + '@2025-06-01/art_1/'
+        response = self.client.get(page)
+        found = re.search(r'<a class="ref" id="[^"]*" href="([^"]*)"', response.content.decode())
+        href = html.unescape(found.group(1))
+        self.assertTrue(href.startswith(self.site('/cy/law/2024/2_I/@2025-06-01/art_2/?')))
+        # прокси снимает подпуть; страница цели ведёт назад, к месту ссылки
+        response = self.client.get(href.removeprefix(self.prefix))
+        self.assertContains(response, f'href="{self.site(page)}#ref-art_1.par_1-r1"')
+
+    def test_old_date_redirects_inside_site(self):
+        response = self.client.get(ACT_URL + 'art_1/', {'on': '2024-06-01'})
+        self.assertTrue(response['Location'].startswith(self.site(ACT_URL + '@2024-06-01/')))
+
+    def test_login_logout_and_cookies(self):
+        User.objects.create_user('editor', password='test-password-1')
+        response = self.client.get('/login/')
+        self.assertEqual(response.cookies['csrftoken']['path'], self.site('/'))
+        credentials = {'username': 'editor', 'password': 'test-password-1'}
+        target = self.site(ACT_URL + 'art_1/')
+        response = self.client.post('/login/', {**credentials, 'next': target})
+        self.assertRedirects(response, target, fetch_redirect_response=False)
+        self.assertEqual(response.cookies['sessionid']['path'], self.site('/'))
+        self.assertContains(
+            self.client.get('/'),
+            f'action="{self.site("/logout/")}"',
+        )
+        response = self.client.post('/logout/')
+        self.assertRedirects(response, self.site('/'), fetch_redirect_response=False)
+        self.client.logout()
+        response = self.client.post('/login/', credentials)
+        self.assertRedirects(response, self.site('/'), fetch_redirect_response=False)
+
+    @override_settings(NOMOS_HOME_URL=HOME_URL, NOMOS_HOME_LABEL='VATelse')
+    def test_home_link(self):
+        """Ссылка на внешний сайт: адрес абсолютный, подпуть к нему не добавляется."""
+        for page in ['/', '/about/', ACT_URL]:
+            with self.subTest(page=page):
+                response = self.client.get(page)
+                links = HOME_LINK_RE.findall(response.content.decode())
+                self.assertEqual(links, [(HOME_URL, 'VATelse')])
+
+    def test_no_home_link(self):
+        """Адрес не задан — ссылки нет."""
+        for page in ['/', '/about/', ACT_URL]:
+            with self.subTest(page=page):
+                self.assertNotContains(self.client.get(page), 'data-home-link')
+
+    def test_robots(self):
+        response = self.client.get('/robots.txt')
+        self.assertEqual(response.content.decode(), f'User-agent: *\nDisallow: {self.site("/")}\n')
+
+
+class RootUrlTests(UrlPrefixMixin, TestCase):
+    """Сайт в корне домена (NOMOS_URL_PREFIX пуст)."""
+
+
+@under_prefix
+class PrefixUrlTests(UrlPrefixMixin, TestCase):
+    """Сайт в подпути /resources/nomos."""
+
+    prefix = PREFIX
+
+    def test_return_address_outside_site_is_ignored(self):
+        response = self.client.get('/cy/law/2024/2_I/art_2/', {'from': ACT_URL + 'art_1/'})
+        self.assertNotContains(response, 'back-ref')
+
+
+class UrlPrefixSettingsTests(TestCase):
+    """settings.py: подпуть из .env без лишних слешей; пусто — корень."""
+
+    def settings_for(self, value):
+        env = dict(os.environ, NOMOS_URL_PREFIX=value)
+        env.pop('DJANGO_SETTINGS_MODULE', None)
+        code = (
+            'from nomos import settings as s; '
+            'print(repr(s.NOMOS_URL_PREFIX), s.FORCE_SCRIPT_NAME, s.STATIC_URL, '
+            's.SESSION_COOKIE_PATH, s.CSRF_COOKIE_PATH)'
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split()
+
+    def test_prefix(self):
+        expected = [repr(PREFIX), PREFIX, PREFIX + '/static/', PREFIX + '/', PREFIX + '/']
+        self.assertEqual(self.settings_for('/resources/nomos/'), expected)
+        self.assertEqual(self.settings_for('resources/nomos'), expected)
+
+    def test_root(self):
+        self.assertEqual(self.settings_for(''), ["''", 'None', '/static/', '/', '/'])
+
+
+class HomeLinkSettingsTests(TestCase):
+    """settings.py: ссылка на внешний сайт из .env; подпись по умолчанию — адрес."""
+
+    def settings_for(self, url, label):
+        env = dict(os.environ, NOMOS_HOME_URL=url, NOMOS_HOME_LABEL=label)
+        env.pop('DJANGO_SETTINGS_MODULE', None)
+        code = (
+            'from nomos import settings as s; '
+            'print(repr((s.NOMOS_HOME_URL, s.NOMOS_HOME_LABEL)))'
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_values(self):
+        self.assertEqual(self.settings_for(' https://vatelse.eu/ ', 'VATelse'),
+                         repr(('https://vatelse.eu/', 'VATelse')))
+        self.assertEqual(self.settings_for('https://vatelse.eu/', ''),
+                         repr(('https://vatelse.eu/', 'https://vatelse.eu/')))
+        self.assertEqual(self.settings_for('', ''), repr(('', '')))
