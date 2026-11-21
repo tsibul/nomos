@@ -9,6 +9,7 @@ class Fragment(models.Model):
         TITLE = 'tis', 'Раздел'
         CHAPTER = 'cpt', 'Глава'
         SECTION = 'sct', 'Секция'
+        SUBSECTION = 'sbs', 'Подсекция'
         ARTICLE = 'art', 'Статья'
         PARAGRAPH = 'par', 'Пункт'
         SUBPARAGRAPH = 'sub', 'Подпункт / абзац'
