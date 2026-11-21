@@ -421,13 +421,6 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(texts['art_42.par_1.pnt_b'], ['άλλο.'])
         self.assertEqual(texts['art_51A.par_1.pnt_a'], ['Ένα.'])
 
-    def test_legacy_act_keeps_point_in_paragraph(self):
-        """95(Ι)/2000 собран прежним разбором: «42.―(1)(α)» — текст εδαφίου (1)."""
-        root = parse_body('42.―(1)(α) Πρόσωπο:', act_uid='cy/law/2000/95_I')
-        texts = {node.eid: node.paragraphs for node in root.walk() if node.eid}
-        self.assertEqual(texts['art_42.par_1'], ['(α) Πρόσωπο:'])
-        self.assertNotIn('art_42.par_1.pnt_a', texts)
-
     def test_definitions_in_article_without_subsections(self):
         """Ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи."""
         root = parse_body(
@@ -515,19 +508,6 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(
             [block.text for block in blocks],
             ['ψηφισθέντος είτε προ είτε κατόπιν.', 'Νοείται ότι άλλο', 'Άλλος.'],
-        )
-
-    def test_page_break_closes_block_without_join_pages(self):
-        """Прежний разбор (95(Ι)/2000): пустая строка перед колонтитулом закрывает блок."""
-        header = 'https://www.cylaw.org/nomoi/enop/non-ind/2000_1_95/full.html'
-        blocks = layout.blocks(
-            ['    ψηφισθέντος είτε προ', '', header, '    είτε κατόπιν.'],
-            skip=consolidated.is_page_furniture,
-            join_pages=False,
-        )
-        self.assertEqual(
-            [block.text for block in blocks],
-            ['ψηφισθέντος είτε προ', 'είτε κατόπιν.'],
         )
 
 
@@ -976,6 +956,98 @@ class LostUidsTests(SimpleTestCase):
             # art_2 с переводом и art_3 без него пропали из сборки
             lost = texts_xml.lost_uids(root, {'art_1': 'aaaaaaaaaa'})
         self.assertEqual(lost, [('art_2', 'bbbbbbbbbb')])
+
+
+class Place:
+    """Фрагмент нового разбора для follow_texts: только eid."""
+
+    def __init__(self, eid):
+        self.eid = eid
+
+
+class FollowTextsTests(SimpleTestCase):
+    """Пересборка новым разбором: uid и перевод идут за текстом."""
+
+    info = texts_xml.ActInfo(uid='cy/law/2000/1_I', jurisdiction='cy', kind='law')
+
+    def test_point_from_article_line_takes_uid(self):
+        """«42.—(1)(α)»: текст εδαφίου ушёл в пункт (α) — пункт получает uid εδαφίου."""
+        paragraph = Place('art_42.par_1')
+        point = Place('art_42.par_1.pnt_a')
+        uids = {paragraph: 'aaaaaaaaaa', point: 'newnewnewn'}
+        old = {'aaaaaaaaaa': {'base': '(α) Πρόσωπο:'}}
+        new = {paragraph: {}, point: {'base': 'Πρόσωπο:'}}
+        nums = {paragraph: '(1)', point: '(α)'}
+        eids = {'aaaaaaaaaa': 'art_42.par_1'}
+        texts_xml.follow_texts(self.info, uids, new, old, nums, eids)
+        self.assertEqual(uids[point], 'aaaaaaaaaa')
+        self.assertNotIn(uids[paragraph], ('aaaaaaaaaa', 'newnewnewn'))
+
+    def test_same_text_goes_to_closest_eid(self):
+        """Одинаковый текст в двух местах: uid — того, чей прежний eid ближе."""
+        first = Place('sch_10.par_12.sub_1.pnt_a.pnt_i')
+        second = Place('sch_10.par_13.sub_1.pnt_a.pnt_i')
+        uids = {first: 'new1new1ne', second: 'new2new2ne'}
+        old = {'aaaaaaaaaa': {'base': 'ή'}, 'bbbbbbbbbb': {'base': 'ή'}}
+        new = {first: {'base': 'ή'}, second: {'base': 'ή'}}
+        nums = {first: '(i)', second: '(i)'}
+        eids = {
+            'aaaaaaaaaa': 'sch_10.par_12.sub_1.pnt_i',
+            'bbbbbbbbbb': 'sch_10.par_13.sub_1.pnt_i',
+        }
+        texts_xml.follow_texts(self.info, uids, new, old, nums, eids)
+        self.assertEqual(uids[first], 'aaaaaaaaaa')
+        self.assertEqual(uids[second], 'bbbbbbbbbb')
+
+    def test_unchanged_text_keeps_uid(self):
+        node = Place('art_1')
+        uids = {node: 'aaaaaaaaaa'}
+        old = {'aaaaaaaaaa': {'base': 'Ένα.'}, 'bbbbbbbbbb': {'base': 'Ένα.'}}
+        texts_xml.follow_texts(
+            self.info, uids, {node: {'base': 'Ένα.'}}, old, {node: '1'}, {},
+        )
+        self.assertEqual(uids[node], 'aaaaaaaaaa')
+
+    def test_page_break_merge_joins_translation(self):
+        """Абзац, разорванный переносом страницы, склеен: перевод хвоста — в конец абзаца."""
+        parent = Place('art_38.par_2')
+        uids = {parent: 'aaaaaaaaaa'}
+        old = {'aaaaaaaaaa': {'base': 'επιχείρηση που'}, 'bbbbbbbbbb': {'base': 'ασκείται.'}}
+        new = {parent: {'base': 'επιχείρηση που ασκείται.'}}
+        merged = texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb'])
+        self.assertEqual(merged, [('aaaaaaaaaa', 'bbbbbbbbbb')])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'ru.xml').write_text(
+                '<texts>\n'
+                '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+                '    <p>предприятие,</p>\n'
+                '  </text>\n'
+                '  <text fragment="bbbbbbbbbb" version="base" review="draft">\n'
+                '    <p>осуществляемое.</p>\n'
+                '    <p>Второй абзац.</p>\n'
+                '  </text>\n'
+                '</texts>\n',
+                encoding='utf-8',
+            )
+            texts_xml.merge_translations(root, merged)
+            result = (root / 'ru.xml').read_text(encoding='utf-8')
+        self.assertEqual(
+            result,
+            '<texts>\n'
+            '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+            '    <p>предприятие, осуществляемое.</p>\n'
+            '    <p>Второй абзац.</p>\n'
+            '  </text>\n'
+            '</texts>\n',
+        )
+
+    def test_not_continuation_not_merged(self):
+        parent = Place('art_1')
+        uids = {parent: 'aaaaaaaaaa'}
+        old = {'aaaaaaaaaa': {'base': 'Ένα.'}, 'bbbbbbbbbb': {'base': 'Δύο.'}}
+        new = {parent: {'base': 'Ένα.'}}
+        self.assertEqual(texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb']), [])
 
 
 GUIDE = 'cy/instr/2024/vat_return_guide'

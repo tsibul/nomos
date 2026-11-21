@@ -83,10 +83,6 @@ BRACKETED_TOP_RE = re.compile(
 UNDOTTED_TOP_RE = re.compile(r'^(?P<num>\d+[Α-ΩA-Z]{1,3})\((?P<sub>\d+)\)\s+(?P<rest>.*)$')
 LATIN_TO_GREEK = str.maketrans('ABEZHIKMNOPTYX', 'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ')
 
-# акты, собранные прежним разбором: перенос страницы посреди фразы закрывает абзац,
-# пункт в строке статьи («42.—(1)(α)») не отделяется. Их фрагменты и перевод привязаны
-# к прежнему разбору; новые акты (4/1978 и следующие) собираются новым
-LEGACY_ACTS = {'cy/law/2000/95_I'}
 # акты, собранные до 118(Ι)/2002: правила, добавленные для него («39Α.-(1)» после
 # переноса страницы, «ΜΕΡΟΣ» левее середины, «(ν)» после «(iv)»), меняют их фрагменты,
 # к которым привязан перевод; для них не применяются
@@ -292,7 +288,6 @@ def join_broken_headings(blocks):
 
 class Parser:
     def __init__(self, act_uid):
-        self.legacy = act_uid in LEGACY_ACTS
         self.earlier = act_uid in BEFORE_118_ACTS
         self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
         self.root = Node('act', token=act_uid)
@@ -310,7 +305,6 @@ class Parser:
         all_blocks = layout.blocks(
             lines,
             skip=is_page_furniture,
-            join_pages=not self.legacy,
             dashed=not self.earlier,
         )
         texts = [block.text for block in all_blocks]
@@ -502,11 +496,7 @@ class Parser:
                 node = self.open_item('arabic', '(%s)' % top.group('sub'), block)
                 # «42.—(1)(α)»: и пункт в той же строке
                 inner_name, inner = match_item(rest)
-                if (
-                    not self.legacy
-                    and inner_name
-                    and LEVELS[inner_name] > LEVELS['arabic']
-                ):
+                if inner_name and LEVELS[inner_name] > LEVELS['arabic']:
                     node = self.open_item(inner_name, '(%s)' % inner.group('num'), block)
                     rest = inner.group('rest')
             self.set_text(node, rest)
