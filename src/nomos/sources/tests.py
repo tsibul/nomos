@@ -1636,3 +1636,99 @@ class IncomeTaxLawTests(TestCase):
         eid = 'art_8.par_11.sub_2'
         self.assertIsNone(self.version(eid, datetime.date(2025, 12, 31)))
         self.assertEqual(self.version(eid, datetime.date(2026, 1, 1)).state, 'active')
+
+
+class DefenceContributionParsingTests(SimpleTestCase):
+    """Правила разбора, добавленные для 117(Ι)/2002."""
+
+    def test_definition_without_closing_quote(self):
+        """«αναδιάρθρωση σημαίνει … — термин без закрывающей кавычки."""
+        self.assertEqual(
+            consolidated.match_term('«αναδιάρθρωση σημαίνει την διάθεση').group('term'),
+            'αναδιάρθρωση',
+        )
+        self.assertIsNone(consolidated.match_term('«αναδιάρθρωση της οφειλής'))
+        root = parse_body(
+            '2. Στον παρόντα Νόμο-',
+            '«αναδιάρθρωση σημαίνει την διάθεση ακίνητης ιδιοκτησίας·',
+            '«έτος» σημαίνει το φορολογικό έτος.',
+            '3. Άλλο.',
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        definitions = [node.eid for node in article.children if node.kind == 'def']
+        self.assertEqual(definitions, ['art_2.def_anadiarthrwsh', 'art_2.def_etos'])
+
+
+DEFENCE_LAW = 'cy/law/2002/117_I'
+
+
+class DefenceContributionLawTests(TestCase):
+    """Закон о взносе на оборону 117(Ι)/2002 с изменениями 2024–2025 гг."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', DEFENCE_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=DEFENCE_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / DEFENCE_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / DEFENCE_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and ':note →' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+            or 'положения нет' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_restructuring_term_by_laws_165_2024_and_220_2025(self):
+        eid = 'art_2.par_1.def_anadiarthrwsh'
+        self.assertIn('εννέα (9)', self.text(eid, datetime.date(2024, 12, 30)))
+        self.assertIn('δέκα (10)', self.text(eid, datetime.date(2024, 12, 31)))
+        self.assertIn('έντεκα (11)', self.text(eid, datetime.date(2025, 12, 12)))
+
+    def test_article_8A_by_laws_165_2024_and_220_2025(self):
+        self.assertIsNone(self.version('art_8A', datetime.date(2024, 12, 30)))
+        eid = 'art_8A.pnt_a'
+        self.assertIn('31η Δεκεμβρίου 2025', self.text(eid, datetime.date(2025, 12, 11)))
+        self.assertIn('31η Δεκεμβρίου 2026', self.text(eid, datetime.date(2025, 12, 12)))
+
+    def test_new_articles_by_law_245_2025(self):
+        for eid in ('art_3A', 'art_3B', 'art_3G', 'art_3D', 'art_4A', 'art_4B', 'art_4.par_1A'):
+            self.assertIsNone(self.version(eid, datetime.date(2025, 12, 31)), eid)
+            self.assertEqual(self.version(eid, datetime.date(2026, 1, 1)).state, 'active', eid)
+
+    def test_penalties_by_law_245_2025(self):
+        self.assertIn('πεντακόσιες λίρες', self.text('art_6.par_1', datetime.date(2025, 12, 31)))
+        self.assertIn('(€5.000)', self.text('art_6.par_1', datetime.date(2026, 1, 1)))
+        eid = 'art_4.par_2.sub_1'
+        self.assertIn('ή τα ενοίκια', self.text(eid, datetime.date(2025, 12, 31)))
+        self.assertNotIn('ή τα ενοίκια', self.text(eid, datetime.date(2026, 1, 1)))
