@@ -68,6 +68,23 @@ class Route:
     history: bool = False
     # язык задан в адресе явно (/el/, /ru/), а не взят по умолчанию
     explicit_lang: bool = False
+    # начало цепочки переходов по ссылкам: {'start': адрес, 'start_at': место} (views.read)
+    chain: dict = field(default_factory=dict)
+
+    @property
+    def chain_params(self):
+        """Параметры начала цепочки для адресов страницы: `start=…&start_at=…` или пусто."""
+        return urlencode(self.chain)
+
+    @property
+    def chain_tail(self):
+        """То же после других параметров: `&start=…` или пусто."""
+        return '&' + self.chain_params if self.chain else ''
+
+    @property
+    def chain_query(self):
+        """То же со знаком вопроса — хвост адреса без других параметров."""
+        return '?' + self.chain_params if self.chain else ''
 
     @property
     def date(self):
@@ -594,7 +611,8 @@ def render_body(text, route, place=None, marked=True):
 
     place — eid фрагмента. У ссылки в основном тексте (marked) — id «ref-<eid>-<anchor>»:
     на него ведёт «← Назад» со страницы цели. Внутренняя ссылка несёт адрес возврата
-    в параметрах `from` (эта страница) и `at` (место ссылки).
+    в параметрах `from` (эта страница) и `at` (место ссылки), а также начало цепочки
+    переходов (`route.chain`) — для «К началу».
     """
     if text is None:
         return ''
@@ -610,7 +628,8 @@ def render_body(text, route, place=None, marked=True):
             return f'<span class="ref ref--unresolved">{inner}</span>'
         ref_id = f'ref-{place}-{anchor}' if place and marked else None
         if reference.to_act is not None:
-            href += '?' + urlencode({'from': page_url(route), 'at': ref_id or place or ''})
+            params = {'from': page_url(route), 'at': ref_id or place or ''}
+            href += '?' + urlencode(params | route.chain)
         id_attr = f' id="{escape(ref_id)}"' if ref_id else ''
         return f'<a class="ref"{id_attr} href="{escape(href)}">{inner}</a>'
 
@@ -679,6 +698,7 @@ def link_node(node, route):
     act = route.act
     eid = node.fragment.eid
     node.history_url = build_url(act, on=route.on, eid=eid, lang=route.lang, history=True)
+    node.history_url += route.chain_query
     if node.future is not None:
         node.future_url = build_url(
             act,
@@ -686,6 +706,7 @@ def link_node(node, route):
             eid=eid,
             lang=route.lang,
         )
+        node.future_url += route.chain_query
     amendment = node.introduced if node.version is not None else None
     if amendment is not None:
         provision = amendment.amending_fragment

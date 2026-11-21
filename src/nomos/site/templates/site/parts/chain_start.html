@@ -1,0 +1,11 @@
+{# «К началу»: к месту первой ссылки цепочки переходов (views.chain_start_link) #}
+{% if chain_start %}
+  <p class="chain-start">
+    <a
+      class="chain-start__link"
+      href="{{ chain_start.url }}"
+    >
+      {{ chain_start.label }}
+    </a>
+  </p>
+{% endif %}

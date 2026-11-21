@@ -654,3 +654,80 @@ class ViewerTests(TestCase):
         self.add_version(preamble, 'base', base, '', self.el, 'Η Βουλή των Αντιπροσώπων')
         self.assertContains(self.client.get(ACT_URL), 'Προοίμιο')
         self.assertNotContains(self.client.get(ACT_URL), 'Преамбула')
+
+    def link_texts_both_ways(self):
+        """Ст. 1 закона ссылается на ст. 2 изменяющего, та — обратно: цепочка любой длины."""
+        text = FragmentText.objects.get(version=self.new)
+        text.body = '<p>Βλ. <ref id="r1">άρθρο 2</ref>.</p>'
+        text.save()
+        provision = self.amending.fragments.get(eid='art_2')
+        Reference.objects.create(
+            from_text=text,
+            anchor='r1',
+            to_act=self.amending,
+            to_fragment=provision,
+            resolved=True,
+        )
+        back = FragmentText.objects.get(version__fragment=provision)
+        back.body = '<p>Βλ. <ref id="r1">άρθρο 1</ref>.</p>'
+        back.save()
+        Reference.objects.create(
+            from_text=back,
+            anchor='r1',
+            to_act=self.law,
+            to_fragment=self.law.fragments.get(eid='art_1'),
+            resolved=True,
+        )
+
+    def follow_ref(self, response):
+        found = re.search(r'<a class="ref" id="[^"]*" href="([^"]*)"', response.content.decode())
+        return html.unescape(found.group(1))
+
+    def test_chain_start_stays_on_screen(self):
+        self.link_texts_both_ways()
+        start = ACT_URL + '@2025-06-01/art_1/'
+        start_link = f'href="{start}#ref-art_1.par_1-r1"'
+        response = self.client.get(start)
+        self.assertNotContains(response, 'chain-start')
+        # три перехода по ссылкам: A → B → C → D; «К началу» на каждом шаге ведёт в A
+        steps = []
+        for _step in range(3):
+            href = self.follow_ref(response)
+            response = self.client.get(href)
+            self.assertContains(response, 'class="chain-start"')
+            self.assertContains(response, 'Στην αρχή: άρθρο 1')
+            self.assertContains(response, start_link)
+            steps.append((href, response))
+        # «← Назад» — на один шаг: из C в B, с началом цепочки
+        back = steps[1][1].context['back']['url']
+        self.assertTrue(back.startswith(steps[0][0].split('?')[0] + '?start='))
+        self.assertContains(self.client.get(back), start_link)
+        # из D — в C; C здесь и есть A, начало цепочки не нужно
+        self.assertEqual(response.context['back']['url'], start + '#ref-art_1.par_1-r1')
+        # из A по «К началу» цепочка кончается
+        self.assertNotContains(self.client.get(start), 'chain-start')
+
+    def test_chain_start_survives_language_history_and_dates(self):
+        self.add_ru()
+        self.link_texts_both_ways()
+        start = ACT_URL + '@2025-06-01/art_1/el/'
+        chain = {'start': start, 'start_at': 'ref-art_1.par_1-r1'}
+        page = '/cy/law/2024/2_I/@2025-06-01/art_2/'
+        response = self.client.get(page, {'from': start, 'at': 'ref-art_1.par_1-r1'})
+        # смена языка: на русском — к пункту ссылки русской страницы A
+        response = self.client.get(ACT_URL + '@2025-06-01/art_1/', chain)
+        self.assertEqual(
+            response.context['chain_start']['url'],
+            ACT_URL + '@2025-06-01/art_1/#art_1.par_1',
+        )
+        switch = {lang['code']: lang['url'] for lang in response.context['langs']}
+        self.assertIn('start=', switch['el'])
+        # история и редакции из неё несут начало цепочки
+        history = response.context['root'].children[0].history_url
+        self.assertIn('start=', history)
+        response = self.client.get(history)
+        self.assertContains(response, 'class="chain-start"')
+        self.assertTrue(all('start=' in entry['url'] for entry in response.context['versions']))
+        # форма даты переносит начало цепочки на новую страницу
+        response = self.client.get(ACT_URL + 'art_1/', {'on': '2024-06-01', **chain})
+        self.assertIn('start=', response['Location'])

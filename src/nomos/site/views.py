@@ -113,6 +113,7 @@ def read(request, path):
         raise Http404('Редакции раньше 01.01.2024 не прослеживаются')
     if route.lang not in reading.act_langs(route.act):
         raise Http404('Нет такого языка')
+    route.chain = chain_params(request, route.lang)
     structure = reading.Structure(route.act)
     if route.eid is None:
         return act_page(request, route, structure)
@@ -152,8 +153,10 @@ def form_target(request, route):
         lang=lang,
         history=route.history,
     )
-    if request.GET.get('orig'):
-        url += '?orig=1'
+    # режим «оригинал рядом» и начало цепочки ссылок переходят на новую страницу
+    kept = {key: request.GET[key] for key in ('orig', *CHAIN_KEYS) if request.GET.get(key)}
+    if kept:
+        url += '?' + urlencode(kept)
     return url
 
 
@@ -162,7 +165,8 @@ def base_context(request, route):
     on = route.on
     # переключатель ведёт на ту же страницу, дату и режим «оригинал рядом»;
     # якорь добавляет JS (data-keep-hash)
-    kept = {key: request.GET[key] for key in ('orig', 'from', 'at') if request.GET.get(key)}
+    keys = ('orig', 'from', 'at', *CHAIN_KEYS)
+    kept = {key: request.GET[key] for key in keys if request.GET.get(key)}
     query = '?' + urlencode(kept) if kept else ''
     langs = [
         {
@@ -194,7 +198,8 @@ def base_context(request, route):
         'is_today': route.on is None or route.on == datetime.date.today(),
         'earliest': reading.EARLIEST,
         'show_original': bool(request.GET.get('orig')),
-        'back': back_link(request, route.lang),
+        'back': back_link(request, route.lang, route.chain),
+        'chain_start': chain_start_link(route),
         'source_credit': source_credit(act),
     }
 
@@ -208,33 +213,92 @@ def source_credit(act):
 
 BACK_AT_RE = re.compile(r'^[\w.-]+$')
 
+# параметры начала цепочки переходов по ссылкам: страница и место первой ссылки
+CHAIN_KEYS = ('start', 'start_at')
 
-def back_link(request, lang):
-    """«← Назад к статье 2»: возврат на страницу, откуда пришли по ссылке (`?from=&at=`).
 
-    Адрес возврата собирается заново из разобранного `from` — только страницы актов сайта.
+def return_target(path, at, lang):
+    """Страница возврата из параметра адреса и место на ней: (route, at) или None.
+
+    Адрес собирается заново из разобранного пути — только страницы актов сайта.
     Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта,
     к пункту ссылки: якоря ссылок (`r1`, `r2`…) в каждом языке свои.
     """
-    origin = request.GET.get('from', '')
-    if not origin.startswith('/') or origin.startswith('//'):
+    if not path.startswith('/') or path.startswith('//'):
         return None
     try:
-        route = reading.parse_path(origin)
+        route = reading.parse_path(path)
     except Http404:
         return None
-    at = request.GET.get('at', '')
     if not BACK_AT_RE.match(at):
         at = ''
     if lang != route.lang and lang in reading.act_langs(route.act):
         route.lang = lang
         at = fragment_of_anchor(at)
-    url = reading.page_url(route)
+    return route, at
+
+
+def chain_target(request, lang):
+    """Начало цепочки ссылок: `start`/`start_at`; на первом шаге — страница `from`/`at`."""
+    if request.GET.get('start'):
+        return return_target(request.GET['start'], request.GET.get('start_at', ''), lang)
+    return return_target(request.GET.get('from', ''), request.GET.get('at', ''), lang)
+
+
+def chain_params(request, lang):
+    """Начало цепочки для адресов страницы (`Route.chain`): {'start': …, 'start_at': …}."""
+    target = chain_target(request, lang)
+    if target is None:
+        return {}
+    route, at = target
+    params = {'start': reading.page_url(route)}
+    if at:
+        params['start_at'] = at
+    return params
+
+
+def chain_start_link(route):
+    """«К началу: статья 2» — к месту первой ссылки цепочки; виден на любом её шаге."""
+    if not route.chain:
+        return None
+    target = return_target(route.chain['start'], route.chain.get('start_at', ''), route.lang)
+    if target is None:
+        return None
+    start, at = target
+    url = reading.page_url(start)
     if at:
         url += '#' + at
     return {
         'url': url,
-        'label': back_label(route.eid),
+        'label': chain_start_label(start.eid),
+    }
+
+
+def chain_start_label(eid):
+    """«К началу: статья 2», иначе «К началу: текст акта»."""
+    kind, _sep, number = (eid or '').split('.')[0].partition('_')
+    if kind == 'art' and number:
+        return _('К началу: статья %(number)s') % {'number': number}
+    return _('К началу: текст акта')
+
+
+def back_link(request, lang, chain=None):
+    """«← Назад к статье 2»: на шаг назад, на страницу, откуда пришли по ссылке (`?from=&at=`).
+
+    Возврат несёт начало цепочки, если это не оно само: «К началу» остаётся на экране.
+    """
+    target = return_target(request.GET.get('from', ''), request.GET.get('at', ''), lang)
+    if target is None:
+        return None
+    back, at = target
+    url = reading.page_url(back)
+    if chain and chain['start'] != url:
+        url += '?' + urlencode(chain)
+    if at:
+        url += '#' + at
+    return {
+        'url': url,
+        'label': back_label(back.eid),
     }
 
 
@@ -473,6 +537,7 @@ def history_page(request, route, structure, fragment):
                     eid=unit.eid,
                     lang=route.lang,
                 )
+                + route.chain_query
                 + anchor,
             }
         )
@@ -489,10 +554,16 @@ def history_page(request, route, structure, fragment):
             'has_changes': any(entry['introduced'] for entry in versions),
             'versions': versions,
             # путь назад: к действующему тексту того же пункта на том же языке
-            'current_url': reading.build_url(route.act, eid=unit.eid, lang=route.lang) + anchor,
+            'current_url': (
+                reading.build_url(route.act, eid=unit.eid, lang=route.lang)
+                + route.chain_query
+                + anchor
+            ),
             # и к редакции на дату, с которой пришли в историю
             'dated_url': (
-                reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang) + anchor
+                reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang)
+                + route.chain_query
+                + anchor
                 if route.on is not None
                 else ''
             ),

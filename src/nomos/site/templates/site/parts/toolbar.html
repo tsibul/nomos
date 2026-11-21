@@ -46,6 +46,13 @@
         value="1"
       >
     {% endif %}
+    {% for key, value in route.chain.items %}
+      <input
+        type="hidden"
+        name="{{ key }}"
+        value="{{ value }}"
+      >
+    {% endfor %}
     <button
       class="toolbar__button"
       type="submit"
@@ -68,7 +75,7 @@
       {% for day in future_dates %}
         <a
           class="toolbar__link"
-          href="?on={{ day|date:'Y-m-d' }}"
+          href="?on={{ day|date:'Y-m-d' }}{{ route.chain_tail }}"
         >
           {% translate 'с' %} {{ day|date:'d.m.Y' }}
         </a>

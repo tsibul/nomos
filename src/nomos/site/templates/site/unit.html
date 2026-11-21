@@ -49,7 +49,7 @@
       {% if show_original %}
         <a
           class="original-switch__link"
-          href="?"
+          href="?{{ route.chain_params }}"
           data-original-toggle
         >
           {% translate 'Скрыть греческий текст' %}
@@ -57,7 +57,7 @@
       {% else %}
         <a
           class="original-switch__link"
-          href="?orig=1"
+          href="?orig=1{{ route.chain_tail }}"
           data-original-toggle
         >
           {% translate 'Показать греческий текст рядом' %}
