@@ -44,7 +44,8 @@ WORDS = {
         'par_1': 'This Regulation lays down rules.',
         'par_2': 'The authorities referred to in paragraph 1 shall cooperate.',
         'intro': 'For the purposes of this Regulation:',
-        'pnt_a': 'information under Article 1(2) and Article 143 of Directive 2006/112/EC;',
+        'pnt_a': 'information under Article 1(2) of this Regulation and Article 143 of Directive'
+                 ' 2006/112/EC;',
         'pnt_b_old': 'old text;',
         'pnt_b_new': 'new text under Articles 33 and 34 of Directive 2006/112/EC;',
         'points': ('(a)', '(b)'),
@@ -311,6 +312,50 @@ class LinkerTests(SimpleTestCase):
         marked = self.mark('en', 'text<fn id="fn1">OJ, see Article 1</fn> and Article 17')
         self.assertIn('<fn id="fn1">OJ, see Article 1</fn>', marked)
         self.assertIn('to="art_17"', marked)
+
+    def test_act_named_after_qualifiers_or_list(self):
+        """«of Directive …» после уточнений или в конце перечня относится ко всем статьям."""
+        marked = self.mark(
+            'en',
+            'in Article 54(1), second subparagraph, Article 56(2), first subparagraph,'
+            ' and Articles 58 and 59 of Directive 2006/112/EC',
+        )
+        self.assertIn('to="eu/dir/2006/112#art_54.par_1">Article 54(1)</ref>', marked)
+        self.assertIn('to="eu/dir/2006/112#art_56.par_2">Article 56(2)</ref>', marked)
+        marked = self.mark('en', 'by Article 53 and Article 54(1) of Directive 2006/112/EC')
+        self.assertIn('to="eu/dir/2006/112#art_53">Article 53</ref>', marked)
+        marked = self.mark(
+            'en',
+            'Article 56 and point (g) of the first paragraph of Article 59'
+            ' of Directive 2006/112/EC',
+        )
+        self.assertIn('to="eu/dir/2006/112#art_56">Article 56</ref>', marked)
+        marked = self.mark(
+            'el',
+            'στο άρθρο 54 παράγραφος 1 δεύτερο εδάφιο, στο άρθρο 56 παράγραφος 2'
+            ' πρώτο εδάφιο και στα άρθρα 58 και 59 της οδηγίας 2006/112/ΕΚ',
+        )
+        self.assertIn('to="eu/dir/2006/112#art_54.par_1"', marked)
+        self.assertIn('to="eu/dir/2006/112#art_56.par_2"', marked)
+        marked = self.mark('el', 'του άρθρου 17, παράγραφος 1 του παρόντος κανονισμού')
+        self.assertIn('to="art_17.par_1">άρθρου 17, παράγραφος 1', marked)
+
+    def test_own_articles_before_foreign_list_stay_own(self):
+        marked = self.mark('en', 'Article 17 of this Regulation and Article 1')
+        self.assertIn('to="art_17"', marked)
+        self.assertIn('to="art_1">Article 1</ref>', marked)
+        marked = self.mark(
+            'en',
+            'under Article 17, the rules of Article 59 of Directive 2006/112/EC',
+        )
+        self.assertIn('to="art_17">Article 17</ref>', marked)
+
+    def test_article_of_unknown_act_after_list(self):
+        """Статья перед «of Directive 92/12/EEC» не ссылается на свой акт."""
+        marked = self.mark('en', 'Article 17(1) and Article 1 of Directive 92/12/EEC')
+        self.assertNotIn('<ref', marked)
+        marked = self.mark('el', 'το άρθρο 17 παράγραφος 1 και το άρθρο 1 της οδηγίας 92/12/ΕΟΚ')
+        self.assertNotIn('<ref', marked)
 
 
 class CollectTests(TestCase):

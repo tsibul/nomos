@@ -40,14 +40,17 @@ GREEK_VALUES = [
 ]
 
 EN_NUM = r'\d+[a-z]{0,2}\b(?:\(\w{1,4}\))*'
+EN_OF = (
+    r' of (?:this Regulation|this Directive|Directive 2006/112/EC|that Directive'
+    r'|(?:Council |Commission )?(?:Implementing )?(?:Directive|Regulation|Decision)'
+    r'(?: \((?:EU|EC|EEC)\))?(?: No)? \d+/\d+(?:/\w+)?)'
+)
 EN_ARTICLE = re.compile(
     r'(?P<pre>points? \((?P<pnt>[a-z0-9]{1,4})\)(?:(?:, | and | or )\([a-z0-9]{1,4}\))*'
     r'(?: of)?(?: the \w+ subparagraph(?: of)?)? )?'
     r'(?P<word>Articles?) '
     r'(?P<list>' + EN_NUM + r'(?:(?:, | and | or | to )' + EN_NUM + r')*)'
-    r'(?P<of> of (?:this Regulation|this Directive|Directive 2006/112/EC|that Directive'
-    r'|(?:Council |Commission )?(?:Implementing )?(?:Directive|Regulation|Decision)'
-    r'(?: \((?:EU|EC|EEC)\))?(?: No)? \d+/\d+(?:/\w+)?))?'
+    r'(?P<of>' + EN_OF + r')?'
 )
 EN_PARAGRAPH = re.compile(
     r'\b(?P<word>paragraphs?) (?P<list>\d+[a-z]?(?:(?:, | and | or | to )\d+[a-z]?)*)\b'
@@ -57,18 +60,21 @@ EN_ANNEX = re.compile(r'\b(?P<word>Annex) (?P<list>[IVX]+)\b')
 EL_LETTERS = r'[α-ω]{1,4}'
 EL_NUM = (
     r'\d+(?:' + EL_LETTERS + r')?\b'
-    r'(?: παράγραφο[ςι]? \d+(?:' + EL_LETTERS + r')?\b)?'
+    r'(?:,? παράγραφο[ςι]? \d+(?:' + EL_LETTERS + r')?\b)?'
     r'(?: (?:στοιχείο|σημείο) (?:' + EL_LETTERS + r'\)|\d+))?'
+)
+EL_OF = (
+    r' (?:του παρόντος κανονισμού|της παρούσας οδηγίας|της οδηγίας 2006/112/ΕΚ'
+    r'|της εν λόγω οδηγίας|της οδηγίας αυτής|του εν λόγω κανονισμού|της εν λόγω απόφασης'
+    r'|(?:του|της) (?:εκτελεστικού )?(?:κανονισμού|οδηγίας|απόφασης)'
+    r'(?: \((?:ΕΕ|ΕΚ|ΕΟΚ)\))?(?: αριθ\.)? \d+/\d+(?:/\w+)?)'
 )
 EL_ARTICLE = re.compile(
     r'(?P<pre>στοιχεί(?:ο|α|ου|ων) (?P<pnt>' + EL_LETTERS + r')\)'
     r'(?:(?:, | και | ή )' + EL_LETTERS + r'\))* (?:του|των|στο|στα) )?'
     r'(?P<word>άρθρ(?:ο|ου|α|ων)) '
     r'(?P<list>' + EL_NUM + r'(?:(?:, | και | ή | έως )' + EL_NUM + r')*)'
-    r'(?P<of> (?:του παρόντος κανονισμού|της παρούσας οδηγίας|της οδηγίας 2006/112/ΕΚ'
-    r'|της εν λόγω οδηγίας|της οδηγίας αυτής|του εν λόγω κανονισμού|της εν λόγω απόφασης'
-    r'|(?:του|της) (?:εκτελεστικού )?(?:κανονισμού|οδηγίας|απόφασης)'
-    r'(?: \((?:ΕΕ|ΕΚ|ΕΟΚ)\))?(?: αριθ\.)? \d+/\d+(?:/\w+)?))?'
+    r'(?P<of>' + EL_OF + r')?'
 )
 EL_PARAGRAPH = re.compile(
     r'(?<!\d )\b(?P<word>παράγραφ(?:ο|ος|ου|οι|ους|ων)) '
@@ -77,7 +83,25 @@ EL_PARAGRAPH = re.compile(
 )
 EL_ANNEX = re.compile(r'\b(?P<word>(?:Π|π)αράρτημ(?:α|ατος)) (?P<list>[IVXΙΧ]+)\b')
 
-SEPARATORS = re.compile(r', | and | or | to | και | ή | έως ')
+# уточнения и связки между номером статьи и «of …» или следующей статьёй перечня:
+# «Article 54(1), second subparagraph, of Directive», «Article 56(2) and Articles 58 and 59 of»
+EN_FILLER = (
+    r'(?:,|\s|\(\w{1,4}\)|\b(?:and|or|in|under|by|to|the|first|second|third|fourth|fifth'
+    r'|subparagraphs?|paragraphs?|points?|of|with|accordance)\b)*?'
+)
+EL_FILLER = (
+    r'(?:,|\s|\d+|[α-ω]{1,3}\)|(?<!\w)(?:και|ή|στο|στα|στον|του|των|το|τα|από|της|πρώτο'
+    r'|δεύτερο|τρίτο|τέταρτο|πέμπτο|εδάφιο|εδάφια|παράγραφος|παράγραφο|παραγράφου'
+    r'|στοιχείο|στοιχεία)(?!\w))*?'
+)
+EN_TAIL = re.compile(r'(?P<gap>' + EN_FILLER + r')(?P<of>' + EN_OF + r')')
+EL_TAIL = re.compile(r'(?P<gap>' + EL_FILLER + r')(?P<of>' + EL_OF + r')')
+EN_LINK = re.compile(EN_FILLER + r'$')
+EL_LINK = re.compile(EL_FILLER + r'$')
+FILLER_LIMIT = 60
+NOT_NAMED = object()
+
+SEPARATORS = re.compile(r', (?!παράγραφ)| and | or | to | και | ή | έως ')
 TAG_RE = re.compile(r'(<[^>]+>)')
 
 
@@ -157,8 +181,7 @@ class Linker:
         else:
             article_re, paragraph_re, annex_re = EN_ARTICLE, EN_PARAGRAPH, EN_ANNEX
         spans = []
-        for match in article_re.finditer(text):
-            act = self.article_act(match.group('of'), default_act)
+        for match, act in self.article_acts(text, article_re, default_act):
             if act is None:
                 continue
             spans.extend(self.article_spans(match, act))
@@ -200,6 +223,40 @@ class Linker:
             position = end
         result.append(text[position:])
         return ''.join(result)
+
+    def article_acts(self, text, article_re, default_act):
+        """(совпадение, акт) для каждой статьи. Статья без «of …» берёт акт из «of …» после
+        уточнений («Article 54(1), second subparagraph, of Directive 2006/112/EC») или от
+        следующей статьи перечня, если между ними только связки («Article 56(2) and
+        Articles 58 and 59 of Directive 2006/112/EC»)."""
+        if self.lang == 'el':
+            tail_re, link_re = EL_TAIL, EL_LINK
+        else:
+            tail_re, link_re = EN_TAIL, EN_LINK
+        matches = list(article_re.finditer(text))
+        acts = [None] * len(matches)
+        # акт, названный явно у следующей статьи (None — акт неизвестен, ссылки не будет)
+        following = NOT_NAMED
+        for index in range(len(matches) - 1, -1, -1):
+            match = matches[index]
+            of = match.group('of')
+            act = NOT_NAMED
+            if of:
+                act = self.article_act(of, default_act)
+            else:
+                end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+                tail = tail_re.match(text, match.end(), end)
+                if tail and len(tail.group('gap')) <= FILLER_LIMIT:
+                    act = self.article_act(tail.group('of'), default_act)
+                elif following is not NOT_NAMED:
+                    gap = text[match.end():end]
+                    if len(gap) <= FILLER_LIMIT and link_re.match(gap):
+                        act = following
+            following = act
+            if act is NOT_NAMED:
+                act = default_act
+            acts[index] = act
+        return list(zip(matches, acts))
 
     def article_act(self, of, default_act):
         if not of:
