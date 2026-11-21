@@ -17,7 +17,7 @@ LAW_NUMBER_RE = re.compile(r'^\d+(\([IΙ]\))?/\d{4}$')
 CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
 
 TOP_RE = re.compile(
-    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,3}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–]+\s*)?|[-—–]\s*(?=\())'
+    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,3}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
     r'(?:\((?P<sub>\d+[Α-ΩA-Z]{0,3})\)\s*)?(?P<rest>.*)$'
 )
 ITEM_RES = [
@@ -81,8 +81,11 @@ def is_page_furniture(line):
 
 
 def is_history(text):
-    """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»."""
+    """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»; у отменённой
+    статьи — с подписью: «Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018»."""
     cleaned = CORRIGENDUM_RE.sub('', text).replace('Παρ. Ι(Ι), Ε.Ε.', '')
+    if cleaned.startswith(HISTORY_HEADING + ' '):
+        cleaned = cleaned[len(HISTORY_HEADING):]
     tokens = cleaned.split()
     return bool(tokens) and all(LAW_NUMBER_RE.match(token) for token in tokens)
 
@@ -138,14 +141,27 @@ def number_value(num):
 
 def follows(previous, num):
     """Номер `num` может идти за пунктом `previous` того же вида нумерации."""
-    before = number_value(previous.num_plain())
-    after = number_value(num)
+    if is_doubled(num) != is_doubled(previous.num_plain()):
+        # «(αα)» под «(ii)» не продолжает «(α)…(β)»
+        return False
+    if is_doubled(num):
+        # «(ββ)» после «(αα)»: по одной букве
+        return follows_value(number_value(previous.num_plain()[0]), number_value(num[0]))
+    return follows_value(number_value(previous.num_plain()), number_value(num), previous, num)
+
+
+def follows_value(before, after, previous=None, num=''):
     if before is None or after is None:
         return True
     if after == before:
         # «7Α» после «7» или «7Α»
-        return num != previous.num_plain() and not num.isdigit()
+        return previous is not None and num != previous.num_plain() and not num.isdigit()
     return after == before + 1
+
+
+def is_doubled(num):
+    """«αα», «ββ»: удвоенная греческая буква — свой уровень нумерации."""
+    return len(num) == 2 and num[0] == num[1] and 'α' <= num[0] <= 'ω'
 
 
 def looks_like_heading(block, following):
@@ -383,9 +399,15 @@ class Parser:
         top = TOP_RE.match(text)
         if top and block.indent <= 14:
             node = self.open_item('top', top.group('num'), block)
+            rest = top.group('rest')
             if top.group('sub'):
                 node = self.open_item('arabic', '(%s)' % top.group('sub'), block)
-            self.set_text(node, top.group('rest'))
+                # «42.—(1)(α)»: и пункт в той же строке
+                inner_name, inner = match_item(rest)
+                if inner_name and LEVELS[inner_name] > LEVELS['arabic']:
+                    node = self.open_item(inner_name, '(%s)' % inner.group('num'), block)
+                    rest = inner.group('rest')
+            self.set_text(node, rest)
             return
         if text.startswith('[Σ.Σ.') and len(self.stack) > 1:
             # отдельный абзац примечания источника относится к последнему пункту

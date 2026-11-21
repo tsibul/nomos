@@ -15,7 +15,7 @@ from nomos.acts.models import (
 )
 from nomos.translate.models import Note
 
-from .cylaw import gazette, history, layout, numbering, refs, texts_xml
+from .cylaw import consolidated, gazette, history, layout, numbering, refs, texts_xml
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
 
@@ -358,6 +358,93 @@ class RemarkTests(SimpleTestCase):
             [('base', 'active'), ('2024-05-01', 'repealed')],
         )
         self.assertEqual(report, ['sch_9: фрагмента нет в сводном тексте'])
+
+
+class BeforeTests(SimpleTestCase):
+    """<before>: прежний текст целиком — по прежней сводной редакции."""
+
+    def test_replace_and_delete_take_text_from_manifest(self):
+        node = paragraph('νέο κείμενο')
+        act = make_act('cy/law/2025/243_I', datetime.date(2025, 12, 31),
+                       datetime.date(2026, 1, 1))
+        element = history.ET.fromstring(
+            '<op target="sch_6.par_13"><before><p>παλαιό\n  κείμενο</p><p>δεύτερο</p>'
+            '</before></op>'
+        )
+        before = history.op_before(element)
+        self.assertEqual(before, {'sch_6.par_13': ['παλαιό κείμενο', 'δεύτερο']})
+        for kind, state, paragraphs in (
+            ('replace', 'active', ['νέο κείμενο']),
+            ('delete', 'repealed', []),
+        ):
+            report = []
+            versions = history.build_versions(
+                node, [make_op(act, kind, before=before)], 'law#base', report,
+            )
+            self.assertEqual(report, [])
+            self.assertEqual(
+                [(version.key, version.state, version.paragraphs) for version in versions],
+                [
+                    ('base', 'active', ['παλαιό κείμενο', 'δεύτερο']),
+                    ('2026-01-01', state, paragraphs),
+                ],
+            )
+
+
+PAD = ' ' * 12
+
+
+def parse_body(*lines):
+    """Тело сводного текста после «Προοίμιο»: строки с отступом текста."""
+    rows = ['Προοίμιο', '', PAD + 'Επειδή.']
+    for line in lines:
+        rows += ['', PAD + line]
+    return consolidated.Parser('cy/law/1978/4').parse(rows)
+
+
+class ConsolidatedTests(SimpleTestCase):
+    def test_article_paragraph_point_in_one_line(self):
+        """«51Α. (1)(α)» и «42.―(1)» (U+2015): статья, εδάφιο и пункт в одной строке."""
+        root = parse_body('42.―(1)(α) Πρόσωπο:', '(β) άλλο.', '51Α. (1)(α) Ένα.', '(β) Δύο.')
+        texts = {node.eid: node.paragraphs for node in root.walk() if node.eid}
+        self.assertEqual(texts['art_42.par_1'], [])
+        self.assertEqual(texts['art_42.par_1.pnt_a'], ['Πρόσωπο:'])
+        self.assertEqual(texts['art_42.par_1.pnt_b'], ['άλλο.'])
+        self.assertEqual(texts['art_51A.par_1.pnt_a'], ['Ένα.'])
+
+    def test_doubled_greek_numbering_is_own_level(self):
+        """«(αα)», «(ββ)» под «(i)» — свой уровень, а не продолжение «(α)»."""
+        root = parse_body('7.-(1)(α) α:', '(i) πρώτο:', '(αα) ένα·', '(ββ) δύο·', '(ii) β.',
+                          '(β) γ.')
+        eids = [node.eid for node in root.walk() if node.eid.startswith('art_7')]
+        self.assertEqual(eids, [
+            'art_7',
+            'art_7.par_1',
+            'art_7.par_1.pnt_a',
+            'art_7.par_1.pnt_a.pnt_i',
+            'art_7.par_1.pnt_a.pnt_i.pnt_aa',
+            'art_7.par_1.pnt_a.pnt_i.pnt_bb',
+            'art_7.par_1.pnt_a.pnt_ii',
+            'art_7.par_1.pnt_b',
+        ])
+
+    def test_history_with_heading(self):
+        self.assertTrue(consolidated.is_history('Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018'))
+        self.assertTrue(consolidated.is_history('95(I)/2000 10(I)/2024'))
+        self.assertFalse(consolidated.is_history('Ιστορικό Τροποποιήσεων'))
+
+    def test_page_break_in_sentence(self):
+        """Пустая строка, колонтитул и строчная буква: тот же абзац; заглавная — новый."""
+        header = 'https://www.cylaw.org/nomoi/enop/non-ind/1978_1_4/full.html'
+        blocks = layout.blocks(
+            ['    ψηφισθέντος είτε προ', '', header, '    είτε κατόπιν.', '',
+             '    Νοείται ότι άλλο', '', header, '    Άλλος.'],
+            skip=consolidated.is_page_furniture,
+        )
+        self.assertEqual(
+            [block.text for block in blocks],
+            ['ψηφισθέντος είτε προ είτε κατόπιν.', 'Νοείται ότι άλλο', 'Άλλος.'],
+        )
 
 
 class SplitNotesTests(SimpleTestCase):
@@ -736,3 +823,68 @@ class VatReturnGuideTests(TestCase):
         )
         references = Reference.objects.filter(from_text__in=russian)
         self.assertFalse(references.filter(resolved=False).exists())
+
+
+TAX_LAW = 'cy/law/1978/4'
+
+
+@skipUnless((TEXTS_DIR / TAX_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 4/1978')
+class TaxCollectionLawTests(TestCase):
+    """Сборка и загрузка закона о начислении и взимании налогов 4/1978."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', TAX_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=TAX_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / TAX_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / TAX_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """В отчёте нет неснятых изменений; заметки (note) — только для сведения."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and not line.endswith(': не применено')) or 'не найдена' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_article_26a_repealed_from_2026(self):
+        self.assertEqual(self.version('art_26A', datetime.date(2025, 12, 31)).state, 'active')
+        self.assertIsNone(self.version('art_26A', datetime.date(2026, 1, 1)))
+
+    def test_article_48a_from_july_2026(self):
+        self.assertIsNone(self.version('art_48A', datetime.date(2026, 6, 30)))
+        self.assertEqual(self.version('art_48A', datetime.date(2026, 7, 1)).state, 'active')
+
+    def test_article_50h_by_law_49_2025(self):
+        self.assertIsNone(self.version('art_50H', datetime.date(2025, 4, 15)))
+        self.assertEqual(self.version('art_50H', datetime.date(2025, 4, 16)).state, 'active')
+
+    def test_fine_amount_changed(self):
+        eid = 'art_50ST.par_1'
+        self.assertIn('τέσσερις χιλιάδες ευρώ', self.text(eid, datetime.date(2025, 12, 31)))
+        self.assertIn('έξι χιλιάδες ευρώ', self.text(eid, datetime.date(2026, 1, 1)))

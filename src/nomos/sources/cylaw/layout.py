@@ -86,7 +86,8 @@ def blocks(lines, skip=None):
     """Блоки из строк; `skip(line)` — строки колонтитулов, которые выбрасываются.
 
     После колонтитула блок продолжается (абзац перенесён на страницу), если следующая
-    строка не начинает нумерованный пункт."""
+    строка не начинает нумерованный пункт. Пустая строка перед колонтитулом посреди фразы
+    («… ψηφισθέντος είτε προ» / «είτε κατόπιν …») блок не закрывает."""
     found = []
     current = []
     start = 0
@@ -103,6 +104,8 @@ def blocks(lines, skip=None):
             found.append(make_block(start, current))
             current = []
         if not line.strip():
+            if current and skip and continues_after_page(lines[number:], current[-1], skip):
+                continue
             if current:
                 found.append(make_block(start, current))
                 current = []
@@ -113,6 +116,17 @@ def blocks(lines, skip=None):
     if current:
         found.append(make_block(start, current))
     return found
+
+
+def continues_after_page(rest, previous, skip):
+    """За пустой строкой — колонтитул, а после него фраза продолжается со строчной буквы."""
+    if ends_sentence(previous):
+        return False
+    following = [line for line in rest if line.strip()]
+    if not following or not skip(following[0]):
+        return False
+    text = next((line.strip() for line in following if not skip(line)), '')
+    return text[:1].islower()
 
 
 TERM_START_RE = re.compile(r'^\s*("|\'\'|«|“)')
