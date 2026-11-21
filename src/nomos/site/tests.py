@@ -1,7 +1,9 @@
 import datetime
 import html
 import re
+from urllib.parse import quote
 
+from django.contrib.auth.models import User
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import translation
 
@@ -31,6 +33,7 @@ class ViewerTests(TestCase):
     def setUpTestData(cls):
         today = datetime.date.today()
         cls.future_day = today + datetime.timedelta(days=100)
+        cls.reader = User.objects.create_user('reader')
         source = Source.objects.create(code='test', name='Тест')
         cls.law = Act.objects.create(
             uid='cy/law/2000/1_I',
@@ -535,7 +538,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Disallow: /')
         self.assertEqual(self.client.get('/admin/').status_code, 404)
         response = self.client.get('/about/')
-        self.assertContains(response, 'cookies')
+        self.assertContains(response, 'Cookie используется только для входа')
         self.assertContains(response, 'CC BY 4.0 — только наши переводы и разметка')
         self.assertContains(response, 'Ilia Tsigelnitskii')
 
@@ -808,6 +811,46 @@ class ViewerTests(TestCase):
         self.assertContains(self.client.get('/about/'), 'Автор проекта — Ilia Tsigelnitskii.')
 
 
+    def test_pages_open_without_login_by_default(self):
+        """NOMOS_PUBLIC_ONLY выключена: без входа видно всё; вход — отдельная страница."""
+        pages = [
+            '/',
+            '/cy/',
+            ACT_URL,
+            ACT_URL + 'art_1/',
+            ACT_URL + 'art_1.par_1/history/',
+            '/about/',
+            '/about/?lang=el',
+            '/login/',
+            '/robots.txt',
+        ]
+        for page in pages:
+            self.assertEqual(self.client.get(page).status_code, 200, page)
+        self.assertNotContains(self.client.get('/'), 'action="/logout/"')
+
+    def test_login_returns_only_to_own_address(self):
+        User.objects.create_user('editor', password='test-password-1')
+        self.client.logout()
+        credentials = {'username': 'editor', 'password': 'test-password-1'}
+        response = self.client.post('/login/', {**credentials, 'next': ACT_URL + 'art_1/'})
+        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
+        self.client.logout()
+        response = self.client.post('/login/', {**credentials, 'next': 'https://example.com/'})
+        self.assertRedirects(response, '/', fetch_redirect_response=False)
+
+    def test_logout_from_menu(self):
+        self.client.force_login(self.reader)
+        response = self.client.get('/')
+        self.assertContains(response, 'action="/logout/"')
+        response = self.client.post('/logout/')
+        self.assertRedirects(response, '/', fetch_redirect_response=False)
+        self.assertNotContains(self.client.get('/'), 'action="/logout/"')
+
+    def test_login_page_in_greek(self):
+        self.client.logout()
+        response = self.client.get('/login/', {'lang': 'el'})
+        self.assertContains(response, 'Σύνδεση')
+
 class SignedIn:
     """Пользователь запроса, вошедший на сайт (без записи в базе)."""
 
@@ -939,6 +982,22 @@ class PublicOnlyTests(TestCase):
         self.assertContains(response, 'Νέο κείμενο')
         self.assertContains(response, 'unit--with-original')
         self.assertFalse(access.is_restricted())
+
+    def test_login_opens_everything_and_logout_hides_again(self):
+        """Настоящий вход через форму: со входом — всё, после выхода — только публичное."""
+        User.objects.create_user('editor', password='test-password-1')
+        self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
+        self.assertNotContains(self.client.get('/'), 'action="/logout/"')
+        response = self.client.post(
+            '/login/',
+            {'username': 'editor', 'password': 'test-password-1', 'next': ACT_URL + 'art_1/'},
+        )
+        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'Νέο κείμενο')
+        self.assertContains(self.client.get('/'), 'action="/logout/"')
+        self.client.post('/logout/')
+        self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
 
 
 class ActNumberTests(TestCase):

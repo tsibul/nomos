@@ -154,6 +154,28 @@ USE_TZ = True
 STATIC_URL = 'static/'
 
 
+# Вход: стандартная аутентификация Django; регистрации и восстановления пароля нет
+
+LOGIN_URL = 'site:login'
+
+LOGIN_REDIRECT_URL = 'site:act_list'
+
+LOGOUT_REDIRECT_URL = 'site:act_list'
+
+# cookie сессии и CSRF: Secure на хостинге (DEBUG выключен), локально — по http
+SESSION_COOKIE_SECURE = not DEBUG
+
+CSRF_COOKIE_SECURE = not DEBUG
+
+SESSION_COOKIE_HTTPONLY = True
+
+CSRF_COOKIE_HTTPONLY = True
+
+SESSION_COOKIE_SAMESITE = 'Lax'
+
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 

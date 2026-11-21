@@ -1,6 +1,6 @@
 {% load i18n %}
 {% comment %}
-  Шапка: название, разделы, «О проекте», язык текста.
+  Шапка: название, разделы, «О проекте», «Выйти» (после входа), язык текста.
   Без JS меню видно всегда; с JS на телефоне сворачивается под кнопку.
 {% endcomment %}
 <div
@@ -60,6 +60,23 @@
           {% translate 'О проекте' %}
         </a>
       </li>
+      {% if user.is_authenticated %}
+        <li class="menu__item">
+          <form
+            class="menu__logout"
+            method="post"
+            action="/logout/"
+          >
+            {% csrf_token %}
+            <button
+              class="menu__link menu__button"
+              type="submit"
+            >
+              {% translate 'Выйти' %}
+            </button>
+          </form>
+        </li>
+      {% endif %}
     </ul>
   </nav>
 

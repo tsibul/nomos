@@ -5,6 +5,10 @@ export function initMenu() {
     return;
   }
   const toggle = header.querySelector('[data-menu-toggle]');
+  // кнопки нет — сворачивать нечего
+  if (!toggle) {
+    return;
+  }
   header.classList.add('header--collapsible');
   toggle.hidden = false;
   toggle.addEventListener('click', () => {
