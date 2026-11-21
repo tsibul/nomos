@@ -156,13 +156,20 @@ def read(request, path):
     if route.history:
         return history_page(request, route, structure, fragment)
     unit = structure.unit_of(fragment)
+    anchor = '#' + fragment.eid
+    if unit is None:
+        # у раздела своей страницы нет: адрес раздела ведёт на первую страницу в нём
+        unit = structure.first_unit(fragment)
+        anchor = ''
+        if unit is None:
+            raise Http404('В разделе нет страниц')
     if unit.eid != route.eid:
         # постоянная ссылка фрагмента ведёт на его страницу с якорем
         # строка запроса сохраняется: from/at — путь «← Назад» к месту ссылки, orig — режим
         url = reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang)
         if request.GET:
             url += '?' + request.GET.urlencode()
-        return redirect(url + '#' + fragment.eid)
+        return redirect(url + anchor)
     return unit_page(request, route, structure, unit)
 
 

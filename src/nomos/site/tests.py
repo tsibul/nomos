@@ -319,6 +319,21 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL + 'prt_I/history/')
         self.assertEqual(response.context['nested'][0]['place'], '1(1)')
 
+    def test_section_address_leads_to_its_first_page(self):
+        """У раздела своей страницы нет: адрес раздела ведёт на первую страницу в нём (не 500)."""
+        response = self.client.get(ACT_URL + 'prt_I/')
+        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
+        response = self.client.get(ACT_URL + '@2024-06-01/prt_I/', {'orig': '1'})
+        self.assertRedirects(
+            response,
+            ACT_URL + '@2024-06-01/art_1/?orig=1',
+            fetch_redirect_response=False,
+        )
+
+    def test_empty_section_address_is_not_found(self):
+        Fragment.objects.create(uid='lw00000099', act=self.law, kind='prt', eid='prt_II')
+        self.assertEqual(self.client.get(ACT_URL + 'prt_II/').status_code, 404)
+
     def test_history_without_any_changes_says_so(self):
         response = self.client.get(ACT_URL + 'art_1.par_2/history/')
         self.assertContains(response, 'Καμία τροποποίηση')
