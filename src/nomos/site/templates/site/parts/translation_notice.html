@@ -1,0 +1,14 @@
+{% comment %}
+  Плашка над переводом. Официальный текст (у актов ЕС — каждая языковая версия) без плашки;
+  юридическую силу имеет оригинал: у кипрских актов — греческий, у актов ЕС — Официальный
+  журнал ЕС.
+{% endcomment %}
+{% if translation.status != 'official_text' %}
+  <p class="draft-warning">
+    {% if structure_lang == 'el' %}
+      {{ translation_notice }}
+    {% else %}
+      {{ translation_notice_eu }}
+    {% endif %}
+  </p>
+{% endif %}

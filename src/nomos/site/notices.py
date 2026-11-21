@@ -33,6 +33,12 @@ TRANSLATION_NOTICE = _(
     'Юридическую силу имеет греческий текст.'
 )
 
+# Та же плашка у актов ЕС: оригинал — тексты Официального журнала ЕС
+TRANSLATION_NOTICE_EU = _(
+    'Неофициальный перевод. Перевод выполнен ИИ, человеком не выверен. '
+    'Юридическую силу имеют тексты, опубликованные в Официальном журнале ЕС.'
+)
+
 # Оговорка у выбора даты
 RECONSTRUCTION_NOTICE = _('Редакция восстановлена проектом по изменяющим актам; возможны ошибки.')
 
@@ -49,5 +55,6 @@ def notices(request):
     return {
         'disclaimer': DISCLAIMER_PUBLIC if access.is_restricted() else DISCLAIMER,
         'translation_notice': TRANSLATION_NOTICE,
+        'translation_notice_eu': TRANSLATION_NOTICE_EU,
         'reconstruction_notice': RECONSTRUCTION_NOTICE,
     }
