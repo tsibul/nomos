@@ -11,9 +11,11 @@ uv sync
 cp .env.example .env   # fill in the values
 uv run python src/manage.py check
 uv run python src/manage.py migrate
+uv run python src/manage.py compilemessages   # interface translations (.mo, not in git)
 ```
 
-Requires Python 3.14, MariaDB, and the `libmariadb-dev` headers (for `mysqlclient`).
+Requires Python 3.14, MariaDB, the `libmariadb-dev` headers (for `mysqlclient`),
+and gettext (for `compilemessages`).
 
 ## Licences
 
