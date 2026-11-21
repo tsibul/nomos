@@ -1138,3 +1138,28 @@ class FragmentLabelLangTests(TestCase):
         self.assertEqual(self.label('en').text, 'Article 1')
         self.assertEqual(self.label('el').text, 'Article 1')
         self.assertEqual(reading.fragment_label(self.fragment, self.version).text, 'Article 1')
+
+    def test_greek_heading_of_eu_act(self):
+        """У акта ЕС оригинал en: греческий — перевод, его заголовки берутся (раздел, глава)."""
+        el = Expression.objects.create(
+            act=self.act,
+            lang='el',
+            status='official_translation',
+            source=Source.objects.get(code='test'),
+            title='Κανονισμός',
+        )
+        FragmentText.objects.create(
+            version=self.version,
+            expression=el,
+            heading='Αντικείμενο',
+            body='<p>Κείμενο</p>',
+            text_hash='el',
+        )
+        headings = reading.translated_headings([self.version], 'el', 'en')
+        self.assertEqual(headings, {self.version.id: 'Αντικείμενο'})
+        self.assertEqual(reading.translated_headings([self.version], 'en', 'en'), {})
+        label = reading.fragment_label(self.fragment, self.version, headings, 'el')
+        self.assertEqual((label.text, label.lang), ('Άρθρο 1. Αντικείμενο', 'el'))
+        response = self.client.get(reading.build_url(self.act, lang='el'))
+        self.assertContains(response, 'Άρθρο 1. Αντικείμενο')
+        self.assertNotContains(response, 'Article 1')
