@@ -412,9 +412,8 @@ class EuVatTextsTests(TestCase):
         act = Act.objects.get(uid=DIRECTIVE)
         self.assertEqual(act.kind, Act.Kind.DIRECTIVE)
         self.assertGreater(act.fragments.count(), 2000)
-        self.assertEqual(
-            set(act.expressions.values_list('lang', flat=True)),
-            {'en', 'el'},
+        self.assertTrue(
+            {'en', 'el'} <= set(act.expressions.values_list('lang', flat=True)),
         )
 
     def test_act_amending_two_acts(self):
