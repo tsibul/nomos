@@ -95,12 +95,16 @@
         {% else %}
           {% translate 'Редакция' %}:
         {% endif %}
-        <a
-          class="fragment__meta-link"
-          href="{{ node.introduced_url }}"
-        >
+        {% if node.introduced_url %}
+          <a
+            class="fragment__meta-link"
+            href="{{ node.introduced_url }}"
+          >
+            {{ node.introduced_label }}
+          </a>
+        {% else %}
           {{ node.introduced_label }}
-        </a>
+        {% endif %}
         {% if node.introduced.note %}
           — {{ node.introduced.note }}
         {% endif %}

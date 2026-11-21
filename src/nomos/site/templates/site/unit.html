@@ -37,10 +37,20 @@
     {% endfor %}
   </nav>
 
-  {% if untranslated %}
+  {% if untranslated and original_source %}
+    <p class="untranslated">
+      {% translate 'Перевод готовится.' %}
+    </p>
+    {% include 'site/parts/original_source.html' %}
+  {% elif untranslated %}
     <p class="untranslated">
       {% translate 'Перевод готовится — показан официальный греческий текст.' %}
     </p>
+  {% elif original_source %}
+    <p class="draft-warning">
+      {{ translation_notice }}
+    </p>
+    {% include 'site/parts/original_source.html' %}
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
       {{ translation_notice }}

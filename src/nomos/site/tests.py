@@ -15,7 +15,7 @@ from nomos.acts.models import (
     FragmentVersion,
     Reference,
 )
-from nomos.site import notices, reading, views
+from nomos.site import access, notices, reading, views
 from nomos.sources.management.commands import load_texts
 from nomos.sources.models import Source
 from nomos.translate.models import Note
@@ -780,3 +780,136 @@ class ViewerTests(TestCase):
         self.assertIsNone(re.search('[а-яё]', article, re.I))
         # по-русски страница прежняя
         self.assertContains(self.client.get('/about/'), 'Автор проекта — Ilia Tsigelnitskii.')
+
+
+class SignedIn:
+    """Пользователь запроса, вошедший на сайт (без записи в базе)."""
+
+    is_authenticated = True
+
+
+# тексты непубличного греческого выражения, которых не должно быть в HTML анонима
+GREEK_TEXTS = (
+    'Νέο κείμενο',
+    'Παλαιό κείμενο',
+    'Ο περί Δοκιμής Νόμος',
+    'Ερμηνεία',
+    'ΜΕΡΟΣ I',
+    'Τροποποιητικός',
+    'Αντικαθίσταται',
+)
+
+
+@override_settings(DJANGO_VITE={'default': {'dev_mode': True}}, NOMOS_PUBLIC_ONLY=True)
+class PublicOnlyTests(TestCase):
+    """NOMOS_PUBLIC_ONLY: аноним видит только публичные выражения, вошедший — всё."""
+
+    setUpTestData = ViewerTests.__dict__['setUpTestData']
+    add_version = ViewerTests.__dict__['add_version']
+
+    def add_public_ru(self, with_text=True):
+        ru = Expression.objects.create(
+            act=self.law,
+            lang='ru',
+            status='our_translation',
+            source=Source.objects.get(code='test'),
+            title='Закон об испытании',
+            public=True,
+        )
+        if with_text:
+            text = FragmentText.objects.create(
+                version=self.new,
+                expression=ru,
+                body='<p>Новый текст, см. <ref id="r1">статью 2</ref>.</p>',
+                text_hash='ru',
+            )
+            Reference.objects.create(
+                from_text=text,
+                anchor='r1',
+                to_act=self.amending,
+                to_fragment=self.amending.fragments.get(eid='art_2'),
+                resolved=True,
+            )
+            Note.objects.create(
+                target=text,
+                kind='doubt',
+                origin='llm',
+                body='Сомнительный термин',
+            )
+        return ru
+
+    def assertNoGreek(self, response):
+        for greek in GREEK_TEXTS:
+            self.assertNotContains(response, greek)
+
+    def test_setting_off_shows_everything(self):
+        with self.settings(NOMOS_PUBLIC_ONLY=False):
+            self.assertContains(self.client.get('/'), 'Ο περί Δοκιμής Νόμος')
+            response = self.client.get(ACT_URL + 'art_1/')
+            self.assertContains(response, 'Νέο κείμενο')
+            self.assertContains(self.client.get('/cy/law/2024/2_I/'), 'Τροποποιητικός')
+
+    def test_act_without_public_expression_is_hidden(self):
+        self.assertNotContains(self.client.get('/'), ACT_URL)
+        self.assertNoGreek(self.client.get('/'))
+        self.assertEqual(self.client.get(ACT_URL).status_code, 404)
+        self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
+        self.assertEqual(self.client.get(ACT_URL + 'art_1.par_1/history/').status_code, 404)
+
+    def test_public_translation_without_original(self):
+        self.add_public_ru()
+        response = self.client.get('/')
+        self.assertContains(response, 'Закон об испытании')
+        self.assertNoGreek(response)
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'Новый текст')
+        self.assertContains(response, 'Сомнительный термин')
+        self.assertContains(response, 'Неофициальный перевод')
+        self.assertContains(response, 'Оригинал:')
+        self.assertNoGreek(response)
+        # греческого нет в переключателе, страница на греческом — 404
+        el_url = reading.build_url(self.law, eid='art_1', lang='el')
+        self.assertNotContains(response, f'href="{el_url}')
+        self.assertEqual(self.client.get(el_url).status_code, 404)
+        # ссылка на скрытый акт — текстом; изменяющий акт — номером без ссылки
+        self.assertContains(response, '<span class="ref ref--unresolved">статью 2</span>')
+        self.assertNotContains(response, 'href="/cy/law/2024/2_I/')
+        self.assertContains(response, '2(I)/2024')
+
+    def test_original_mode_is_off(self):
+        self.add_public_ru()
+        response = self.client.get(ACT_URL + 'art_1/', {'orig': '1'})
+        self.assertNotContains(response, 'unit--with-original')
+        self.assertNotContains(response, 'fragment__original')
+        self.assertNotContains(response, 'orig=1')
+        self.assertNoGreek(response)
+
+    def test_untranslated_page_shows_no_greek(self):
+        self.add_public_ru(with_text=False)
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'Перевод готовится.')
+        self.assertContains(response, 'Оригинал:')
+        self.assertNoGreek(response)
+
+    def test_act_page_and_history_show_no_greek(self):
+        self.add_public_ru()
+        response = self.client.get(ACT_URL)
+        self.assertContains(response, 'Закон об испытании')
+        self.assertContains(response, 'Оригинал:')
+        self.assertNoGreek(response)
+        response = self.client.get(ACT_URL + 'art_1.par_1/history/')
+        self.assertEqual(response.status_code, 200)
+        self.assertNoGreek(response)
+        self.assertNoGreek(self.client.get('/about/'))
+
+    def test_signed_in_sees_everything(self):
+        self.add_public_ru()
+        request = RequestFactory().get(ACT_URL + 'art_1/', {'orig': '1'})
+        request.user = SignedIn()
+        middleware = access.PublicOnlyMiddleware(
+            lambda request: views.read(request, 'cy/law/2000/1_I/art_1/'),
+        )
+        response = middleware(request)
+        self.assertContains(response, 'Νέο κείμενο')
+        self.assertContains(response, 'unit--with-original')
+        self.assertFalse(access.is_restricted())
