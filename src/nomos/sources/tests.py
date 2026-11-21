@@ -15,7 +15,7 @@ from nomos.acts.models import (
 )
 from nomos.translate.models import Note
 
-from .cylaw import history, numbering, refs, texts_xml
+from .cylaw import gazette, history, layout, numbering, refs, texts_xml
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
 
@@ -371,6 +371,65 @@ class SplitNotesTests(SimpleTestCase):
         )
         self.assertEqual(list(own), ['cy/law/2025/104_I'])
         self.assertEqual(other, ['Σημείωση 2 του Ν. 1/2001'])
+
+
+def gazette_lines(*rows):
+    """Строки газеты: (поле, текст) → строка с текстом с колонки 22."""
+    return [' ' + margin.ljust(21) + body for margin, body in rows]
+
+
+class GazetteTests(SimpleTestCase):
+    def parse(self, *rows):
+        return gazette.GazetteParser('cy/law/2025/1_I').parse(gazette_lines(*rows))
+
+    def test_points_after_ano_teleia_and_lone_kai(self):
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2. Το άρθρο 5 τροποποιείται ως ακολούθως:'),
+            ('του άρθρου 5.', ''),
+            ('', '(α) με τη διαγραφή του εδαφίου (1Β)\u0387'),
+            ('', '(β) με τη διαγραφή του εδαφίου (3)·'),
+            ('', 'και'),
+            ('', '(γ) με τη διαγραφή του εδαφίου (4).'),
+        )
+        article = root.children[2]
+        self.assertEqual([point.num for point in article.children], ['(α)', '(β)', '(γ)'])
+
+    def test_law_number_in_margin_is_not_text(self):
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('', ''),
+            ('', '                  82(I) του 2020'),
+            ('', '                   25(Ι) του 2022.'),
+        )
+        self.assertEqual(len(root.children[1].paragraphs), 1)
+
+    def test_quote_ends_with_ano_teleia(self):
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('Τροποποίηση', '2. Το άρθρο 6 τροποποιείται ως ακολούθως:'),
+            ('', '(α) με την αντικατάσταση της φράσης «κατά τη διενέργεια» με τη φράση'),
+            ('', '«των αναλογιών.»\u0387'),
+            ('', '(β) με τη διαγραφή του εδαφίου (2).'),
+        )
+        points = root.children[2].children
+        self.assertEqual([point.num for point in points], ['(α)', '(β)'])
+        self.assertTrue(points[0].paragraphs[0].endswith('αναλογιών.»\u0387'))
+
+    def test_subsections_outside_quote(self):
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('Έναρξη', '2.-(1) Ο παρών Νόμος τίθεται σε ισχύ κατά τη δημοσίευσή του.'),
+            ('', '(2) Το άρθρο 1 τίθεται σε ισχύ την 1η Ιανουαρίου 2026.'),
+        )
+        self.assertEqual(len(root.children[2].paragraphs), 2)
+
+    def test_transcription_of_scan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / '49_I.txt'
+            path.write_text('α\nβ\n', encoding='utf-8')
+            self.assertEqual(layout.pdf_lines(path), ['α', 'β', ''])
 
 
 class OrderKeyTests(SimpleTestCase):
