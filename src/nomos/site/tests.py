@@ -1,7 +1,14 @@
 import datetime
 import html
+import os
 import re
+import secrets
+import subprocess
+import sys
+from pathlib import Path
+from urllib.parse import quote
 
+from django.contrib.auth.models import User
 from django.test import RequestFactory, TestCase, override_settings
 from django.utils import translation
 
@@ -31,6 +38,7 @@ class ViewerTests(TestCase):
     def setUpTestData(cls):
         today = datetime.date.today()
         cls.future_day = today + datetime.timedelta(days=100)
+        cls.reader = User.objects.create_user('reader')
         source = Source.objects.create(code='test', name='Тест')
         cls.law = Act.objects.create(
             uid='cy/law/2000/1_I',
@@ -535,7 +543,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Disallow: /')
         self.assertEqual(self.client.get('/admin/').status_code, 404)
         response = self.client.get('/about/')
-        self.assertContains(response, 'cookies')
+        self.assertContains(response, 'Cookie используется только для входа')
         self.assertContains(response, 'CC BY 4.0 — только наши переводы и разметка')
         self.assertContains(response, 'Ilia Tsigelnitskii')
 
@@ -808,6 +816,46 @@ class ViewerTests(TestCase):
         self.assertContains(self.client.get('/about/'), 'Автор проекта — Ilia Tsigelnitskii.')
 
 
+    def test_pages_open_without_login_by_default(self):
+        """NOMOS_PUBLIC_ONLY выключена: без входа видно всё; вход — отдельная страница."""
+        pages = [
+            '/',
+            '/cy/',
+            ACT_URL,
+            ACT_URL + 'art_1/',
+            ACT_URL + 'art_1.par_1/history/',
+            '/about/',
+            '/about/?lang=el',
+            '/login/',
+            '/robots.txt',
+        ]
+        for page in pages:
+            self.assertEqual(self.client.get(page).status_code, 200, page)
+        self.assertNotContains(self.client.get('/'), 'action="/logout/"')
+
+    def test_login_returns_only_to_own_address(self):
+        User.objects.create_user('editor', password='test-password-1')
+        self.client.logout()
+        credentials = {'username': 'editor', 'password': 'test-password-1'}
+        response = self.client.post('/login/', {**credentials, 'next': ACT_URL + 'art_1/'})
+        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
+        self.client.logout()
+        response = self.client.post('/login/', {**credentials, 'next': 'https://example.com/'})
+        self.assertRedirects(response, '/', fetch_redirect_response=False)
+
+    def test_logout_from_menu(self):
+        self.client.force_login(self.reader)
+        response = self.client.get('/')
+        self.assertContains(response, 'action="/logout/"')
+        response = self.client.post('/logout/')
+        self.assertRedirects(response, '/', fetch_redirect_response=False)
+        self.assertNotContains(self.client.get('/'), 'action="/logout/"')
+
+    def test_login_page_in_greek(self):
+        self.client.logout()
+        response = self.client.get('/login/', {'lang': 'el'})
+        self.assertContains(response, 'Σύνδεση')
+
 class SignedIn:
     """Пользователь запроса, вошедший на сайт (без записи в базе)."""
 
@@ -940,6 +988,43 @@ class PublicOnlyTests(TestCase):
         self.assertContains(response, 'unit--with-original')
         self.assertFalse(access.is_restricted())
 
+    def test_login_opens_everything_and_logout_hides_again(self):
+        """Настоящий вход через форму: со входом — всё, после выхода — только публичное."""
+        User.objects.create_user('editor', password='test-password-1')
+        self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
+        self.assertNotContains(self.client.get('/'), 'action="/logout/"')
+        response = self.client.post(
+            '/login/',
+            {'username': 'editor', 'password': 'test-password-1', 'next': ACT_URL + 'art_1/'},
+        )
+        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
+        response = self.client.get(ACT_URL + 'art_1/')
+        self.assertContains(response, 'Νέο κείμενο')
+        self.assertContains(self.client.get('/'), 'action="/logout/"')
+        self.client.post('/logout/')
+        self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
+
+
+    def test_anonymous_html_has_no_greek_letters(self):
+        """Без входа на ru в HTML нет греческих букв: ни текстов, ни названия газеты.
+
+        Подпись «Άρθρο 1» тоже: без греческого оригинала приставка — «Статья».
+        """
+        self.add_public_ru()
+        greek_letters = re.compile('[\u0370-\u03ff\u1f00-\u1fff]+')
+        for url in ['/', '/cy/', ACT_URL, ACT_URL + 'art_1/', '/login/']:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(greek_letters.findall(response.content.decode()), [])
+        self.assertContains(self.client.get(ACT_URL + 'art_1/'), 'Статья 1')
+
+    def test_gazette_name_in_greek_after_login(self):
+        """Вошедший видит отказ с греческим названием газеты, как без NOMOS_PUBLIC_ONLY."""
+        self.assertNotContains(self.client.get('/'), 'Επίσημη Εφημερίδα της Δημοκρατίας')
+        self.client.force_login(User.objects.create_user('editor'))
+        self.assertContains(self.client.get('/'), 'Επίσημη Εφημερίδα της Δημοκρατίας')
+
 
 class ActNumberTests(TestCase):
     """Номер в подписи: год не дублируется, если он уже в номере (акты ЕС)."""
@@ -958,3 +1043,30 @@ class ActNumberTests(TestCase):
                 self.assertEqual(reading.act_number(act), number)
                 label = reading.act_label(act)
                 self.assertTrue(label.endswith(' ' + number), label)
+
+
+class DeployCheckTests(TestCase):
+    """manage.py check --deploy при боевых значениях .env: только W021 (HSTS preload)."""
+
+    def test_check_deploy(self):
+        env = dict(
+            os.environ,
+            DJANGO_DEBUG='0',
+            DJANGO_SECRET_KEY='x' * 30 + secrets.token_urlsafe(40),
+            DJANGO_ALLOWED_HOSTS='example.org',
+            DJANGO_CSRF_TRUSTED_ORIGINS='https://example.org',
+            NOMOS_PUBLIC_ONLY='1',
+        )
+        env.pop('DJANGO_SETTINGS_MODULE', None)
+        env.pop('DJANGO_HTTPS', None)
+        result = subprocess.run(
+            [sys.executable, 'manage.py', 'check', '--deploy', '--fail-level', 'ERROR'],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # без сборки (npm run build) добавляется django_vite.W001 — к выкладке не относится
+        warnings = set(re.findall(r'\(([a-z_]+\.W\d+)\)', result.stderr))
+        self.assertEqual(warnings - {'django_vite.W001'}, {'security.W021'}, result.stderr)

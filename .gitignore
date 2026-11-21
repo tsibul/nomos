@@ -9,3 +9,6 @@ src/nomos/site/static/dist/
 
 # каталоги переводов собираются: uv run python src/manage.py compilemessages
 *.mo
+
+# статика для веб-сервера: uv run python src/manage.py collectstatic
+staticfiles/
