@@ -202,6 +202,11 @@ def interface_lang():
     return lang if lang in UI_LANGS else READER_LANG
 
 
+def original_lang(act):
+    """Язык оригинала акта: у кипрских — el, у актов ЕС — en (structure_lang)."""
+    return act.structure_lang or DEFAULT_LANG
+
+
 def act_number(act):
     """«95(I)/2000»; у актов ЕС год уже в номере, как в обозначении: «904/2010», «2025/517»."""
     number = act.number or ''
@@ -738,7 +743,8 @@ def build_nodes(structure, unit, route):
 def has_translation(node):
     """Есть ли на странице хоть один переведённый текст (одного заголовка мало)."""
     text = node.text
-    if text is not None and text.expression.lang != DEFAULT_LANG and text.body:
+    original = original_lang(node.fragment.act)
+    if text is not None and text.expression.lang != original and text.body:
         return True
     return any(has_translation(child) for child in node.children)
 
@@ -782,8 +788,8 @@ def attach_texts(nodes, route):
         by_version.setdefault(text.version_id, []).append(text)
     for node in nodes:
         found = by_version.get(node.version.id, [])
-        original = pick_text(found, DEFAULT_LANG)
-        if route.lang == DEFAULT_LANG:
+        original = pick_text(found, original_lang(route.act))
+        if route.lang == original_lang(route.act):
             node.text = original
         else:
             node.text = pick_text(found, route.lang)

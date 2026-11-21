@@ -544,7 +544,8 @@ def unit_page(request, route, structure, unit):
             'next': unit_link(next_unit, route),
             'future_dates': future_dates(root),
             'untranslated': (
-                route.lang != reading.DEFAULT_LANG and not reading.has_translation(root)
+                route.lang != reading.original_lang(route.act)
+                and not reading.has_translation(root)
             ),
             'translation': translation_expression(route),
         }
@@ -563,7 +564,7 @@ def toc_label(toc_items, fragment, version):
 
 def translation_expression(route):
     """Выражение перевода страницы — для строки «Источник перевода»."""
-    if route.lang == reading.DEFAULT_LANG:
+    if route.lang == reading.original_lang(route.act):
         return None
     expressions = route.act.expressions.select_related('source').filter(lang=route.lang)
     return access.expression_queryset(expressions).first()

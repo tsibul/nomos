@@ -44,33 +44,44 @@
     {% include 'site/parts/original_source.html' %}
   {% elif untranslated %}
     <p class="untranslated">
-      {% translate 'Перевод готовится — показан официальный греческий текст.' %}
+      {% if structure_lang == 'el' %}
+        {% translate 'Перевод готовится — показан официальный греческий текст.' %}
+      {% else %}
+        {% translate 'Перевод готовится — показан официальный английский текст.' %}
+      {% endif %}
     </p>
   {% elif original_source %}
-    <p class="draft-warning">
-      {{ translation_notice }}
-    </p>
+    {% include 'site/parts/translation_notice.html' %}
     {% include 'site/parts/original_source.html' %}
-  {% elif route.lang != 'el' %}
-    <p class="draft-warning">
-      {{ translation_notice }}
-    </p>
+  {% elif route.lang != structure_lang %}
+    {% include 'site/parts/translation_notice.html' %}
     <div class="original-switch">
+      {% if structure_lang == 'el' %}
+        {% translate 'Показать греческий текст рядом' as show_text %}
+        {% translate 'Скрыть греческий текст' as hide_text %}
+      {% else %}
+        {% translate 'Показать английский текст рядом' as show_text %}
+        {% translate 'Скрыть английский текст' as hide_text %}
+      {% endif %}
       {% if show_original %}
         <a
           class="original-switch__link"
           href="?{{ route.chain_params }}"
           data-original-toggle
+          data-show-text="{{ show_text }}"
+          data-hide-text="{{ hide_text }}"
         >
-          {% translate 'Скрыть греческий текст' %}
+          {{ hide_text }}
         </a>
       {% else %}
         <a
           class="original-switch__link"
           href="?orig=1{{ route.chain_tail }}"
           data-original-toggle
+          data-show-text="{{ show_text }}"
+          data-hide-text="{{ hide_text }}"
         >
-          {% translate 'Показать греческий текст рядом' %}
+          {{ show_text }}
         </a>
       {% endif %}
     </div>

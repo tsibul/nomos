@@ -1,7 +1,6 @@
-// Показ греческого оригинала рядом с переводом без перезагрузки.
+// Показ оригинала (греческого или английского) рядом с переводом без перезагрузки.
 // Без JS ссылка ведёт на ?orig=1; с JS меняется класс и адрес в истории.
-const SHOW_TEXT = 'Показать греческий текст рядом';
-const HIDE_TEXT = 'Скрыть греческий текст';
+// Подписи ссылки — из data-show-text и data-hide-text (на языке интерфейса).
 
 export function initOriginalToggle() {
   const unit = document.querySelector('[data-unit]');
@@ -19,7 +18,7 @@ export function initOriginalToggle() {
       url.searchParams.delete('orig');
     }
     window.history.replaceState(null, '', url);
-    toggle.textContent = shown ? HIDE_TEXT : SHOW_TEXT;
+    toggle.textContent = shown ? toggle.dataset.hideText : toggle.dataset.showText;
     toggle.href = shown ? '?' : '?orig=1';
   });
 }

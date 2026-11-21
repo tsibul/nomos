@@ -1163,3 +1163,95 @@ class FragmentLabelLangTests(TestCase):
         response = self.client.get(reading.build_url(self.act, lang='el'))
         self.assertContains(response, 'Άρθρο 1. Αντικείμενο')
         self.assertNotContains(response, 'Article 1')
+
+
+class EuOriginalLangTests(TestCase):
+    """У акта ЕС оригинал — английский: он рядом с переводом, на en-странице оригинала нет."""
+
+    @classmethod
+    def setUpTestData(cls):
+        source = Source.objects.create(code='test', name='Тест')
+        cls.act = Act.objects.create(
+            uid='eu/dir/2006/112',
+            jurisdiction='eu',
+            kind='dir',
+            number='2006/112',
+            year='2006',
+            structure_lang='en',
+        )
+        fragment = Fragment.objects.create(
+            uid='eu00000002',
+            act=cls.act,
+            kind='art',
+            eid='art_1',
+        )
+        amendment = Amendment.objects.create(
+            amending_act=cls.act,
+            kind='base',
+            key='base',
+            marker='base',
+        )
+        version = FragmentVersion.objects.create(
+            fragment=fragment,
+            key='base',
+            amendment=amendment,
+            num='1',
+            heading='',
+            known_from=datetime.date(2024, 1, 1),
+        )
+        bodies = {
+            'en': ('official_text', 'English text'),
+            'el': ('official_text', 'Ελληνικό κείμενο'),
+            'ru': ('our_translation', 'Русский текст'),
+        }
+        for lang, (status, body) in bodies.items():
+            expression = Expression.objects.create(
+                act=cls.act,
+                lang=lang,
+                status=status,
+                source=source,
+                title='Directive',
+            )
+            FragmentText.objects.create(
+                version=version,
+                expression=expression,
+                body=f'<p>{body}</p>',
+                text_hash=lang,
+            )
+
+    def page(self, lang, **query):
+        return self.client.get(reading.build_url(self.act, eid='art_1', lang=lang), query)
+
+    def test_en_page_has_no_original(self):
+        response = self.page('en', orig='1')
+        self.assertContains(response, 'English text')
+        self.assertNotContains(response, 'fragment__original')
+        self.assertNotContains(response, 'Ελληνικό κείμενο')
+        self.assertNotContains(response, 'data-original-toggle')
+        self.assertNotContains(response, 'draft-warning')
+
+    def test_ru_page_shows_english_original(self):
+        response = self.page('ru', orig='1')
+        self.assertContains(response, 'Русский текст')
+        self.assertContains(response, 'fragment__original')
+        self.assertContains(response, 'English text')
+        self.assertNotContains(response, 'Ελληνικό κείμενο')
+        self.assertContains(response, 'Скрыть английский текст')
+        self.assertContains(response, 'data-show-text="Показать английский текст рядом"')
+        self.assertContains(response, str(notices.TRANSLATION_NOTICE_EU))
+        self.assertNotContains(response, 'греческий')
+
+    def test_el_page_is_official_with_english_alongside(self):
+        response = self.page('el', orig='1')
+        self.assertContains(response, 'Ελληνικό κείμενο')
+        self.assertContains(response, 'English text')
+        self.assertContains(response, 'fragment__original')
+        self.assertContains(response, 'data-original-toggle')
+        self.assertNotContains(response, 'draft-warning')
+
+    def test_untranslated_lang_reports_english(self):
+        """Без перевода на языке страницы показан английский оригинал, а не греческий."""
+        FragmentText.objects.filter(expression__lang='ru').delete()
+        response = self.page('ru')
+        self.assertContains(response, 'показан официальный английский текст')
+        self.assertContains(response, 'English text')
