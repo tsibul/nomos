@@ -10,7 +10,9 @@ from unittest import skipUnless
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Amendment, Expression, Fragment, FragmentText, Reference
+from nomos.acts.models import (
+    ActRelation, Amendment, Expression, Fragment, FragmentText, Reference,
+)
 from nomos.translate.models import Note
 
 from .cylaw import history, numbering, refs, texts_xml
@@ -163,12 +165,25 @@ class VatLawTests(TestCase):
         self.assertTrue(found.filter(from_text__expression__lang='ru').exists())
         self.assertFalse(found.filter(resolved=False).exists())
         self.assertTrue(found.exclude(from_text__version__key=history.BASE_KEY).exists())
-        eid = found.get(
+        eids = found.filter(
             from_text__expression__lang='el',
             from_text__version__fragment__eid='art_11.par_5',
             from_text__version__key=history.BASE_KEY,
-        ).to_fragment.eid
-        self.assertEqual(eid, 'sch_7')
+        ).values_list('to_fragment__eid', flat=True)
+        self.assertIn('sch_7', list(eids))
+
+    def test_cross_act_references_resolved(self):
+        """Изменяющие акты ссылаются на статьи базового закона: el и ru, цели найдены."""
+        found = Reference.objects.exclude(
+            from_text__version__fragment__act__uid=LAW,
+        ).filter(to_act__uid=LAW)
+        self.assertTrue(found.filter(from_text__expression__lang='el').exists())
+        self.assertTrue(found.filter(from_text__expression__lang='ru').exists())
+        self.assertFalse(found.filter(resolved=False).exists())
+        self.assertFalse(found.filter(to_fragment=None).exists())
+        self.assertFalse(
+            found.exclude(to_fragment__act__uid=LAW).exists(),
+        )
 
     def test_expressions_not_public_by_default(self):
         self.assertFalse(Expression.objects.filter(public=True).exists())
@@ -432,6 +447,88 @@ class RefsTests(SimpleTestCase):
         # пункта нет — ссылка на статью
         self.assertEqual(self.marked('του άρθρου 6(7)')[1], ['art_6'])
 
+    def test_bare_paragraph_of_own_article(self):
+        """«εδάφιο (2)» без номера статьи — пункт своей статьи, если он есть."""
+        cases = [
+            ('του εδαφίου (2) πιο πάνω', refs.EL, ['art_5.par_2']),
+            ('τα εδάφια (1) και (2)', refs.EL, ['art_5.par_1', 'art_5.par_2']),
+            ('пункта (2) выше', refs.RU, ['art_5.par_2']),
+            ('Пункт (1) применяется', refs.RU, ['art_5.par_1']),
+            ('Без ущерба для пункта (2) Правила могут', refs.RU, ['art_5.par_2']),
+        ]
+        for text, language, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(self.marked(text, language, 'art_5')[1], expected)
+
+    def test_bare_paragraph_not_marked(self):
+        cases = [
+            ('του εδαφίου (7)', refs.EL, 'art_5.par_1', 'пункта нет в своей статье'),
+            ('του εδαφίου (2) του άρθρου 6', refs.EL, 'art_5.par_1', None),
+            ('του εδαφίου (2) αυτού', refs.EL, 'art_5.par_1',
+             'пункт с уточнением (другая статья или акт)'),
+            ('пункт (2) той же статьи', refs.RU, 'art_5.par_1',
+             'пункт с уточнением (другая статья или акт)'),
+            ('пункта (2) Закона о подоходном налоге', refs.RU, 'art_5.par_1',
+             'пункт с уточнением (другая статья или акт)'),
+            ('του εδαφίου (2)', refs.EL, 'sch_1', 'пункт без номера статьи'),
+        ]
+        for text, language, own, reason in cases:
+            with self.subTest(text=text):
+                _, found, skipped = self.marked(text, language, own)
+                self.assertNotIn('art_5.par_2', found)
+                if reason:
+                    self.assertEqual(skipped[reason], 1)
+        # «пункта (1)» внутри статьи 5, пункт 1 — ссылка на себя
+        self.assertEqual(self.marked('του εδαφίου (1)', own='art_5.par_1')[1], [])
+
+    def test_russian_article_in_paragraph_word(self):
+        """«пункта 9(4)» — статья 9, пункт 4; «пункта 2(α)» — не статья."""
+        self.assertEqual(self.marked('пункта 9(4) или (5)', refs.RU)[1],
+                         ['art_9.par_4', 'art_9.par_5'])
+        self.assertEqual(self.marked('пункта 5(β)', refs.RU)[1], [])
+
+    def amending(self, paragraphs, language=refs.EL, implicit=False):
+        marker = refs.Marker(refs.Targets(REF_EIDS), language, LAW, implicit=implicit)
+        return marker.mark_text(paragraphs, 'art_1') + (marker.skipped,)
+
+    def test_amending_act_marks_base_law(self):
+        """Изменяющий акт: статьи базового закона — межактовые ссылки."""
+        cases = [
+            ('το άρθρο 5 του βασικού νόμου', refs.EL),
+            ('του άρθρου 5 του περί Φόρου Προστιθέμενης Αξίας Νόμου', refs.EL),
+            ('статью 5 базового Закона', refs.RU),
+            ('статьи 5 Закона о налоге на добавленную стоимость', refs.RU),
+        ]
+        for text, language in cases:
+            with self.subTest(text=text):
+                paragraphs, found, _ = self.amending([text], language)
+                self.assertEqual(found, [LAW + '#art_5'])
+                self.assertIn('to="%s#art_5"' % LAW, paragraphs[0])
+                self.assertEqual(refs.strip_own_refs(paragraphs[0]), text)
+
+    def test_amending_act_quotes_and_own_articles(self):
+        """В кавычках «…» — текст базового закона, вне кавычек без указания акта — нет."""
+        paragraphs = [
+            'Το άρθρο 2 του παρόντος Νόμου τροποποιείται ως εξής:',
+            '«(1) Σύμφωνα με το άρθρο 8',
+            'και το Πέμπτο Παράρτημα.»',
+            'Το άρθρο 9 ισχύει.',
+        ]
+        _, found, skipped = self.amending(paragraphs)
+        self.assertEqual(found, [LAW + '#art_8', LAW + '#sch_5'])
+        self.assertEqual(skipped['ссылка на сам изменяющий акт'], 1)
+        self.assertEqual(skipped['акт не указан'], 1)
+        # ΚΔΠ изменяет только базовый закон: и без кавычек — его статьи
+        self.assertEqual(self.amending(['Το άρθρο 9 ισχύει.'], implicit=True)[1],
+                         [LAW + '#art_9'])
+        self.assertEqual(self.amending(['το άρθρο 9 του παρόντος Διατάγματος'],
+                                       implicit=True)[1], [])
+
+    def test_amending_act_skips_bare_paragraph(self):
+        _, found, skipped = self.amending(['«του εδαφίου (2) πιο πάνω»'])
+        self.assertEqual(found, [])
+        self.assertEqual(skipped['пункт без номера статьи'], 1)
+
     def test_translation_ids_follow_greek(self):
         marked = refs.align_ids(
             '<ref id="r1" to="art_9">статьи 9</ref> и <ref id="r2" to="art_8">8</ref>',
@@ -493,3 +590,63 @@ class PublicAttributeTests(TestCase):
         self.assertEqual(
             dict(Expression.objects.values_list('lang', 'public')), {'el': True, 'ru': True},
         )
+
+
+GUIDE = 'cy/instr/2024/vat_return_guide'
+
+
+@skipUnless((TEXTS_DIR / GUIDE / 'act.xml').exists(), 'нет Nomos-texts с руководством по НДС')
+class VatReturnGuideTests(TestCase):
+    """Загрузка руководства по заполнению декларации НДС из Nomos-texts (только чтение)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=StringIO())
+
+    def test_act_and_relation(self):
+        relation = ActRelation.objects.get(from_act__uid=GUIDE)
+        self.assertEqual(relation.from_act.kind, 'instr')
+        self.assertEqual((relation.kind, relation.to_act.uid), ('explains', LAW))
+        sources = dict(
+            Expression.objects.filter(act__uid=GUIDE).values_list('lang', 'source__code')
+        )
+        self.assertEqual(sources.pop('el'), 'cy-tax')
+        # русский перевод может быть, а может ещё не быть
+        self.assertLessEqual(set(sources), {'ru'})
+        if 'ru' in sources:
+            self.assertEqual(sources['ru'], 'nomos')
+
+    def test_fields(self):
+        fields = Fragment.objects.filter(act__uid=GUIDE, kind='fld')
+        self.assertEqual(
+            sorted(fields.values_list('eid', flat=True)),
+            sorted(
+                'fld_%s' % num
+                for num in ['1', '2', '3', '4', '5', '6', '7', '8A', '8B', '9', '10', '11A', '11B']
+            ),
+        )
+        self.assertTrue(all(field.parent.eid == 'sct_G' for field in fields))
+
+    def test_greek_refs(self):
+        texts = FragmentText.objects.filter(version__fragment__act__uid=GUIDE)
+        greek = texts.filter(expression__lang='el')
+        self.assertEqual(greek.count(), 145)
+        references = Reference.objects.filter(from_text__in=greek)
+        self.assertEqual(references.count(), 28)
+        self.assertFalse(references.filter(resolved=False).exists())
+        self.assertFalse(references.exclude(to_act__uid=LAW).exists())
+
+    def test_translation_if_present(self):
+        """Русский — если перевод уже есть: фрагменты те же, ссылки разрешены."""
+        texts = FragmentText.objects.filter(version__fragment__act__uid=GUIDE)
+        russian = texts.filter(expression__lang='ru')
+        if not russian.exists():
+            self.skipTest('перевода руководства ещё нет')
+        greek_fragments = set(
+            texts.filter(expression__lang='el').values_list('version__fragment', flat=True)
+        )
+        self.assertLessEqual(
+            greek_fragments, set(russian.values_list('version__fragment', flat=True)),
+        )
+        references = Reference.objects.filter(from_text__in=russian)
+        self.assertFalse(references.filter(resolved=False).exists())

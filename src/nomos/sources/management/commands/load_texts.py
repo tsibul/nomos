@@ -46,6 +46,13 @@ SOURCES = {
             ' аутентичен текст в Official Journal; CC BY 4.0'
         ),
     },
+    # сайт Τμήμα Φορολογίας на gov.cy; условия использования не выяснены
+    'cy-tax': {
+        'name': 'Τμήμα Φορολογίας (Tax Department), gov.cy',
+        'url': 'https://www.gov.cy/mof-tax/documents/ypovoli-tropopoiisi-diloseon-f-p-a/',
+        'publisher': 'Τμήμα Φορολογίας Κύπρου',
+        'attribution': 'Τμήμα Φορολογίας Κύπρου, www.gov.cy',
+    },
     # собственный перевод проекта, не внешний сайт (LICENSE-CONTENT)
     'nomos': {
         'name': 'Неофициальный перевод',

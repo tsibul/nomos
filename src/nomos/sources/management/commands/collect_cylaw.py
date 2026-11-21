@@ -133,7 +133,7 @@ def expired_version(day, base_ref):
 def write(folder, info, versions, notes=(), marker=None):
     """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут.
 
-    marker — разметка ссылок (только у закона); его found: {(uid, редакция): [цели]}."""
+    marker — разметка ссылок; его found: {(uid, редакция): [цели]}."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
     texts_xml.write_act(act_path, info, versions, uids)
@@ -160,20 +160,24 @@ def write(folder, info, versions, notes=(), marker=None):
     return len(inline)
 
 
-def mark_translation(folder, marker):
-    """Ссылки в ru.xml закона теми же правилами; строки отчёта."""
-    lines = ['ссылок el: %d; не размечено el: %s' % (
-        sum(len(found) for found in marker.found.values()), skipped_text(marker.skipped),
+def mark_translation(folder, marker, prefix=''):
+    """Ссылки в ru.xml акта теми же правилами; строки отчёта."""
+    lines = ['%sссылок el: %d; не размечено el: %s' % (
+        prefix,
+        sum(len(found) for found in marker.found.values()),
+        skipped_text(marker.skipped),
     )]
     path = folder / 'ru.xml'
     if not path.exists():
         return lines
     eid_by_uid = {uid: eid for eid, uid in texts_xml.existing_uids(folder / 'act.xml').items()}
     skipped, differences, total = refs.mark_translation(
-        path, marker.targets, eid_by_uid, marker.found,
+        path, marker.targets, eid_by_uid, marker.found, marker.act, marker.implicit,
     )
-    lines.append('ссылок ru: %d; не размечено ru: %s' % (total, skipped_text(skipped)))
-    lines.append('текстов, где цели el и ru расходятся: %d' % len(differences))
+    lines.append('%sссылок ru: %d; не размечено ru: %s' % (
+        prefix, total, skipped_text(skipped),
+    ))
+    lines.append('%sтекстов, где цели el и ru расходятся: %d' % (prefix, len(differences)))
     for eid, key, el_targets, ru_targets in differences[:5]:
         lines.append('  %s (%s): el %s, ru %s' % (eid, key, el_targets, ru_targets))
     return lines
@@ -227,12 +231,20 @@ class Command(BaseCommand):
                 version.known_from = amending.published_on
                 version.paragraphs = list(node.paragraphs)
                 amending_versions[node] = [version]
+            # ссылки на базовый закон; у ΚΔΠ своих статей нет — без указания акта тоже он
+            amending_marker = refs.Marker(
+                marker.targets, refs.EL, info.uid, implicit=amending.kind != 'law',
+            )
             write(
                 root_dir / amending.uid,
                 amending_info(amending, info.uid, title),
                 amending_versions,
                 [act_notes[amending.uid]] if amending.uid in act_notes else [],
+                amending_marker,
             )
+            report.extend(mark_translation(
+                root_dir / amending.uid, amending_marker, amending.uid + ': ',
+            ))
             provisions = {node.eid for node in amending_versions}
             for op in amending.ops:
                 if op.provision not in provisions:

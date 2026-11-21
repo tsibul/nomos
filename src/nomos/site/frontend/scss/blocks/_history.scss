@@ -50,3 +50,13 @@
 .history__back-link {
   font-weight: 600;
 }
+
+// Изменения вложенных пунктов: заголовок раздела и номер пункта
+.history__heading {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1.125rem;
+}
+
+.history__place {
+  font-weight: 600;
+}

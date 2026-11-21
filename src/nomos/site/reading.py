@@ -26,6 +26,8 @@ from nomos.acts.models import (
 )
 from nomos.translate.models import Note
 
+from . import access
+
 
 EARLIEST = datetime.date(2024, 1, 1)
 LANGS = ('el', 'en', 'ru')
@@ -143,12 +145,19 @@ def parse_path(path):
 
 def default_lang(act):
     """Язык адреса без языка: русский, если у акта есть русский текст, иначе язык оригинала."""
-    cached = getattr(act, '_default_lang', None)
-    if cached is None:
-        langs = {expression.lang for expression in act.expressions.all()}
-        cached = READER_LANG if READER_LANG in langs else act.structure_lang or DEFAULT_LANG
-        act._default_lang = cached
-    return cached
+    restricted = access.is_restricted()
+    cache = act.__dict__.setdefault('_default_lang', {})
+    if restricted not in cache:
+        langs = access.visible_langs(act)
+        structure_lang = act.structure_lang or DEFAULT_LANG
+        if READER_LANG in langs:
+            cache[restricted] = READER_LANG
+        elif restricted and structure_lang not in langs and langs:
+            # оригинал скрыт: первый видимый язык
+            cache[restricted] = [lang for lang in LANGS if lang in langs][0]
+        else:
+            cache[restricted] = structure_lang
+    return cache[restricted]
 
 
 def build_url(act, on=None, eid=None, lang=None, history=False):
@@ -209,10 +218,15 @@ def act_title(act, lang=DEFAULT_LANG):
 
 def act_title_lang(act, lang=DEFAULT_LANG):
     """Название и его язык (для атрибута lang): на языке чтения, иначе на опорном."""
-    expressions = list(act.expressions.all())
+    expressions = access.expressions(act)
     for wanted in (lang, act.structure_lang or DEFAULT_LANG, DEFAULT_LANG):
         for expression in expressions:
             if expression.lang == wanted and expression.title:
+                return expression.title, expression.lang
+    if access.is_restricted():
+        # оригинал скрыт: название любого видимого выражения
+        for expression in expressions:
+            if expression.title:
                 return expression.title, expression.lang
     return '', wanted
 
@@ -244,7 +258,7 @@ def act_short_label(act, lang=DEFAULT_LANG):
 
 def stored_short_label(act, lang):
     """short_title выражения на языке чтения, иначе на опорном; нет — None."""
-    expressions = list(act.expressions.all())
+    expressions = access.expressions(act)
     for wanted in (lang, act.structure_lang or DEFAULT_LANG):
         for expression in expressions:
             if expression.lang == wanted and expression.short_title:
@@ -332,8 +346,9 @@ def number_sort_key(number):
 
 def act_langs(act):
     """Языки переключателя: язык оригинала и те, на которые есть тексты акта."""
-    present = {expression.lang for expression in act.expressions.all()}
-    present.add(act.structure_lang or DEFAULT_LANG)
+    present = set(access.visible_langs(act))
+    if not access.is_restricted():
+        present.add(act.structure_lang or DEFAULT_LANG)
     return [lang for lang in LANGS if lang in present]
 
 
@@ -356,7 +371,7 @@ def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
     structure_lang = fragment.act.structure_lang or DEFAULT_LANG
     if version is None:
         return Label(fragment.eid, structure_lang)
-    heading = version.heading
+    heading = structure_heading(fragment.act, version)
     label_lang = structure_lang
     translated = (headings or {}).get(version.id)
     if translated:
@@ -378,13 +393,20 @@ def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
     return Label(fragment.get_kind_display(), structure_lang)
 
 
+def structure_heading(act, version):
+    """Заголовок из редакции (на языке оригинала); оригинал скрыт — пустой."""
+    if access.lang_visible(act, act.structure_lang or DEFAULT_LANG):
+        return version.heading
+    return ''
+
+
 def translated_headings(versions, lang):
     """Заголовки перевода одним запросом: {id редакции: заголовок}."""
     if lang == DEFAULT_LANG:
         return {}
     ids = [version.id for version in versions if version is not None]
     texts = (
-        FragmentText.objects.filter(version__in=ids, expression__lang=lang)
+        access.texts(FragmentText.objects.filter(version__in=ids, expression__lang=lang))
         .exclude(heading='')
         .values_list('version_id', 'heading')
     )
@@ -395,10 +417,13 @@ def translated_units(structure, lang):
     """id страниц, где переведён хоть один текст (любой редакции); один заголовок не в счёт."""
     if lang == DEFAULT_LANG:
         return None
-    fragment_ids = FragmentText.objects.filter(
+    texts = FragmentText.objects.filter(
         version__fragment__act=structure.act,
         expression__lang=lang,
-    ).exclude(body='').values_list('version__fragment_id', flat=True)
+    )
+    fragment_ids = (
+        access.texts(texts).exclude(body='').values_list('version__fragment_id', flat=True)
+    )
     units = set()
     for fragment_id in set(fragment_ids):
         unit = structure.unit_of(structure.by_id[fragment_id])
@@ -573,7 +598,7 @@ class Node:
         if self.text is not None and self.text.heading:
             return Label(self.text.heading, self.text.expression.lang)
         structure_lang = self.fragment.act.structure_lang or DEFAULT_LANG
-        return Label(self.version.heading, structure_lang)
+        return Label(structure_heading(self.fragment.act, self.version), structure_lang)
 
     @property
     def start(self):
@@ -647,6 +672,9 @@ def reference_url(reference, route):
         return None
     if reference.to_act is None:
         return reference.external_url or None
+    if not access.act_visible(reference.to_act):
+        # цель скрыта от посетителя: ссылка остаётся текстом
+        return None
     on = route.on
     if reference.mode == reference.Mode.AT_DATE and reference.to_date:
         on = reference.to_date
@@ -711,10 +739,12 @@ def link_node(node, route):
     amendment = node.introduced if node.version is not None else None
     if amendment is not None:
         provision = amendment.amending_fragment
-        node.introduced_url = build_url(
-            amendment.amending_act,
-            eid=provision.eid if provision else None,
-        )
+        if access.act_visible(amendment.amending_act):
+            # скрытый изменяющий акт — номером, без ссылки
+            node.introduced_url = build_url(
+                amendment.amending_act,
+                eid=provision.eid if provision else None,
+            )
         node.introduced_label = act_label(amendment.amending_act)
         if provision is not None:
             node.introduced_label += f', {provision.eid}'
@@ -722,7 +752,7 @@ def link_node(node, route):
 
 def attach_texts(nodes, route):
     texts = (
-        FragmentText.objects.filter(version__in=[node.version for node in nodes])
+        access.texts(FragmentText.objects.filter(version__in=[node.version for node in nodes]))
         .select_related('expression', 'translated_from')
         .prefetch_related('notes', 'references__to_act', 'references__to_fragment')
     )
