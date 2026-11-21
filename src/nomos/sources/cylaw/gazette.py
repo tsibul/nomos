@@ -9,7 +9,8 @@ import re
 from . import layout
 from .tree import Node
 
-DATE_RE = re.compile(r'^\s*\d{1,2}\.\d{1,2}\.\d{4}\.?\s*$')
+# дата в поле, бывает с пробелом вместо точки: «7.12.2007», «6.10 2017.»
+DATE_RE = re.compile(r'^\s*\d{1,2}\.\d{1,2}[.\s]\s*\d{4}\.?\s*$')
 LABEL_RE = re.compile(r'^(\(\w{1,5}\)|\d+\.)$')
 GAP_RE = re.compile(r'\S(\s{3,})\S')
 FIRST_ARTICLE_RE = re.compile(r'(?<!\S)(?P<num>[12])\.\s*(Ο|Η|Το|Οι)\s+παρ')
@@ -23,6 +24,9 @@ END_RE = re.compile(r'^\s*(_{5,}|[TΤ]υπώθηκε)')
 HEADER_RE = re.compile(r'^\s*(Ε\.Ε\.\s*Παρ\.|Αρ\.\s*\d+,|Αριθμός\s+\d+|\d{3,5}\s*$)')
 # перенос слова в конце строки: «Τροπο- ποιητικός» → «Τροποποιητικός»
 HYPHEN_RE = re.compile(r'([α-ρσ-ωάέήίόύώϊϋΐΰ])- ([α-ωάέήίόύώϊϋΐΰ])')
+# «… των εδαφίων (4) και» — перечень номеров продолжается на следующей строке
+LABEL_AND_RE = re.compile(r'\(\w{1,5}\)\s+(και|ή)$')
+INNER_GAP_RE = re.compile(r'\S(\s{4,})\S')
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -48,6 +52,51 @@ def split_line(line, column):
     return '', line.strip()
 
 
+def text_start(line):
+    """Начало текста строки: после поля внутри цитаты, если оно есть, иначе отступ."""
+    indent = len(line) - len(line.lstrip())
+    match = INNER_GAP_RE.search(line, indent)
+    if match and not LABEL_RE.match(line[indent:match.start(1) + 1].strip()):
+        return match.end(1) - 1
+    return indent
+
+
+def neighbour(lines, index, step):
+    index += step
+    while 0 <= index < len(lines):
+        if lines[index].strip():
+            return lines[index]
+        index += step
+    return ''
+
+
+def inner_margin(lines, index, column):
+    """Поле внутри цитаты: левее текста соседних строк, отбито пробелами.
+
+    В цитате с отступом ссылки на законы и Επίσημη Εφημερίδα стоят своей колонкой
+    («216(Ι) του 2022    (α)   γονική άδεια …»). Возвращает текст без поля или None."""
+    line = lines[index]
+    indent = len(line) - len(line.lstrip())
+    match = INNER_GAP_RE.search(line, indent)
+    if indent < column - 3 and (match is None or match.end(1) - 1 < column):
+        # поле левее колонки текста, заходящее за неё («15(Ι) του 2024.      άδεια …»)
+        return None
+    around = [text_start(neighbour(lines, index, step)) for step in (-1, 1)]
+    if match is None:
+        # строка поля целиком: «Τρίτο (Ι):»
+        short = len(line.strip()) <= 30 and '«' not in line and '»' not in line
+        if short and indent < around[0] - 8:
+            return ''
+        return None
+    left = line[indent:match.start(1) + 1].strip()
+    start = match.end(1) - 1
+    if LABEL_RE.match(left) or len(left) > 30 or '«' in left or '»' in left:
+        return None
+    if start - indent < 8 or not any(abs(start - other) <= 2 for other in around):
+        return None
+    return line[start:].strip()
+
+
 def body_column(lines):
     for line in lines:
         match = FIRST_ARTICLE_RE.search(line)
@@ -67,16 +116,23 @@ class GazetteParser:
         self.heading_open = False
         self.quote_depth = 0
         self.paragraph = []
+        self.last_text = ''
         self.expected = 1
 
     def parse(self, lines):
         column, self.expected = body_column(lines)
-        for line in lines:
+        for index, line in enumerate(lines):
             if END_RE.match(line) and self.article is not None:
                 break
             if HEADER_RE.match(line):
                 continue
             margin, body = split_line(line, column)
+            # в преамбуле (шапка газеты до статьи 1) полей внутри цитат нет
+            if body and not margin and self.article is not None:
+                inner = inner_margin(lines, index, column)
+                if inner is not None:
+                    # поле внутри цитаты — не заголовок статьи, в текст не идёт
+                    body = inner
             self.feed(margin, body)
         self.flush()
         return self.root
@@ -89,7 +145,9 @@ class GazetteParser:
                 body = match.group('rest')
                 margin = ''
             point = POINT_RE.match(body) if self.article else None
-            if point and self.ends_sentence():
+            # первый пункт статьи — (α): «(β)» из цитаты без (α) — не пункт
+            first = self.point is None and point and point.group('num') != 'α'
+            if point and not first and self.ends_sentence():
                 self.open_point(point.group('num'))
                 body = point.group('rest')
         if margin and self.heading_open:
@@ -103,18 +161,29 @@ class GazetteParser:
         if self.paragraph and self.quote_depth > 0 and ITEM_RE.match(body):
             if self.ends_sentence():
                 self.flush()
+        opens = self.quote_depth == 0 and body.startswith('«') and self.after_colon()
         self.paragraph.append(body)
         self.quote_depth += body.count('«') - body.count('»')
+        if opens and self.quote_depth == 0 and not body.rstrip().endswith('».'):
+            # «γονική άδεια» σημαίνει- после «ορισμό:» — кавычка цитаты совпала с
+            # кавычкой термина; цитата закрывается позже
+            self.quote_depth = 1
         if self.quote_depth < 0:
             self.quote_depth = 0
         if self.quote_depth == 0 and body.endswith(('».', '»:', '»·', '»\u0387', '»;', '»∙')):
             self.flush()
+
+    def after_colon(self):
+        last = self.paragraph[-1] if self.paragraph else self.last_text
+        return last.rstrip().endswith(':')
 
     def ends_sentence(self):
         if not self.paragraph:
             return True
         # «και» на своей строке; ano teleia (U+0387) — как «·»
         last = ' ' + self.paragraph[-1].rstrip().replace('\u0387', '·')
+        if LABEL_AND_RE.search(last):
+            return False
         return layout.ends_sentence(last)
 
     def open_article(self, num, margin):
@@ -148,6 +217,7 @@ class GazetteParser:
             return
         text = HYPHEN_RE.sub(r'\1\2', layout.join_lines(self.paragraph))
         self.owner().paragraphs.append(text)
+        self.last_text = text
         self.paragraph = []
 
 

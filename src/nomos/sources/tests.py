@@ -441,6 +441,13 @@ class ConsolidatedTests(SimpleTestCase):
             'art_7.par_1.pnt_b',
         ])
 
+    def test_schedule_heading_masculine(self):
+        """«ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010) — приложение, как «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ»."""
+        for heading in ('ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ', 'ΔΕΚΑΤΟ ΤΡΙΤΟ ΠΑΡΑΡΤΗΜΑ', 'ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ',
+                        'ΤΕΤΑΡΤΟΣ ΠΙΝΑΚΑΣ'):
+            self.assertIsNotNone(consolidated.SCHEDULE_RE.match(heading), heading)
+        self.assertIsNone(consolidated.SCHEDULE_RE.match('ΠΙΝΑΚΑΣ'))
+
     def test_history_with_heading(self):
         self.assertTrue(consolidated.is_history('Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018'))
         self.assertTrue(consolidated.is_history('95(I)/2000 10(I)/2024'))
@@ -517,6 +524,24 @@ class GazetteTests(SimpleTestCase):
             ('', '                   25(Ι) του 2022.'),
         )
         self.assertEqual(len(root.children[1].paragraphs), 1)
+
+    def test_margin_crossing_text_column_inside_quote(self):
+        """«15(Ι) του 2024.» заходит за колонку текста (15/2024): поле, а не текст."""
+        lines = gazette_lines(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Προσθήκη.', '2. Μετά το άρθρο 102 προστίθεται το ακόλουθο νέο άρθρο:'),
+            ('', '«103. Οι διατάξεις του περί Δοκιμής Νόμου'),
+            ('', '      του 2024, τυγχάνουν εφαρμογής και σε ασφαλισμένη που βρίσκεται σε'),
+        )
+        lines += [
+            ' ' * 8 + '15(Ι) του 2024.     άδεια μητρότητας κατά την ημερομηνία έναρξης',
+            ' ' * 28 + 'της ισχύος του Νόμου.».',
+        ]
+        root = gazette.GazetteParser('cy/law/2025/1_I').parse(lines)
+        text = ' '.join(root.children[2].paragraphs)
+        self.assertIn('βρίσκεται σε άδεια μητρότητας', text)
+        self.assertNotIn('15(Ι)', text)
 
     def test_quote_ends_with_ano_teleia(self):
         root = self.parse(
@@ -940,3 +965,73 @@ class TaxCollectionLawTests(TestCase):
         eid = 'art_50ST.par_1'
         self.assertIn('τέσσερις χιλιάδες ευρώ', self.text(eid, datetime.date(2025, 12, 31)))
         self.assertIn('έξι χιλιάδες ευρώ', self.text(eid, datetime.date(2026, 1, 1)))
+
+
+SOCIAL_LAW = 'cy/law/2010/59_I'
+
+
+@skipUnless(
+    (TEXTS_DIR / SOCIAL_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 59(I)/2010',
+)
+class SocialInsuranceLawTests(TestCase):
+    """Сборка и загрузка закона о социальном страховании 59(Ι)/2010."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', SOCIAL_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=SOCIAL_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / SOCIAL_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / SOCIAL_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_all_ops_applied(self):
+        """Неизвестен только прежний текст замен целиком; прочие изменения сняты."""
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_maternity_weeks_by_law_15_2024(self):
+        eid = 'art_29.par_4.pnt_a'
+        self.assertIn('δεκαοκτώ (18)', self.text(eid, datetime.date(2024, 2, 29)))
+        self.assertIn('είκοσι δύο (22)', self.text(eid, datetime.date(2024, 3, 1)))
+
+    def test_fine_by_law_127_2024(self):
+        eid = 'art_85A.par_1'
+        self.assertIn('πεντακόσιων ευρώ', self.text(eid, datetime.date(2024, 11, 14)))
+        self.assertIn('χιλίων ευρώ', self.text(eid, datetime.date(2024, 11, 15)))
+
+    def test_parental_leave_change_from_march_2025(self):
+        eid = 'art_29B.par_2.sub_2'
+        self.assertIsNone(self.version(eid, datetime.date(2025, 3, 30)))
+        self.assertEqual(self.version(eid, datetime.date(2025, 3, 31)).state, 'active')
+
+    def test_schedules_parsed(self):
+        eids = set(Fragment.objects.filter(act__uid=SOCIAL_LAW).values_list('eid', flat=True))
+        self.assertLessEqual({'sch_1', 'sch_7', 'sch_3.par_8'}, eids)
