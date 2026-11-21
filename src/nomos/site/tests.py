@@ -1,6 +1,11 @@
 import datetime
 import html
+import os
 import re
+import secrets
+import subprocess
+import sys
+from pathlib import Path
 from urllib.parse import quote
 
 from django.contrib.auth.models import User
@@ -1000,6 +1005,27 @@ class PublicOnlyTests(TestCase):
         self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
 
 
+    def test_anonymous_html_has_no_greek_letters(self):
+        """Без входа на ru в HTML нет греческих букв: ни текстов, ни названия газеты.
+
+        Подпись «Άρθρο 1» тоже: без греческого оригинала приставка — «Статья».
+        """
+        self.add_public_ru()
+        greek_letters = re.compile('[\u0370-\u03ff\u1f00-\u1fff]+')
+        for url in ['/', '/cy/', ACT_URL, ACT_URL + 'art_1/', '/login/']:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(greek_letters.findall(response.content.decode()), [])
+        self.assertContains(self.client.get(ACT_URL + 'art_1/'), 'Статья 1')
+
+    def test_gazette_name_in_greek_after_login(self):
+        """Вошедший видит отказ с греческим названием газеты, как без NOMOS_PUBLIC_ONLY."""
+        self.assertNotContains(self.client.get('/'), 'Επίσημη Εφημερίδα της Δημοκρατίας')
+        self.client.force_login(User.objects.create_user('editor'))
+        self.assertContains(self.client.get('/'), 'Επίσημη Εφημερίδα της Δημοκρατίας')
+
+
 class ActNumberTests(TestCase):
     """Номер в подписи: год не дублируется, если он уже в номере (акты ЕС)."""
 
@@ -1017,3 +1043,29 @@ class ActNumberTests(TestCase):
                 self.assertEqual(reading.act_number(act), number)
                 label = reading.act_label(act)
                 self.assertTrue(label.endswith(' ' + number), label)
+
+
+class DeployCheckTests(TestCase):
+    """manage.py check --deploy при боевых значениях .env: только W021 (HSTS preload)."""
+
+    def test_check_deploy(self):
+        env = dict(
+            os.environ,
+            DJANGO_DEBUG='0',
+            DJANGO_SECRET_KEY='x' * 30 + secrets.token_urlsafe(40),
+            DJANGO_ALLOWED_HOSTS='example.org',
+            DJANGO_CSRF_TRUSTED_ORIGINS='https://example.org',
+            NOMOS_PUBLIC_ONLY='1',
+        )
+        env.pop('DJANGO_SETTINGS_MODULE', None)
+        env.pop('DJANGO_HTTPS', None)
+        result = subprocess.run(
+            [sys.executable, 'manage.py', 'check', '--deploy', '--fail-level', 'ERROR'],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('security.W021', result.stderr)
+        self.assertIn('1 issue', result.stderr)

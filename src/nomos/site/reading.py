@@ -379,6 +379,9 @@ def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
         return Label(fragment.eid, structure_lang)
     heading = structure_heading(fragment.act, version)
     label_lang = structure_lang
+    if not access.lang_visible(fragment.act, structure_lang):
+        # оригинал скрыт: приставка («Статья») — на языке перевода или интерфейса
+        label_lang = lang if lang != structure_lang else interface_lang()
     translated = (headings or {}).get(version.id)
     if translated:
         heading = translated
