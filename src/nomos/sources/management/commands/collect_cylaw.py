@@ -136,6 +136,11 @@ def write(folder, info, versions, notes=(), marker=None):
     marker — разметка ссылок; его found: {(uid, редакция): [цели]}."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
+    lost = texts_xml.lost_uids(folder, uids)
+    if lost:
+        raise CommandError('%s: пересборка убирает фрагменты с переводом: %s' % (
+            info.uid, ', '.join('%s (%s)' % item for item in lost),
+        ))
     texts_xml.write_act(act_path, info, versions, uids)
     inline = []
     for node, node_versions in versions.items():

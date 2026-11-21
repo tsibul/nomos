@@ -142,6 +142,12 @@ class VatLawTests(TestCase):
         self.assertEqual(russian.source.name, 'Неофициальный перевод')
         self.assertTrue(FragmentText.objects.filter(expression__lang='ru').exists())
 
+    def test_rebuild_keeps_uids(self):
+        """Множество uid 95(Ι)/2000 после пересборки — прежнее."""
+        before = set(texts_xml.existing_uids(TEXTS_DIR / LAW / 'act.xml').values())
+        after = set(texts_xml.existing_uids(self.copy / LAW / 'act.xml').values())
+        self.assertEqual(after, before)
+
     def test_short_titles_kept(self):
         short = dict(
             Expression.objects.filter(act__uid=LAW).values_list('lang', 'short_title')
@@ -783,6 +789,32 @@ class PublicAttributeTests(TestCase):
         self.assertEqual(
             dict(Expression.objects.values_list('lang', 'public')), {'el': True, 'ru': True},
         )
+
+
+
+class LostUidsTests(SimpleTestCase):
+    """Пересборка не убирает фрагменты, у которых есть перевод."""
+
+    def test_translated_fragment_lost(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'act.xml').write_text(
+                '<act uid="cy/law/2000/1_I">\n'
+                '  <fragment uid="aaaaaaaaaa" kind="art" eid="art_1" />\n'
+                '  <fragment uid="bbbbbbbbbb" kind="art" eid="art_2" />\n'
+                '  <fragment uid="cccccccccc" kind="art" eid="art_3" />\n'
+                '</act>\n',
+                encoding='utf-8',
+            )
+            (root / 'ru.xml').write_text(
+                '<texts>\n'
+                '  <text fragment="bbbbbbbbbb" version="base"><p>Статья 2</p></text>\n'
+                '</texts>\n',
+                encoding='utf-8',
+            )
+            # art_2 с переводом и art_3 без него пропали из сборки
+            lost = texts_xml.lost_uids(root, {'art_1': 'aaaaaaaaaa'})
+        self.assertEqual(lost, [('art_2', 'bbbbbbbbbb')])
 
 
 GUIDE = 'cy/instr/2024/vat_return_guide'
