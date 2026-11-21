@@ -9,7 +9,14 @@ from django.utils.http import urlencode
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy, gettext_noop
 
-from nomos.acts.models import Act, ActRelation, Expression, Fragment, FragmentVersion
+from nomos.acts.models import (
+    Act,
+    ActRelation,
+    Expression,
+    Fragment,
+    FragmentVersion,
+    Reference,
+)
 from nomos.sources.models import Source
 
 from . import access, menu, notices, reading, ui
@@ -276,8 +283,8 @@ def return_target(path, at, lang):
     """Страница возврата из параметра адреса и место на ней: (route, at) или None.
 
     Адрес собирается заново из разобранного пути — только страницы актов сайта.
-    Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта,
-    к пункту ссылки: якоря ссылок (`r1`, `r2`…) в каждом языке свои.
+    Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта:
+    к месту ссылки, если такая ссылка есть и в тексте этого языка, иначе к её пункту.
     """
     if not path.startswith('/') or path.startswith('//'):
         return None
@@ -289,8 +296,26 @@ def return_target(path, at, lang):
         at = ''
     if lang != route.lang and lang in reading.act_langs(route.act):
         route.lang = lang
-        at = fragment_of_anchor(at)
+        if not anchor_in_lang(route.act, at, lang):
+            at = fragment_of_anchor(at)
     return route, at
+
+
+def anchor_in_lang(act, at, lang):
+    """Есть ли место ссылки `ref-<пункт>-<якорь>` в тексте акта на языке lang.
+
+    id у ссылки ставится, только когда её цель найдена (`reading.render_body`).
+    """
+    if not at.startswith('ref-'):
+        return False
+    eid, _sep, anchor = at.removeprefix('ref-').rpartition('-')
+    return Reference.objects.filter(
+        from_text__version__fragment__act=act,
+        from_text__version__fragment__eid=eid,
+        from_text__expression__lang=lang,
+        anchor=anchor,
+        resolved=True,
+    ).exists()
 
 
 def chain_target(request, lang):

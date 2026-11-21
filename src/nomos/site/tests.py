@@ -735,7 +735,7 @@ class ViewerTests(TestCase):
         chain = {'start': start, 'start_at': 'ref-art_1.par_1-r1'}
         page = '/cy/law/2024/2_I/@2025-06-01/art_2/'
         response = self.client.get(page, {'from': start, 'at': 'ref-art_1.par_1-r1'})
-        # смена языка: на русском — к пункту ссылки русской страницы A
+        # смена языка: в русском тексте этой ссылки нет — к её пункту русской страницы A
         response = self.client.get(ACT_URL + '@2025-06-01/art_1/', chain)
         self.assertEqual(
             response.context['chain_start']['url'],
@@ -752,6 +752,32 @@ class ViewerTests(TestCase):
         # форма даты переносит начало цепочки на новую страницу
         response = self.client.get(ACT_URL + 'art_1/', {'on': '2024-06-01', **chain})
         self.assertIn('start=', response['Location'])
+
+    def test_chain_start_leads_to_reference_after_language_switch(self):
+        """id ссылок в el и ru совпадают — «К началу» ведёт к месту ссылки, не к пункту."""
+        ru = self.add_ru()
+        self.link_texts_both_ways()
+        text = FragmentText.objects.create(
+            version=self.new,
+            expression=ru,
+            body='<p>См. <ref id="r1">статью 2</ref>.</p>',
+            text_hash='ru',
+        )
+        Reference.objects.create(
+            from_text=text,
+            anchor='r1',
+            to_act=self.amending,
+            to_fragment=self.amending.fragments.get(eid='art_2'),
+            resolved=True,
+        )
+        chain = {'start': ACT_URL + '@2025-06-01/art_1/el/', 'start_at': 'ref-art_1.par_1-r1'}
+        # на русской странице цепочки: «К началу» — к той же ссылке русского текста
+        response = self.client.get(ACT_URL + '@2025-06-01/art_1/', chain)
+        self.assertEqual(
+            response.context['chain_start']['url'],
+            ACT_URL + '@2025-06-01/art_1/#ref-art_1.par_1-r1',
+        )
+        self.assertContains(response, 'id="ref-art_1.par_1-r1"')
 
     def test_chain_keeps_full_anchor_through_history_and_language(self):
         self.add_ru()
