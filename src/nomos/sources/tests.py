@@ -1369,6 +1369,7 @@ class LeginetTests(SimpleTestCase):
 
 HRDA_LAW = 'cy/law/1999/125_I'
 HRDA_FEE = 'cy/kdp/2026/128'
+HRDA_AMENDING = 'cy/law/2026/15_I'
 
 
 @skipUnless(
@@ -1396,15 +1397,23 @@ class HumanResourcesLawTests(TestCase):
     def test_rebuild_keeps_files(self):
         changed = [
             '%s/%s' % (act, path.name)
-            for act in (HRDA_LAW, HRDA_FEE)
+            for act in (HRDA_LAW, HRDA_FEE, HRDA_AMENDING)
             for path in (self.copy / act).iterdir()
             if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
         ]
         self.assertEqual(changed, [])
 
-    def heading(self, act, eid):
+    def heading(self, act, eid, key='base'):
         fragment = Fragment.objects.get(act__uid=act, eid=eid)
-        return fragment.versions.get().heading
+        return fragment.versions.get(key=key).heading
+
+    def body(self, eid, key):
+        return FragmentText.objects.get(
+            version__fragment__act__uid=HRDA_LAW,
+            version__fragment__eid=eid,
+            version__key=key,
+            expression__lang='el',
+        ).body
 
     def test_law_structure(self):
         eids = set(Fragment.objects.filter(act__uid=HRDA_LAW).values_list('eid', flat=True))
@@ -1415,13 +1424,29 @@ class HumanResourcesLawTests(TestCase):
 
     def test_law_headings(self):
         self.assertEqual(
-            self.heading(HRDA_LAW, 'art_20'),
+            self.heading(HRDA_LAW, 'art_20', '2026-04-06'),
             'Υποχρέωση εργοδοτών και αυτοτελώς εργαζομένων για καταβολή τέλους.',
+        )
+        self.assertEqual(
+            self.heading(HRDA_LAW, 'art_20'),
+            'Υποχρέωση εργοδοτών για καταβολή τέλους.',
         )
         # нет на поле — из оглавления
         self.assertEqual(
             self.heading(HRDA_LAW, 'art_28'),
             'Παροχή δικαιοδοσίας στο Δικαστήριο Εργατικών Διαφορών.',
+        )
+
+    def test_amending_law_2026(self):
+        # Ν. 15(Ι)/2026: прежний текст снят с изменений
+        phrase = 'για οποιαδήποτε κατηγορία ή κατηγορίες εργοδοτουμένων'
+        self.assertIn(phrase, self.body('art_5.pnt_d', 'base'))
+        self.assertNotIn(phrase, self.body('art_5.pnt_d', '2026-04-06'))
+        self.assertNotIn('αυτοτελώς', self.body('art_31.par_1', 'base'))
+        fragment = Fragment.objects.get(act__uid=HRDA_LAW, eid='art_20.par_1A')
+        self.assertEqual(
+            sorted(fragment.versions.values_list('key', 'valid_from')),
+            [('2026-04-06', datetime.date(2026, 4, 6))],
         )
 
     def test_fee_regulations(self):
