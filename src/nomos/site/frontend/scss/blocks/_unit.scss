@@ -13,10 +13,12 @@
 }
 
 @media (min-width: base.$break-tablet) {
+  // две колонки, каждая не шире колонки чтения (с отступом и чертой оригинала)
   .unit--with-original .fragment__texts {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1rem;
+    max-width: calc(2 * base.$measure + 2rem);
   }
 
   .unit--with-original .fragment__original {
