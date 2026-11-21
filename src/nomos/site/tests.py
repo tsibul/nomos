@@ -654,3 +654,15 @@ class ViewerTests(TestCase):
         self.add_version(preamble, 'base', base, '', self.el, 'Η Βουλή των Αντιπροσώπων')
         self.assertContains(self.client.get(ACT_URL), 'Προοίμιο')
         self.assertNotContains(self.client.get(ACT_URL), 'Преамбула')
+
+    def test_about_in_greek(self):
+        Source.objects.filter(code='test').update(name='Официальная газета Республики Кипр')
+        response = self.client.get('/about/', {'lang': 'el'})
+        self.assertContains(response, 'Σχετικά με το έργο')
+        self.assertContains(response, 'Δημιουργός του έργου: Ilia Tsigelnitskii.')
+        self.assertContains(response, 'Επίσημη Εφημερίδα της Κυπριακής Δημοκρατίας')
+        self.assertContains(response, '(<a href="https://www.cylaw.org" rel="external">')
+        article = re.search(r'<article.*</article>', response.content.decode(), re.S).group()
+        self.assertIsNone(re.search('[а-яё]', article, re.I))
+        # по-русски страница прежняя
+        self.assertContains(self.client.get('/about/'), 'Автор проекта — Ilia Tsigelnitskii.')
