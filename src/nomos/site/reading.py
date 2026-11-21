@@ -369,12 +369,14 @@ class Label:
         return self.text
 
 
-def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
+def fragment_label(fragment, version, headings=None, lang=None):
     """«Άρθρο 45. Παραβάσεις»; с переведённым заголовком — «Статья 45. Нарушения».
 
     headings — {id редакции: заголовок на языке lang} (см. translated_headings).
+    lang — язык просмотра; не задан — язык оригинала.
     """
     structure_lang = fragment.act.structure_lang or DEFAULT_LANG
+    lang = lang or structure_lang
     if version is None:
         return Label(fragment.eid, structure_lang)
     heading = structure_heading(fragment.act, version)
@@ -382,6 +384,9 @@ def fragment_label(fragment, version, headings=None, lang=DEFAULT_LANG):
     if not access.lang_visible(fragment.act, structure_lang):
         # оригинал скрыт: приставка («Статья») — на языке перевода или интерфейса
         label_lang = lang if lang != structure_lang else interface_lang()
+    elif not heading and lang != structure_lang and lang in access.visible_langs(fragment.act):
+        # заголовка нет вовсе, перевод акта есть: «Статья 1», а не «Article 1»
+        label_lang = lang
     translated = (headings or {}).get(version.id)
     if translated:
         heading = translated
