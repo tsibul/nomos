@@ -1255,3 +1255,29 @@ class EuOriginalLangTests(TestCase):
         response = self.page('ru')
         self.assertContains(response, 'показан официальный английский текст')
         self.assertContains(response, 'English text')
+
+
+class EuDisclaimerTests(EuOriginalLangTests):
+    """Подвал акта ЕС: Официальный журнал ЕС на языке страницы; у кипрских — прежний."""
+
+    def footer(self, response):
+        content = response.content.decode()
+        return content[content.index('footer__disclaimer'):]
+
+    def test_eu_act_pages(self):
+        expected = {
+            'ru': 'Официальном журнале Европейского союза (EUR-Lex)',
+            'en': 'Official Journal of the European Union (EUR-Lex)',
+            'el': 'Επίσημη Εφημερίδα της Ευρωπαϊκής Ένωσης (EUR-Lex)',
+        }
+        for lang, text in expected.items():
+            with self.subTest(lang=lang):
+                footer = self.footer(self.page(lang))
+                self.assertIn(text, footer)
+                self.assertNotIn('Εφημερίδα της Δημοκρατίας', footer)
+                self.assertNotIn('Республики Кипр', footer)
+
+    def test_eu_section_and_cyprus(self):
+        self.assertIn('Официальном журнале', self.footer(self.client.get('/eu/')))
+        self.assertIn('Республики Кипр', self.footer(self.client.get('/')))
+        self.assertEqual(notices.disclaimer('cy'), notices.DISCLAIMER)

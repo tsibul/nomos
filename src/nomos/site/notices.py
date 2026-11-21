@@ -26,6 +26,24 @@ DISCLAIMER_PUBLIC = _(
     'каких-либо гарантий; автор не отвечает за последствия их использования.'
 )
 
+# Отказ на страницах актов ЕС (и раздела ЕС): официальный текст — в Официальном журнале ЕС.
+# Греческих слов нет, поэтому вариант для посетителя без входа не нужен.
+DISCLAIMER_EU = _(
+    'Nomos — частный некоммерческий проект, не связанный с государственными органами '
+    'Кипра или ЕС. Тексты приведены для ознакомления и могут быть неполными или '
+    'устаревшими. Юридическую силу имеют только тексты, опубликованные в Официальном '
+    'журнале Европейского союза (EUR-Lex). Сайт не даёт '
+    'юридических и налоговых консультаций. Материалы предоставляются «как есть», без '
+    'каких-либо гарантий; автор не отвечает за последствия их использования.'
+)
+
+
+def disclaimer(jurisdiction=None):
+    """Отказ в подвале: у актов ЕС — Официальный журнал ЕС, иначе — Официальная газета Кипра."""
+    if jurisdiction == 'eu':
+        return DISCLAIMER_EU
+    return DISCLAIMER_PUBLIC if access.is_restricted() else DISCLAIMER
+
 
 # Плашка над переводом: одна строка
 TRANSLATION_NOTICE = _(
@@ -53,7 +71,7 @@ CYLAW_CREDIT = _(
 def notices(request):
     """Контекстный процессор: тексты предупреждений для всех страниц."""
     return {
-        'disclaimer': DISCLAIMER_PUBLIC if access.is_restricted() else DISCLAIMER,
+        'disclaimer': disclaimer(),
         'translation_notice': TRANSLATION_NOTICE,
         'translation_notice_eu': TRANSLATION_NOTICE_EU,
         'reconstruction_notice': RECONSTRUCTION_NOTICE,
