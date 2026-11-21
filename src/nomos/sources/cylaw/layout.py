@@ -84,14 +84,13 @@ ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,3}\s?\.\s)')
 DASHED_START_RE = re.compile(r'^\s*\d+[^\W\d_]{0,3}\s?\.[-—–―]')
 
 
-def blocks(lines, skip=None, join_pages=True, dashed=True):
+def blocks(lines, skip=None, dashed=True):
     """Блоки из строк; `skip(line)` — строки колонтитулов, которые выбрасываются.
 
     После колонтитула блок продолжается (абзац перенесён на страницу), если следующая
     строка не начинает нумерованный пункт. Пустая строка перед колонтитулом посреди фразы
-    («… ψηφισθέντος είτε προ» / «είτε κατόπιν …») блок не закрывает; `join_pages=False` —
-    закрывает, как в прежнем разборе. `dashed=False` — «39Α.-(1)» пункта не начинает
-    (акты, собранные до 118(Ι)/2002)."""
+    («… ψηφισθέντος είτε προ» / «είτε κατόπιν …») блок не закрывает.
+    `dashed=False` — «39Α.-(1)» пункта не начинает (акты, собранные до 118(Ι)/2002)."""
     found = []
     current = []
     start = 0
@@ -111,7 +110,6 @@ def blocks(lines, skip=None, join_pages=True, dashed=True):
             if (
                 current
                 and skip
-                and join_pages
                 and continues_after_page(lines[number:], current[-1], skip)
             ):
                 continue

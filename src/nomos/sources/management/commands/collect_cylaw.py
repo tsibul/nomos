@@ -199,17 +199,38 @@ def expired_version(day, base_ref):
     )
 
 
+def plain_texts(node_versions):
+    """{редакция: текст без разметки и примечаний}: для сверки с прежним el.xml."""
+    return {
+        version.key: ' '.join(
+            texts_xml.plain(layout.strip_notes(paragraph, []))
+            for paragraph in version.paragraphs
+        )
+        for version in node_versions
+        if version.paragraphs
+    }
+
+
 def write(folder, info, versions, notes=(), marker=None):
     """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут.
 
     marker — разметка ссылок; его found: {(uid, редакция): [цели]}."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
+    previous = texts_xml.old_texts(folder / 'el.xml')
+    current = {node: plain_texts(node_versions) for node, node_versions in versions.items()}
+    nums = {node: node.num for node in versions}
+    eids = {uid: eid for eid, uid in texts_xml.existing_uids(act_path).items()}
+    uids = texts_xml.follow_texts(info, uids, current, previous, nums, eids)
     lost = texts_xml.lost_uids(folder, uids)
+    merged = texts_xml.merged_uids(uids, current, previous, [uid for _, uid in lost])
+    joined = {uid for _, uid in merged}
+    lost = [(eid, uid) for eid, uid in lost if uid not in joined]
     if lost:
         raise CommandError('%s: пересборка убирает фрагменты с переводом: %s' % (
             info.uid, ', '.join('%s (%s)' % item for item in lost),
         ))
+    texts_xml.merge_translations(folder, merged)
     texts_xml.write_act(act_path, info, versions, uids)
     inline = []
     for node, node_versions in versions.items():

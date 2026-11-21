@@ -3,6 +3,8 @@
 Формат — docs/design/data-model.md, раздел 3.3.
 """
 
+import html
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from xml.sax.saxutils import quoteattr
@@ -100,6 +102,190 @@ def assign_uids(info, nodes, path):
             taken.add(uid)
         uids[node] = uid
     return uids
+
+
+TAG_RE = re.compile(r'<[^>]+>')
+
+TEXT_BLOCK_RE = re.compile(
+    r'^  <text fragment="(?P<uid>[^"]+)" version="(?P<key>[^"]+)"[^>]*>\n'
+    r'(?P<body>(?:    .*\n)*?)'
+    r'  </text>\n',
+    re.M,
+)
+
+
+def plain(markup):
+    """Текст абзаца без разметки, пробелы схлопнуты: для сравнения разборов."""
+    return ' '.join(html.unescape(TAG_RE.sub('', markup)).split())
+
+
+def old_texts(path):
+    """{uid: {редакция: текст}} из прежнего el.xml в порядке файла; абзацы — через пробел."""
+    found = {}
+    if not path.exists():
+        return found
+    for text in ET.parse(path).getroot().iter('text'):
+        body = ' '.join(' '.join(''.join(p.itertext()).split()) for p in text.iter('p'))
+        if body:
+            found.setdefault(text.get('fragment'), {})[text.get('version')] = body
+    return found
+
+
+def same_text(old, new, num):
+    """Тексты по редакциям совпадают; номер пункта, бывший в начале текста, ушёл в num."""
+    if set(old) != set(new):
+        return False
+    prefix = (num or '') + ' '
+    return all(old[key] in (new[key], prefix + new[key]) for key in old)
+
+
+def follow_texts(info, uids, new, old, nums, eids):
+    """uid идёт за текстом, а не за eid.
+
+    Новый разбор переносит текст на другое место (пункт «42.—(1)(α)» стал своим фрагментом
+    art_42.par_1.pnt_a): фрагмент, текст которого совпал с прежним текстом другого uid,
+    получает этот uid, и перевод остаётся при тексте. Меняются только фрагменты, у которых
+    текст по eid не совпал; прежний владелец uid получает новый.
+
+    new: {node: {редакция: текст}}; old: {uid: {редакция: текст}}; nums: {node: номер};
+    eids: {uid: прежний eid}."""
+    moved = [node for node, uid in uids.items() if new[node] and old.get(uid, {}) != new[node]]
+    holder = {uid: node for node, uid in uids.items()}
+    free = {
+        uid: texts for uid, texts in old.items()
+        if uid not in holder or (holder[uid] in moved or not new[holder[uid]])
+    }
+    taken = set(uids.values()) | set(old)
+    for node in moved:
+        found = [uid for uid, texts in free.items() if same_text(texts, new[node], nums[node])]
+        if len(found) > 1:
+            # одинаковый текст в разных местах («ή» в трёх пунктах прил. 10): ближайший по eid
+            found = closest(found, node.eid, eids)
+        if len(found) != 1 or found[0] == uids[node]:
+            continue
+        uid = found[0]
+        del free[uid]
+        previous = holder.get(uid)
+        if previous is not None and previous is not node:
+            fresh = numbering.make_uid(info.uid, previous.eid)
+            suffix = '~'
+            while fresh in taken:
+                fresh = numbering.make_uid(info.uid, previous.eid + suffix)
+                suffix += '~'
+            taken.add(fresh)
+            uids[previous] = fresh
+            holder[fresh] = previous
+        uids[node] = uid
+        holder[uid] = node
+    return uids
+
+
+def closest(found, eid, eids):
+    """uid, прежний eid которых делит с eid самое длинное начало по частям; один или все."""
+    parts = eid.split('.')
+
+    def common(uid):
+        count = 0
+        for mine, theirs in zip(parts, eids.get(uid, '').split('.')):
+            if mine != theirs:
+                break
+            count += 1
+        return count
+
+    best = max(common(uid) for uid in found)
+    return [uid for uid in found if common(uid) == best]
+
+
+def joined(first, second):
+    """Тексты, которые даёт склейка двух абзацев через перенос страницы."""
+    found = {first + ' ' + second, first + second}
+    if first.endswith('-'):
+        found.add(first[:-1] + second)
+    return found
+
+
+def merged_uids(uids, new, old, lost):
+    """Фрагменты, слитые новым разбором с предыдущим текстом: [(uid предыдущего, uid слитого)].
+
+    Абзац, разорванный переносом страницы, прежний разбор делил на два фрагмента; новый
+    склеивает их. Слитый — потерянный uid, чей текст по всем редакциям продолжает текст
+    предыдущего по el.xml фрагмента."""
+    node_by_uid = {uid: node for node, uid in uids.items()}
+    order = list(old)
+    found = []
+    for uid in lost:
+        if uid not in old:
+            continue
+        index = order.index(uid)
+        if index == 0:
+            continue
+        previous = order[index - 1]
+        node = node_by_uid.get(previous)
+        if node is None:
+            continue
+        texts = old[uid]
+        if all(
+            key in old[previous] and new[node].get(key) in joined(old[previous][key], texts[key])
+            for key in texts
+        ):
+            found.append((previous, uid))
+    return found
+
+
+def merge_translations(folder, pairs):
+    """Перевод слитого фрагмента дописывается к переводу предыдущего: первый абзац — в конец
+    последнего абзаца через пробел, прочее — следом. Запись слитого убирается.
+
+    Перевод не меняется, только соединяется так же, как el; записи без пары остаются."""
+    into = dict((child, parent) for parent, child in pairs)
+    for path in sorted(folder.glob('*.xml')):
+        if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
+            continue
+        source = path.read_text(encoding='utf-8')
+        blocks = {
+            (match.group('uid'), match.group('key')): match
+            for match in TEXT_BLOCK_RE.finditer(source)
+        }
+        tails = {}
+        drop = set()
+        for (uid, key), match in blocks.items():
+            parent = into.get(uid)
+            if parent is None or (parent, key) not in blocks:
+                continue
+            tails.setdefault((parent, key), []).append(match.group('body'))
+            drop.add((uid, key))
+        if not drop:
+            continue
+
+        def rewrite(match):
+            key = (match.group('uid'), match.group('key'))
+            if key in drop:
+                return ''
+            body = match.group('body')
+            for tail in tails.get(key, []):
+                body = join_bodies(body, tail)
+            start = match.start('body') - match.start()
+            end = match.end('body') - match.start()
+            text = match.group(0)
+            return text[:start] + body + text[end:]
+
+        path.write_text(TEXT_BLOCK_RE.sub(rewrite, source), encoding='utf-8')
+
+
+def join_bodies(body, tail):
+    """Строки записи перевода: первый <p> хвоста — в конец последнего <p> тела."""
+    lines = body.splitlines(keepends=True)
+    rest = tail.splitlines(keepends=True)
+    if (
+        lines and rest
+        and lines[-1].rstrip('\n').endswith('</p>')
+        and rest[0].startswith('    <p>')
+    ):
+        last = lines[-1].rstrip('\n')[:-len('</p>')]
+        first = rest[0][len('    <p>'):]
+        lines[-1] = last + ' ' + first
+        rest = rest[1:]
+    return ''.join(lines + rest)
 
 
 # элементы act.xml, которые порождает сборщик; прочие сохраняются как есть
