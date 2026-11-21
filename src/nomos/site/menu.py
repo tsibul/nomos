@@ -1,5 +1,6 @@
 """Главное меню: разделы по юрисдикциям; раздел активен, если в базе есть его акты."""
 
+from django.conf import settings
 from django.utils.translation import gettext_lazy as _
 
 from nomos.acts.models import Act
@@ -37,4 +38,6 @@ def menu(request):
     return {
         'menu_sections': sections,
         'menu_about_current': first_segment == 'about',
+        'menu_home_url': settings.NOMOS_HOME_URL,
+        'menu_home_label': settings.NOMOS_HOME_LABEL,
     }

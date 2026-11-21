@@ -1307,6 +1307,11 @@ def under_prefix(cls):
 ADDRESS_RE = re.compile(r'(?:href|action|src)="([^"]*)"')
 
 
+HOME_URL = 'https://vatelse.eu/'
+
+HOME_LINK_RE = re.compile(r'href="([^"]*)"\s+data-home-link\s*>\s*([^<]*?)\s*</a>')
+
+
 class UrlPrefixMixin:
     """Ссылки, перенаправления и cookie сайта: в корне домена и в подпути."""
 
@@ -1397,6 +1402,21 @@ class UrlPrefixMixin:
         response = self.client.post('/login/', credentials)
         self.assertRedirects(response, self.site('/'), fetch_redirect_response=False)
 
+    @override_settings(NOMOS_HOME_URL=HOME_URL, NOMOS_HOME_LABEL='VATelse')
+    def test_home_link(self):
+        """Ссылка на внешний сайт: адрес абсолютный, подпуть к нему не добавляется."""
+        for page in ['/', '/about/', ACT_URL]:
+            with self.subTest(page=page):
+                response = self.client.get(page)
+                links = HOME_LINK_RE.findall(response.content.decode())
+                self.assertEqual(links, [(HOME_URL, 'VATelse')])
+
+    def test_no_home_link(self):
+        """Адрес не задан — ссылки нет."""
+        for page in ['/', '/about/', ACT_URL]:
+            with self.subTest(page=page):
+                self.assertNotContains(self.client.get(page), 'data-home-link')
+
     def test_robots(self):
         response = self.client.get('/robots.txt')
         self.assertEqual(response.content.decode(), f'User-agent: *\nDisallow: {self.site("/")}\n')
@@ -1445,3 +1465,31 @@ class UrlPrefixSettingsTests(TestCase):
 
     def test_root(self):
         self.assertEqual(self.settings_for(''), ["''", 'None', '/static/', '/', '/'])
+
+
+class HomeLinkSettingsTests(TestCase):
+    """settings.py: ссылка на внешний сайт из .env; подпись по умолчанию — адрес."""
+
+    def settings_for(self, url, label):
+        env = dict(os.environ, NOMOS_HOME_URL=url, NOMOS_HOME_LABEL=label)
+        env.pop('DJANGO_SETTINGS_MODULE', None)
+        code = (
+            'from nomos import settings as s; '
+            'print(repr((s.NOMOS_HOME_URL, s.NOMOS_HOME_LABEL)))'
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', code],
+            cwd=Path(__file__).resolve().parents[2],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def test_values(self):
+        self.assertEqual(self.settings_for(' https://vatelse.eu/ ', 'VATelse'),
+                         repr(('https://vatelse.eu/', 'VATelse')))
+        self.assertEqual(self.settings_for('https://vatelse.eu/', ''),
+                         repr(('https://vatelse.eu/', 'https://vatelse.eu/')))
+        self.assertEqual(self.settings_for('', ''), repr(('', '')))

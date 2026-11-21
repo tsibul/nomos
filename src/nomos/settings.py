@@ -50,6 +50,11 @@ HTTPS = os.environ.get('DJANGO_HTTPS', '0' if DEBUG else '1') == '1'
 # Только публичные выражения для посетителя без входа (nomos.site.access); по умолчанию — всё
 NOMOS_PUBLIC_ONLY = os.environ.get('NOMOS_PUBLIC_ONLY', '0') == '1'
 
+# Ссылка в меню на внешний сайт (возврат на сайт, где размещён Nomos); пустой адрес — ссылки нет.
+# Подпись без значения — сам адрес. Адрес абсолютный, подпуть NOMOS_URL_PREFIX к нему не относится.
+NOMOS_HOME_URL = os.environ.get('NOMOS_HOME_URL', '').strip()
+NOMOS_HOME_LABEL = os.environ.get('NOMOS_HOME_LABEL', '').strip() or NOMOS_HOME_URL
+
 
 # Application definition
 

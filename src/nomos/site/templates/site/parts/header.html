@@ -1,6 +1,7 @@
 {% load i18n %}
 {% comment %}
-  Шапка: название, разделы, «О проекте», «Выйти» (после входа), язык текста.
+  Шапка: название, разделы, «О проекте», внешний сайт (NOMOS_HOME_URL, если задан),
+  «Выйти» (после входа), язык текста.
   Без JS меню видно всегда; с JS на телефоне сворачивается под кнопку.
 {% endcomment %}
 <div
@@ -60,6 +61,17 @@
           {% translate 'О проекте' %}
         </a>
       </li>
+      {% if menu_home_url %}
+        <li class="menu__item">
+          <a
+            class="menu__link"
+            href="{{ menu_home_url }}"
+            data-home-link
+          >
+            {{ menu_home_label }}
+          </a>
+        </li>
+      {% endif %}
       {% if user.is_authenticated %}
         <li class="menu__item">
           <form
