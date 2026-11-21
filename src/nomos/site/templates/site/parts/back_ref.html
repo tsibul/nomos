@@ -1,0 +1,11 @@
+{# Возврат по ссылке из текста: адрес — из параметров from и at (views.back_link) #}
+{% if back %}
+  <p class="back-ref">
+    <a
+      class="back-ref__link"
+      href="{{ back.url }}"
+    >
+      {{ back.label }}
+    </a>
+  </p>
+{% endif %}

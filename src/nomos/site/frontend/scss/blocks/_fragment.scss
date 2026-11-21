@@ -23,9 +23,20 @@
   gap: 0.25rem 0.5rem;
 }
 
-.fragment__anchor {
+.fragment__num {
   font-weight: 600;
+}
+
+.fragment__tools {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.75rem;
+}
+
+.fragment__anchor {
   text-decoration: none;
+  color: var(--color-neutral-500);
 }
 
 .fragment__heading {
@@ -33,13 +44,20 @@
 }
 
 .fragment__history {
-  margin-left: auto;
-  font-size: 0.75rem;
   color: var(--color-neutral-500);
+}
+
+.fragment__texts {
+  max-width: base.$measure;
 }
 
 .fragment__text {
   overflow-wrap: anywhere;
+}
+
+// греческий текст как основной: та же читаемая длина строки, что у русского
+.fragment__text[lang='el'] {
+  max-width: base.$measure-el;
 }
 
 .fragment__original {
@@ -77,6 +95,12 @@
 
 .ref--unresolved {
   text-decoration: underline dotted;
+}
+
+// место ссылки, куда вернулись по «← Назад»
+.ref:target {
+  background: var(--color-secondary-50);
+  outline: 2px solid var(--color-secondary-500);
 }
 
 @media (min-width: base.$break-tablet) {

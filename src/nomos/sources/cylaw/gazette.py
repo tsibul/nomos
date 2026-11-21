@@ -18,6 +18,8 @@ POINT_RE = re.compile(r'^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$')
 ITEM_RE = re.compile(r'^(«\s*)?(\(\w{1,5}\)|\d+[Α-Ω]{0,3}\.)')
 END_RE = re.compile(r'^\s*(_{5,}|[TΤ]υπώθηκε)')
 HEADER_RE = re.compile(r'^\s*(Ε\.Ε\.\s*Παρ\.|Αρ\.\s*\d+,|Αριθμός\s+\d+|\d{3,5}\s*$)')
+# перенос слова в конце строки: «Τροπο- ποιητικός» → «Τροποποιητικός»
+HYPHEN_RE = re.compile(r'([α-ρσ-ωάέήίόύώϊϋΐΰ])- ([α-ωάέήίόύώϊϋΐΰ])')
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
@@ -131,7 +133,7 @@ class GazetteParser:
     def flush(self):
         if not self.paragraph:
             return
-        text = layout.join_lines(self.paragraph)
+        text = HYPHEN_RE.sub(r'\1\2', layout.join_lines(self.paragraph))
         self.owner().paragraphs.append(text)
         self.paragraph = []
 

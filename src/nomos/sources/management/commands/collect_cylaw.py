@@ -11,7 +11,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from nomos.sources.cylaw import consolidated, gazette, history, layout, texts_xml
+from nomos.sources.cylaw import consolidated, gazette, history, layout, refs, texts_xml
 
 BASE_KEY = history.BASE_KEY
 
@@ -70,7 +70,7 @@ def law_info(manifest):
     return info
 
 
-def amending_info(act, law_uid, title, note=''):
+def amending_info(act, law_uid, title):
     info = texts_xml.ActInfo(
         uid=act.uid,
         jurisdiction='cy',
@@ -84,7 +84,7 @@ def amending_info(act, law_uid, title, note=''):
         title=title,
         relations=[('amends', law_uid)],
     )
-    info.amendments.append(base_amendment(info, note))
+    info.amendments.append(base_amendment(info))
     seen = set()
     for op in act.ops:
         if op.key in seen:
@@ -130,11 +130,61 @@ def expired_version(day, base_ref):
     )
 
 
-def write(folder, info, versions):
+def write(folder, info, versions, notes=(), marker=None):
+    """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут.
+
+    marker — разметка ссылок; его found: {(uid, редакция): [цели]}."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
     texts_xml.write_act(act_path, info, versions, uids)
-    texts_xml.write_texts(folder / 'el.xml', info, versions, uids, layout.inline_markup)
+    inline = []
+    for node, node_versions in versions.items():
+        for version in node_versions:
+            for paragraph in version.paragraphs or []:
+                found = []
+                layout.strip_notes(paragraph, found)
+                inline.extend((uids[node], version.key, note) for note in found)
+    mark = None
+    if marker is not None:
+        def mark(node, version, paragraphs):
+            marked, found = marker.mark_text(paragraphs, node.eid)
+            marker.found[(uids[node], version.key)] = found
+            return marked
+    texts_xml.write_texts(
+        folder / 'el.xml', info, versions, uids,
+        lambda paragraph: layout.strip_notes(paragraph, []),
+        mark,
+    )
+    if notes or inline:
+        texts_xml.write_notes(folder / 'cylaw-notes.xml', info, notes, inline)
+    return len(inline)
+
+
+def mark_translation(folder, marker, prefix=''):
+    """Ссылки в ru.xml акта теми же правилами; строки отчёта."""
+    lines = ['%sссылок el: %d; не размечено el: %s' % (
+        prefix,
+        sum(len(found) for found in marker.found.values()),
+        skipped_text(marker.skipped),
+    )]
+    path = folder / 'ru.xml'
+    if not path.exists():
+        return lines
+    eid_by_uid = {uid: eid for eid, uid in texts_xml.existing_uids(folder / 'act.xml').items()}
+    skipped, differences, total = refs.mark_translation(
+        path, marker.targets, eid_by_uid, marker.found, marker.act, marker.implicit,
+    )
+    lines.append('%sссылок ru: %d; не размечено ru: %s' % (
+        prefix, total, skipped_text(skipped),
+    ))
+    lines.append('%sтекстов, где цели el и ru расходятся: %d' % (prefix, len(differences)))
+    for eid, key, el_targets, ru_targets in differences[:5]:
+        lines.append('  %s (%s): el %s, ru %s' % (eid, key, el_targets, ru_targets))
+    return lines
+
+
+def skipped_text(skipped):
+    return ', '.join('%s — %d' % item for item in sorted(skipped.items())) or 'нет'
 
 
 class Command(BaseCommand):
@@ -159,14 +209,16 @@ class Command(BaseCommand):
         info = law_info(manifest)
         tree, _, notes = consolidated.parse(root_dir / manifest['file'], info.uid)
         act_notes, other_notes = split_notes(notes, acts)
-        texts_xml.write_notes(folder / 'cylaw-notes.xml', info, other_notes)
-        report.append('примечаний CyLaw: %d у изменяющих актов, %d в cylaw-notes.xml' % (
-            len(act_notes), len(other_notes)))
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
-        write(folder, info, versions)
+        marker = refs.Marker(refs.Targets(node.eid for node in versions), refs.EL)
+        inline = write(folder, info, versions, other_notes, marker)
+        report.extend(mark_translation(folder, marker))
         self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
+        report.append('примечаний CyLaw в cylaw-notes.xml: %d к закону, %d [Σ.Σ.], %d у '
+                      'изменяющих актов (в их папках)' % (
+                          len(other_notes), inline, len(act_notes)))
 
         for amending in acts:
             amending_tree, title = gazette.parse(root_dir / amending.file, amending.uid)
@@ -179,11 +231,20 @@ class Command(BaseCommand):
                 version.known_from = amending.published_on
                 version.paragraphs = list(node.paragraphs)
                 amending_versions[node] = [version]
+            # ссылки на базовый закон; у ΚΔΠ своих статей нет — без указания акта тоже он
+            amending_marker = refs.Marker(
+                marker.targets, refs.EL, info.uid, implicit=amending.kind != 'law',
+            )
             write(
                 root_dir / amending.uid,
-                amending_info(amending, info.uid, title, act_notes.get(amending.uid, '')),
+                amending_info(amending, info.uid, title),
                 amending_versions,
+                [act_notes[amending.uid]] if amending.uid in act_notes else [],
+                amending_marker,
             )
+            report.extend(mark_translation(
+                root_dir / amending.uid, amending_marker, amending.uid + ': ',
+            ))
             provisions = {node.eid for node in amending_versions}
             for op in amending.ops:
                 if op.provision not in provisions:

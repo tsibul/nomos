@@ -1,18 +1,36 @@
-<ul
-  class="toc__list"
-  lang="{{ structure_lang }}"
->
+{% load i18n %}
+<ul class="toc__list">
   {% for item in items %}
     <li class="toc__item{% if not item.is_unit %} toc__item--section{% endif %}">
       {% if item.is_unit %}
-        <a
-          class="toc__link"
-          href="{{ item.url }}"
-        >
-          {{ item.label }}
-        </a>
+        {% if item.current %}
+          <span
+            class="toc__link toc__link--current
+              {% if not item.translated %}toc__link--pending{% endif %}"
+            lang="{{ item.label.lang }}"
+            aria-current="page"
+          >
+            {{ item.label }}
+          </span>
+        {% else %}
+          <a
+            class="toc__link{% if not item.translated %} toc__link--pending{% endif %}"
+            href="{{ item.url }}"
+            lang="{{ item.label.lang }}"
+          >
+            {{ item.label }}
+          </a>
+        {% endif %}
+        {% if not item.translated %}
+          <span class="toc__pending">
+            {% translate 'перевод готовится' %}
+          </span>
+        {% endif %}
       {% else %}
-        <span class="toc__section">
+        <span
+          class="toc__section"
+          lang="{{ item.label.lang }}"
+        >
           {{ item.label }}
         </span>
         {% include 'site/parts/toc_items.html' with items=item.children %}

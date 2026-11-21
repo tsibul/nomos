@@ -1,58 +1,76 @@
 {% extends 'site/base.html' %}
 
+{% load i18n %}
+
 {% block title %}{{ unit_label }} — {{ label }} — Nomos{% endblock %}
 
 {% block header %}
   {% include 'site/parts/act_header.html' %}
 {% endblock %}
 
+{% block aside %}
+  {% include 'site/parts/sidenav.html' %}
+{% endblock %}
+
 {% block main %}
+  {% include 'site/parts/back_ref.html' %}
+
   {% include 'site/parts/toolbar.html' %}
 
   <nav
     class="crumbs"
-    aria-label="Положение в акте"
+    aria-label="{% translate 'Положение в акте' %}"
   >
     <a
       class="crumbs__link"
       href="{{ act_url }}"
     >
-      Оглавление
+      {% translate 'Оглавление' %}
     </a>
     {% for crumb in crumbs %}
       <span
         class="crumbs__item"
-        lang="{{ structure_lang }}"
+        lang="{{ crumb.lang }}"
       >
         {{ crumb }}
       </span>
     {% endfor %}
   </nav>
 
-  {% if untranslated %}
+  {% if untranslated and original_source %}
     <p class="untranslated">
-      Перевода нет — показан официальный греческий текст.
+      {% translate 'Перевод готовится.' %}
     </p>
+    {% include 'site/parts/original_source.html' %}
+  {% elif untranslated %}
+    <p class="untranslated">
+      {% translate 'Перевод готовится — показан официальный греческий текст.' %}
+    </p>
+  {% elif original_source %}
+    <p class="draft-warning">
+      {{ translation_notice }}
+    </p>
+    {% include 'site/parts/original_source.html' %}
   {% elif route.lang != 'el' %}
     <p class="draft-warning">
-      Рабочий перевод, не выверен. Юридическую силу имеет греческий текст.
+      {{ translation_notice }}
     </p>
     <div class="original-switch">
       {% if show_original %}
         <a
           class="original-switch__link"
-          href="?"
+          href="?{{ route.chain_params }}"
           data-original-toggle
         >
-          Скрыть греческий текст
+          {% translate 'Скрыть греческий текст' %}
         </a>
       {% else %}
         <a
           class="original-switch__link"
-          href="?orig=1"
+          href="?orig=1{{ route.chain_tail }}"
           data-original-toggle
         >
-          Показать греческий текст рядом
+          {% translate 'Показать греческий текст рядом' %}
         </a>
       {% endif %}
     </div>
@@ -67,25 +85,37 @@
 
   <nav
     class="pager"
-    aria-label="Соседние положения"
+    aria-label="{% translate 'Соседние положения' %}"
   >
     {% if previous %}
       <a
         class="pager__link pager__link--previous"
         href="{{ previous.url }}"
         rel="prev"
+        lang="{{ previous.label.lang }}"
       >
         ← {{ previous.label }}
       </a>
+    {% else %}
+      <span class="pager__link pager__link--previous"></span>
     {% endif %}
+    <a
+      class="pager__link pager__link--toc"
+      href="{{ act_url }}"
+    >
+      {% translate 'Оглавление' %}
+    </a>
     {% if next %}
       <a
         class="pager__link pager__link--next"
         href="{{ next.url }}"
         rel="next"
+        lang="{{ next.label.lang }}"
       >
         {{ next.label }} →
       </a>
+    {% else %}
+      <span class="pager__link pager__link--next"></span>
     {% endif %}
   </nav>
 {% endblock %}

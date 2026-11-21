@@ -1,16 +1,22 @@
 """Главное меню: разделы по юрисдикциям; раздел активен, если в базе есть его акты."""
 
+from django.utils.translation import gettext_lazy as _
+
 from nomos.acts.models import Act
 
 SECTIONS = [
-    (Act.Jurisdiction.CY, 'Кипр'),
-    (Act.Jurisdiction.EU, 'ЕС'),
-    (Act.Jurisdiction.IFRS, 'МСФО'),
+    (Act.Jurisdiction.CY, _('Кипр')),
+    (Act.Jurisdiction.EU, _('ЕС')),
 ]
 
 
 def section_codes():
     return [code for code, _label in SECTIONS]
+
+
+def section_label(code):
+    """Название раздела на языке интерфейса."""
+    return str(dict(SECTIONS)[code])
 
 
 def menu(request):

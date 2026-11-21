@@ -109,3 +109,22 @@ def inline_markup(text):
         position = match.end()
     parts.append(escape(text[position:]))
     return ''.join(parts)
+
+
+def strip_notes(text, found):
+    """Экранирование абзаца без примечаний редакции CyLaw [Σ.Σ.: …]: их текст — в found.
+
+    Остальной текст не меняется; пробел на месте примечания — только между словами."""
+    parts = []
+    position = 0
+    for match in NOTE_RE.finditer(text):
+        found.append(' '.join(match.group(1).split()))
+        before = text[position:match.start()].rstrip()
+        after = text[match.end():]
+        parts.append(before)
+        rest = after.lstrip()
+        if before and rest and rest[0] not in ',.;:·)':
+            parts.append(' ')
+        position = match.end() + len(after) - len(rest)
+    parts.append(text[position:])
+    return escape(''.join(parts))

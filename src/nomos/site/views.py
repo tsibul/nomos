@@ -1,75 +1,148 @@
 import datetime
+import re
 
-from django.http import Http404
+from django.http import Http404, HttpResponse
 from django.shortcuts import redirect, render
+from django.utils import translation
+from django.utils.html import format_html
+from django.utils.http import urlencode
+from django.utils.translation import gettext as _
+from django.utils.translation import gettext_lazy, gettext_noop
 
-from nomos.acts.models import Act, ActRelation, Fragment
+from nomos.acts.models import (
+    Act,
+    ActRelation,
+    Expression,
+    Fragment,
+    FragmentVersion,
+    Reference,
+)
 from nomos.sources.models import Source
 
-from . import menu, reading
+from . import access, menu, notices, reading, ui
 
 
 def act_list(request, jurisdiction=None):
+    """Раздел (или главная): основные акты карточками, изменяющие — свёрнутыми группами."""
     acts = Act.objects.prefetch_related('expressions').order_by('jurisdiction', 'kind', 'uid')
     section = None
     if jurisdiction is not None:
         if jurisdiction not in menu.section_codes():
             raise Http404('Нет такого раздела')
-        section = dict(menu.SECTIONS)[jurisdiction]
         acts = acts.filter(jurisdiction=jurisdiction)
+    acts = sorted(
+        (act for act in acts if access.act_visible(act)),
+        key=reading.act_sort_key,
+    )
+    lang = reading.interface_lang()
+    if jurisdiction is not None:
+        section = menu.section_label(jurisdiction)
     amending_ids = set(
         ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
     )
+    targets = reading.amendment_targets([act for act in acts if act.id in amending_ids])
     base = []
-    amending = []
+    amending_laws = []
+    regulations = []
     for act in acts:
-        title, title_lang = reading.act_title_lang(act)
-        entry = {
-            'act': act,
-            'label': reading.act_label(act),
-            'title': title,
-            'title_lang': title_lang,
-            'url': reading.build_url(act),
-        }
-        if act.id in amending_ids:
-            amending.append(entry)
-        else:
+        entry = act_entry(act, targets.get(act.id, ''), lang)
+        if act.id not in amending_ids:
             base.append(entry)
+        elif act.kind == Act.Kind.REGULATION_BY_LAW:
+            regulations.append(entry)
+        else:
+            amending_laws.append(entry)
+    groups = [
+        {'title': _('Изменяющие законы'), 'entries': amending_laws},
+        {'title': _('Подзаконные акты (ΚΔΠ)'), 'entries': regulations},
+    ]
     return render(
         request,
         'site/act_list.html',
         {
             'base': base,
-            'amending': amending,
+            'groups': [group for group in groups if group['entries']],
             'section': section,
+            'is_home': jurisdiction is None,
+            'has_acts': bool(acts),
         },
     )
 
 
+def act_entry(act, changes='', lang=reading.READER_LANG):
+    """Строка списка актов: короткое название, полное — второй строкой, что меняет.
+
+    Ссылка — на языке интерфейса, если у акта есть этот язык, иначе на языке по умолчанию.
+    """
+    title, title_lang = reading.act_title_lang(act, lang)
+    link_lang = lang if lang in reading.act_langs(act) else None
+    return {
+        'act': act,
+        'label': reading.act_label(act),
+        'short': reading.act_short_label(act, lang),
+        'title': title,
+        'title_lang': title_lang,
+        'changes': changes,
+        'url': reading.build_url(act, lang=link_lang),
+    }
+
+
 def about(request):
-    sources = []
-    for source in Source.objects.prefetch_related('expressions').order_by('name'):
-        statuses = sorted(
-            {expression.get_status_display().lower() for expression in source.expressions.all()}
-        )
-        sources.append(
-            {
-                'source': source,
-                'statuses': statuses,
-                'count': len(source.expressions.all()),
-            }
-        )
-    return render(request, 'site/about.html', {'sources': sources})
+    sources = [
+        {
+            'source': source,
+            'name': source_text(source.name),
+            'count': len(
+                [
+                    expression
+                    for expression in source.expressions.all()
+                    if expression.public or not access.is_restricted()
+                ]
+            ),
+        }
+        for source in Source.objects.prefetch_related('expressions').order_by('name')
+    ]
+    context = {
+        'sources': sources,
+        # ссылка внутри переводимой фразы: в каталоге — только место {{ link }}
+        'cylaw_link': format_html(
+            '<a href="{}" rel="external">{}</a>',
+            'https://www.cylaw.org',
+            'www.cylaw.org',
+        ),
+    }
+    return render(request, 'site/about.html', context)
+
+
+def robots(request):
+    """Прототип не индексируется."""
+    return HttpResponse('User-agent: *\nDisallow: /\n', content_type='text/plain')
 
 
 def read(request, path):
     route = reading.parse_path(path)
+    if not access.act_visible(route.act):
+        raise Http404('Акт не найден')
+    translation.activate(ui.activation_lang(route.lang))
+    if route.explicit_lang and route.lang == reading.default_lang(route.act):
+        # язык по умолчанию в адресе не пишется: /ru/ → адрес без языка
+        url = reading.build_url(
+            route.act,
+            on=route.on,
+            eid=route.eid,
+            lang=route.lang,
+            history=route.history,
+        )
+        if request.GET:
+            url += '?' + request.GET.urlencode()
+        return redirect(url, permanent=True)
     if 'on' in request.GET or 'lang' in request.GET:
         return redirect(form_target(request, route))
     if route.on is not None and route.on < reading.EARLIEST:
         raise Http404('Редакции раньше 01.01.2024 не прослеживаются')
     if route.lang not in reading.act_langs(route.act):
         raise Http404('Нет такого языка')
+    route.chain = chain_params(request)
     structure = reading.Structure(route.act)
     if route.eid is None:
         return act_page(request, route, structure)
@@ -81,7 +154,10 @@ def read(request, path):
     unit = structure.unit_of(fragment)
     if unit.eid != route.eid:
         # постоянная ссылка фрагмента ведёт на его страницу с якорем
+        # строка запроса сохраняется: from/at — путь «← Назад» к месту ссылки, orig — режим
         url = reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang)
+        if request.GET:
+            url += '?' + request.GET.urlencode()
         return redirect(url + '#' + fragment.eid)
     return unit_page(request, route, structure, unit)
 
@@ -97,7 +173,7 @@ def form_target(request, route):
     if on == datetime.date.today():
         on = None
     lang = request.GET.get('lang', route.lang)
-    if lang not in reading.LANGS:
+    if lang not in reading.act_langs(route.act):
         lang = route.lang
     url = reading.build_url(
         route.act,
@@ -106,18 +182,33 @@ def form_target(request, route):
         lang=lang,
         history=route.history,
     )
-    if request.GET.get('orig'):
-        url += '?orig=1'
+    # режим «оригинал рядом» и начало цепочки ссылок переходят на новую страницу
+    keys = (*original_keys(), *CHAIN_KEYS)
+    kept = {key: request.GET[key] for key in keys if request.GET.get(key)}
+    if kept:
+        url += '?' + urlencode(kept)
     return url
 
 
 def base_context(request, route):
     act = route.act
     on = route.on
+    # переключатель ведёт на ту же страницу, дату и режим «оригинал рядом»;
+    # якорь добавляет JS (data-keep-hash)
+    keys = (*original_keys(), 'from', 'at', *CHAIN_KEYS)
+    kept = {key: request.GET[key] for key in keys if request.GET.get(key)}
+    query = '?' + urlencode(kept) if kept else ''
     langs = [
         {
             'code': lang,
-            'url': reading.build_url(act, on=on, eid=route.eid, lang=lang),
+            'url': reading.build_url(
+                act,
+                on=on,
+                eid=route.eid,
+                lang=lang,
+                history=route.history,
+            )
+            + query,
             'current': lang == route.lang,
         }
         for lang in reading.act_langs(act)
@@ -136,7 +227,202 @@ def base_context(request, route):
         'date': route.date,
         'is_today': route.on is None or route.on == datetime.date.today(),
         'earliest': reading.EARLIEST,
-        'show_original': bool(request.GET.get('orig')),
+        'show_original': show_original(request, route),
+        'original_source': original_source(route),
+        'back': back_link(request, route.lang, route.chain),
+        'chain_start': chain_start_link(route),
+        'source_credit': source_credit(act),
+    }
+
+
+def original_keys():
+    """Параметр режима «оригинал рядом» — если режим доступен посетителю."""
+    return () if access.is_restricted() else ('orig',)
+
+
+def show_original(request, route):
+    """Режим «греческий рядом»: только если оригинал виден посетителю."""
+    if not request.GET.get('orig'):
+        return False
+    return access.lang_visible(route.act, route.act.structure_lang or reading.DEFAULT_LANG)
+
+
+def original_source(route):
+    """Источник скрытого оригинала — для ссылки «Оригинал: <источник>»; виден — None.
+
+    Адреса статьи у источника в данных нет: ссылка ведёт на адрес акта у источника
+    (выражения, затем ELI), а если он неизвестен — на адрес источника.
+    """
+    lang = route.act.structure_lang or reading.DEFAULT_LANG
+    if route.lang == lang or access.lang_visible(route.act, lang):
+        return None
+    expression = (
+        route.act.expressions.select_related('source').filter(lang=lang).first()
+    )
+    if expression is None:
+        return None
+    return {
+        'name': source_text(expression.source.name),
+        'url': expression.url or route.act.eli or expression.source.url,
+    }
+
+
+def source_credit(act):
+    """Подпись об источнике текста — у акта, текст которого взят из сводной редакции CyLaw."""
+    if act.expressions.filter(source__code='cylaw').exists():
+        return notices.CYLAW_CREDIT
+    return None
+
+
+BACK_AT_RE = re.compile(r'^[\w.-]+$')
+
+# параметры начала цепочки переходов по ссылкам: страница и место первой ссылки
+CHAIN_KEYS = ('start', 'start_at')
+
+
+def return_target(path, at, lang):
+    """Страница возврата из параметра адреса и место на ней: (route, at) или None.
+
+    Адрес собирается заново из разобранного пути — только страницы актов сайта.
+    Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта:
+    к месту ссылки, если такая ссылка есть и в тексте этого языка, иначе к её пункту.
+    """
+    if not path.startswith('/') or path.startswith('//'):
+        return None
+    try:
+        route = reading.parse_path(path)
+    except Http404:
+        return None
+    if not BACK_AT_RE.match(at):
+        at = ''
+    if lang != route.lang and lang in reading.act_langs(route.act):
+        route.lang = lang
+        if not anchor_in_lang(route.act, at, lang):
+            at = fragment_of_anchor(at)
+    return route, at
+
+
+def anchor_in_lang(act, at, lang):
+    """Есть ли место ссылки `ref-<пункт>-<якорь>` в тексте акта на языке lang.
+
+    id у ссылки ставится, только когда её цель найдена (`reading.render_body`).
+    """
+    if not at.startswith('ref-'):
+        return False
+    eid, _sep, anchor = at.removeprefix('ref-').rpartition('-')
+    return Reference.objects.filter(
+        from_text__version__fragment__act=act,
+        from_text__version__fragment__eid=eid,
+        from_text__expression__lang=lang,
+        anchor=anchor,
+        resolved=True,
+    ).exists()
+
+
+def chain_target(request, lang):
+    """Начало цепочки ссылок: `start`/`start_at`; на первом шаге — страница `from`/`at`."""
+    if request.GET.get('start'):
+        return return_target(request.GET['start'], request.GET.get('start_at', ''), lang)
+    return return_target(request.GET.get('from', ''), request.GET.get('at', ''), lang)
+
+
+def chain_params(request):
+    """Начало цепочки для адресов страницы (`Route.chain`): {'start': …, 'start_at': …}.
+
+    Передаётся как пришло, без смены языка: иначе после смены языка якорь ссылки
+    (`ref-art_9.par_1-r1`) усекается до пункта и при возврате на исходный язык не восстановим.
+    Язык учитывает только сама ссылка «К началу» (`chain_start_link`).
+    """
+    target = chain_target(request, None)
+    if target is None:
+        return {}
+    route, at = target
+    params = {'start': reading.page_url(route)}
+    if at:
+        params['start_at'] = at
+    return params
+
+
+def chain_start_link(route):
+    """«К началу: статья 2» — к месту первой ссылки цепочки; виден на любом её шаге."""
+    if not route.chain:
+        return None
+    target = return_target(route.chain['start'], route.chain.get('start_at', ''), route.lang)
+    if target is None:
+        return None
+    start, at = target
+    url = reading.page_url(start)
+    if at:
+        url += '#' + at
+    return {
+        'url': url,
+        'label': chain_start_label(start.eid),
+    }
+
+
+def chain_start_label(eid):
+    """«К началу: статья 2», иначе «К началу: текст акта»."""
+    kind, _sep, number = (eid or '').split('.')[0].partition('_')
+    if kind == 'art' and number:
+        return _('К началу: статья %(number)s') % {'number': number}
+    return _('К началу: текст акта')
+
+
+def back_link(request, lang, chain=None):
+    """«← Назад к статье 2»: на шаг назад, на страницу, откуда пришли по ссылке (`?from=&at=`).
+
+    Возврат несёт начало цепочки, если это не оно само: «К началу» остаётся на экране.
+    """
+    target = return_target(request.GET.get('from', ''), request.GET.get('at', ''), lang)
+    if target is None:
+        return None
+    back, at = target
+    url = reading.page_url(back)
+    if chain and chain['start'] != url:
+        url += '?' + urlencode(chain)
+    if at:
+        url += '#' + at
+    return {
+        'url': url,
+        'label': back_label(back.eid),
+    }
+
+
+def fragment_of_anchor(at):
+    """`ref-art_5.par_5-r1` → `art_5.par_5`: пункт, в котором стоит ссылка."""
+    if not at.startswith('ref-'):
+        return at
+    eid, _sep, _anchor = at.removeprefix('ref-').rpartition('-')
+    return eid
+
+
+def back_label(eid):
+    """«← Назад к статье 2», иначе «← Назад к тексту»."""
+    kind, _sep, number = (eid or '').split('.')[0].partition('_')
+    if kind == 'art' and number:
+        return _('← Назад к статье %(number)s') % {'number': number}
+    return _('← Назад к тексту')
+
+
+def nav_context(route, toc, current=None):
+    """Левая колонка открытого акта: оглавление, текущая страница, путь к списку актов."""
+    jurisdiction = route.act.jurisdiction
+    sections = dict(menu.SECTIONS)
+    query = ui.lang_query(route.lang)
+    if jurisdiction in sections:
+        section_url = f'/{jurisdiction}/{query}'
+        section_label = menu.section_label(jurisdiction)
+    else:
+        section_url = '/' + query
+        section_label = _('Акты')
+    if current is not None:
+        for item in reading.toc_units(toc):
+            item.current = item.fragment.id == current.id
+    return {
+        'nav_toc': toc,
+        'sidenav_title': _('Оглавление акта'),
+        'section_url': section_url,
+        'section_label': section_label,
     }
 
 
@@ -158,23 +444,61 @@ def act_page(request, route, structure):
     context.update(
         {
             'toc': toc,
-            'amended_by': [related_entry(other, route) for other in amended_by],
-            'amends': [related_entry(other, route) for other in amends],
+            'amended_by': [
+                related_entry(other, route) for other in amended_by if access.act_visible(other)
+            ],
+            'amends': [
+                related_entry(other, route) for other in amends if access.act_visible(other)
+            ],
+            'short': reading.act_short_label(act, route.lang),
             'sources': text_sources(act),
         }
     )
+    context.update(nav_context(route, toc))
+    context['sidenav_wide_only'] = True
+    # на странице самого акта его метка в шапке — не ссылка на себя
+    context['act_head_current'] = True
     return render(request, 'site/act_detail.html', context)
 
 
+# статусы текстов на языке интерфейса (в модели Expression.Status — русские названия)
+STATUS_NAMES = {
+    Expression.Status.OFFICIAL_TEXT: gettext_lazy('Официальный текст'),
+    Expression.Status.OFFICIAL_TRANSLATION: gettext_lazy('Официальный перевод'),
+    Expression.Status.UNOFFICIAL_TRANSLATION: gettext_lazy('Неофициальный перевод'),
+    Expression.Status.OUR_TRANSLATION: gettext_lazy('Наш перевод'),
+}
+
+
+# названия и указания источников хранятся в данных по-русски (load_texts.SOURCES) и
+# переводятся как msgid; список — чтобы makemessages их нашёл
+SOURCE_TEXTS = (
+    gettext_noop('CyLaw — неофициальная сводная редакция'),
+    gettext_noop('Сводная редакция CyLaw (www.cylaw.org, ΚΙΝΟΠ), неофициальная'),
+    gettext_noop('Официальная газета Республики Кипр'),
+    gettext_noop('Неофициальный перевод'),
+    gettext_noop('Неофициальный перевод проекта Nomos, CC BY 4.0'),
+)
+
+
+def source_text(text):
+    """Строка источника из данных на языке интерфейса; пустая — пустой (не заголовок каталога)."""
+    return _(text) if text else ''
+
+
 def text_sources(act):
-    """Откуда тексты акта: источник и статус каждого выражения."""
+    """Откуда тексты акта: источник и статус каждого выражения, на языке интерфейса."""
     return [
         {
             'lang': expression.lang,
-            'status': expression.get_status_display(),
+            'status': STATUS_NAMES.get(expression.status) or expression.get_status_display(),
             'source': expression.source,
+            'name': source_text(expression.source.name),
+            'attribution': source_text(expression.source.attribution),
         }
-        for expression in act.expressions.select_related('source').order_by('lang')
+        for expression in access.expression_queryset(
+            act.expressions.select_related('source').order_by('lang')
+        )
     ]
 
 
@@ -182,6 +506,7 @@ def related_entry(act, route):
     title, title_lang = reading.act_title_lang(act, route.lang)
     return {
         'label': reading.act_label(act),
+        'short': reading.act_short_label(act, route.lang),
         'title': title,
         'title_lang': title_lang,
         'url': reading.build_url(act),
@@ -203,8 +528,9 @@ def unit_page(request, route, structure, unit):
             previous_unit = units[position - 1]
         if position + 1 < len(units):
             next_unit = units[position + 1]
+    toc_items = reading.toc_items_by_id(toc)
     crumbs = [
-        reading.fragment_label(ancestor, ancestor.version_on(route.date))
+        toc_label(toc_items, ancestor, ancestor.version_on(route.date))
         for ancestor in structure.ancestors(unit)
     ]
     context = base_context(request, route)
@@ -212,7 +538,7 @@ def unit_page(request, route, structure, unit):
         {
             'unit': unit,
             'root': root,
-            'unit_label': reading.fragment_label(unit, root.version),
+            'unit_label': toc_label(toc_items, unit, root.version),
             'crumbs': crumbs,
             'previous': unit_link(previous_unit, route),
             'next': unit_link(next_unit, route),
@@ -220,9 +546,27 @@ def unit_page(request, route, structure, unit):
             'untranslated': (
                 route.lang != reading.DEFAULT_LANG and not reading.has_translation(root)
             ),
+            'translation': translation_expression(route),
         }
     )
+    context.update(nav_context(route, toc, unit))
     return render(request, 'site/unit.html', context)
+
+
+def toc_label(toc_items, fragment, version):
+    """Подпись из оглавления (там уже переведённые заголовки), иначе — опорная."""
+    item = toc_items.get(fragment.id)
+    if item is not None and item.version == version:
+        return item.label
+    return reading.fragment_label(fragment, version)
+
+
+def translation_expression(route):
+    """Выражение перевода страницы — для строки «Источник перевода»."""
+    if route.lang == reading.DEFAULT_LANG:
+        return None
+    expressions = route.act.expressions.select_related('source').filter(lang=route.lang)
+    return access.expression_queryset(expressions).first()
 
 
 def unit_link(item, route):
@@ -250,6 +594,9 @@ def future_dates(root):
 
 def history_page(request, route, structure, fragment):
     current = fragment.version_on(route.date)
+    in_force = fragment.version_on(datetime.date.today())
+    unit = structure.unit_of(fragment) or fragment
+    anchor = '' if unit.id == fragment.id else '#' + fragment.eid
     versions = []
     for version in fragment.versions.select_related(
         'amendment__amending_act',
@@ -268,31 +615,159 @@ def history_page(request, route, structure, fragment):
                 'note': amendment.note,
             }
         read_on = start if start is not None and start >= reading.EARLIEST else None
+        if in_force is not None and version.id == in_force.id:
+            # действующая сегодня редакция — адрес без даты
+            read_on = None
         versions.append(
             {
                 'version': version,
                 'start': start,
                 'introduced': introduced,
                 'current': current is not None and version.id == current.id,
-                'url': reading.build_url(route.act, on=read_on, eid=fragment.eid),
+                'url': reading.build_url(
+                    route.act,
+                    on=read_on,
+                    eid=unit.eid,
+                    lang=route.lang,
+                )
+                + route.chain_query
+                + anchor,
             }
         )
     versions.sort(
         key=lambda entry: (entry['start'] or datetime.date.min, entry['version'].known_from)
     )
+    nested = nested_changes(structure, fragment, route)
     context = base_context(request, route)
+    toc = reading.build_toc(structure, route)
+    context.update(nav_context(route, toc, unit))
     context.update(
         {
             'fragment': fragment,
-            'fragment_label': reading.fragment_label(fragment, current or fragment.versions.last()),
+            'fragment_label': history_label(structure, fragment, route),
+            'has_changes': bool(nested) or any(entry['introduced'] for entry in versions),
             'versions': versions,
-            'fragment_url': reading.build_url(route.act, on=route.on, eid=fragment.eid),
+            'nested': nested,
+            # путь назад: к действующему тексту того же пункта на том же языке
+            'current_url': (
+                reading.build_url(route.act, eid=unit.eid, lang=route.lang)
+                + route.chain_query
+                + anchor
+            ),
+            # и к редакции на дату, с которой пришли в историю
+            'dated_url': (
+                reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang)
+                + route.chain_query
+                + anchor
+                if route.on is not None
+                else ''
+            ),
         }
     )
     return render(request, 'site/history.html', context)
 
 
+def descendants(structure, fragment):
+    """Все вложенные фрагменты по порядку текста."""
+    found = []
+    for kid in structure.kids(fragment):
+        found.append(kid)
+        found.extend(descendants(structure, kid))
+    return found
+
+
+def nested_changes(structure, fragment, route):
+    """Изменения вложенных пунктов и подпунктов: дата, пункт, изменяющий акт, ссылки.
+
+    Базовый текст изменением не считается. Номер пункта — путь номеров от фрагмента
+    страницы истории вниз («(3)(α)»); без номера — последняя часть eid.
+    """
+    nested = descendants(structure, fragment)
+    if not nested:
+        return []
+    by_fragment = {}
+    for version in FragmentVersion.objects.filter(fragment__in=nested).select_related(
+        'amendment__amending_act',
+        'amendment__amending_fragment',
+    ):
+        by_fragment.setdefault(version.fragment_id, []).append(version)
+    unit = structure.unit_of(fragment) or fragment
+    in_force = {}
+    changes = []
+    for kid in nested:
+        for version in by_fragment.get(kid.id, []):
+            amendment = version.amendment
+            if amendment.kind == amendment.Kind.BASE:
+                continue
+            start = version.start(Fragment.Axis.APPLIES)
+            if kid.id not in in_force:
+                in_force[kid.id] = kid.version_on(datetime.date.today())
+            current = in_force[kid.id]
+            read_on = start if start is not None and start >= reading.EARLIEST else None
+            if current is not None and version.id == current.id:
+                read_on = None
+            label = reading.act_label(amendment.amending_act)
+            if amendment.amending_fragment is not None:
+                label += ', ' + amendment.amending_fragment.eid
+            changes.append(
+                {
+                    'start': start,
+                    'version': version,
+                    'place': nested_place(structure, fragment, kid, by_fragment),
+                    'url': (
+                        reading.build_url(route.act, on=read_on, eid=unit.eid, lang=route.lang)
+                        + '#'
+                        + kid.eid
+                    ),
+                    'history_url': reading.build_url(
+                        route.act,
+                        eid=kid.eid,
+                        lang=route.lang,
+                        history=True,
+                    ),
+                    'introduced': {
+                        'label': label,
+                        'url': amendment_url(amendment),
+                        'note': amendment.note,
+                    },
+                }
+            )
+    changes.sort(key=lambda entry: (entry['start'] or datetime.date.min, entry['place']))
+    return changes
+
+
+def nested_place(structure, fragment, kid, by_fragment):
+    """«(3)(α)»: номера от фрагмента страницы истории (не включая его) до kid."""
+    chain = []
+    while kid is not None and kid.id != fragment.id:
+        chain.insert(0, kid)
+        kid = structure.parent(kid)
+    parts = []
+    for level in chain:
+        nums = [version.num for version in by_fragment.get(level.id, []) if version.num]
+        parts.append(nums[-1] if nums else level.eid.rsplit('.', 1)[-1])
+    return ''.join(parts)
+
+
+def history_label(structure, fragment, route):
+    """«Статья 5. Заголовок перевода» (без перевода — «Статья 5»), у пункта — «Статья 5, 1»."""
+    unit = structure.unit_of(fragment) or fragment
+    version = unit.version_on(route.date) or unit.versions.last()
+    headings = reading.translated_headings([version], route.lang)
+    label = reading.fragment_label(unit, version, headings, route.lang)
+    prefix = reading.KIND_PREFIX.get(route.lang, {}).get(unit.kind)
+    if label.lang != route.lang and prefix and version is not None and version.num:
+        label = reading.Label(f'{prefix} {version.num}', route.lang)
+    if fragment.id != unit.id:
+        own = fragment.version_on(route.date) or fragment.versions.last()
+        if own is not None and own.num:
+            label = reading.Label(f'{label.text}, {own.num}', label.lang)
+    return label
+
+
 def amendment_url(amendment):
-    """Вводящее положение изменяющего акта (или сам акт)."""
+    """Вводящее положение изменяющего акта (или сам акт); акт скрыт — пустой адрес."""
+    if not access.act_visible(amendment.amending_act):
+        return ''
     eid = amendment.amending_fragment.eid if amendment.amending_fragment else None
     return reading.build_url(amendment.amending_act, eid=eid)

@@ -9,6 +9,7 @@ class Fragment(models.Model):
         TITLE = 'tis', 'Раздел'
         CHAPTER = 'cpt', 'Глава'
         SECTION = 'sct', 'Секция'
+        SUBSECTION = 'sbs', 'Подсекция'
         ARTICLE = 'art', 'Статья'
         PARAGRAPH = 'par', 'Пункт'
         SUBPARAGRAPH = 'sub', 'Подпункт / абзац'
@@ -21,6 +22,7 @@ class Fragment(models.Model):
         CITATION = 'cit', 'Преамбула'
         FOOTNOTE = 'fnt', 'Сноска акта'
         SCHEDULE = 'sch', 'Παράρτημα'
+        FIELD = 'fld', 'Поле формы'
 
     class Axis(models.TextChoices):
         APPLIES = 'applies', 'Применяется'

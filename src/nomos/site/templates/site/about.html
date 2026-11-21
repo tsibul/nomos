@@ -1,21 +1,31 @@
 {% extends 'site/base.html' %}
 
-{% block title %}О проекте — Nomos{% endblock %}
+{% load i18n %}
+
+{% block title %}{% translate 'О проекте' %} — Nomos{% endblock %}
 
 {% block main %}
   <article class="about">
     <h1 class="page__title">
-      О проекте
+      {% translate 'О проекте' %}
     </h1>
 
     <p class="about__text">
-      Nomos — база нормативных текстов: налоговое законодательство Кипра, акты ЕС, МСФО.
-      Сейчас в базе законодательство Кипра об НДС.
-      Редакции прослеживаются с 01.01.2024: текст можно открыть на любую дату с этого дня.
+      {% blocktranslate trimmed %}
+        Nomos — база нормативных текстов: налоговое законодательство Кипра, затем акты ЕС.
+        Сейчас в базе законодательство Кипра об НДС.
+        Редакции прослеживаются с 01.01.2024: текст можно открыть на любую дату с этого дня.
+      {% endblocktranslate %}
+    </p>
+
+    <p class="about__text">
+      {% blocktranslate trimmed with name='Ilia Tsigelnitskii' %}
+        Автор проекта — {{ name }}.
+      {% endblocktranslate %}
     </p>
 
     <h2 class="about__heading">
-      Источники текстов
+      {% translate 'Источники текстов' %}
     </h2>
     <ul class="about__list">
       {% for entry in sources %}
@@ -25,44 +35,65 @@
               href="{{ entry.source.url }}"
               rel="external"
             >
-              {{ entry.source.name }}
+              {{ entry.name }}
             </a>
           {% else %}
-            {{ entry.source.name }}
+            {{ entry.name }}
           {% endif %}
-          {% if entry.statuses %}
-            — {{ entry.statuses|join:', ' }}
-          {% endif %}
-          (текстов: {{ entry.count }})
+          {% blocktranslate trimmed with count=entry.count %}
+            (текстов: {{ count }})
+          {% endblocktranslate %}
         </li>
       {% empty %}
         <li class="about__item">
-          Источников в базе нет.
+          {% translate 'Источников в базе нет.' %}
         </li>
       {% endfor %}
     </ul>
-
-    <h2 class="about__heading">
-      Перевод
-    </h2>
     <p class="about__text">
-      Переводы на русский — рабочие и не выверены.
-      Юридическую силу имеет текст на языке оригинала.
+      {% blocktranslate trimmed with link=cylaw_link %}
+        Текст закона о НДС — сводная редакция CyLaw
+        ({{ link }}, Κυπριακό Ινστιτούτο Νομικής Πληροφόρησης, ΚΙΝΟΠ), неофициальная.
+        Прежние редакции восстановлены проектом Nomos по актам Официальной газеты.
+      {% endblocktranslate %}
     </p>
 
     <h2 class="about__heading">
-      Лицензии
+      {% translate 'Перевод' %}
+    </h2>
+    <p class="about__text">
+      {% blocktranslate trimmed %}
+        Переводы на русский выполнены ИИ и человеком не выверены.
+        Юридическую силу имеет текст на языке оригинала.
+      {% endblocktranslate %}
+    </p>
+
+    <h2 class="about__heading">
+      {% translate 'Лицензии' %}
     </h2>
     <ul class="about__list">
       <li class="about__item">
-        Код — MIT.
+        {% translate 'Код — MIT.' %}
       </li>
       <li class="about__item">
-        Наши переводы и разметка — CC BY 4.0.
+        {% translate 'CC BY 4.0 — только наши переводы и разметка.' %}
       </li>
       <li class="about__item">
-        Тексты актов — на условиях их источников.
+        {% blocktranslate trimmed %}
+          На тексты актов и сводные редакции третьих лиц CC BY 4.0 не распространяется:
+          они используются на условиях их источников.
+        {% endblocktranslate %}
       </li>
     </ul>
+
+    <h2 class="about__heading">
+      {% translate 'Конфиденциальность' %}
+    </h2>
+    <p class="about__text">
+      {% blocktranslate trimmed %}
+        Cookie используется только для входа. Сайт не загружает ничего со сторонних серверов:
+        шрифты системные, скрипты и стили — свои.
+      {% endblocktranslate %}
+    </p>
   </article>
 {% endblock %}

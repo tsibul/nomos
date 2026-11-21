@@ -1,27 +1,68 @@
 {% extends 'site/base.html' %}
 
-{% block title %}{{ section|default:'Акты' }} — Nomos{% endblock %}
+{% load i18n %}
+
+{% block title %}{{ section|default:_('Акты') }} — Nomos{% endblock %}
 
 {% block main %}
+  {% if is_home %}
+    <section class="hero">
+      <p class="hero__text">
+        {% blocktranslate trimmed %}
+          Законы Кипра об НДС для тех, кто читает по-русски: официальный греческий текст,
+          русский перевод, редакции на любую дату с 01.01.2024, оригинал рядом.
+        {% endblocktranslate %}
+      </p>
+      <div class="hero__actions">
+        {% if base %}
+          <a
+            class="hero__button hero__button--primary"
+            href="{{ base.0.url }}"
+            lang="{{ base.0.short.lang }}"
+          >
+            {{ base.0.short }}
+          </a>
+        {% endif %}
+        <a
+          class="hero__button"
+          href="/about/{{ lang_query }}"
+        >
+          {% translate 'О проекте' %}
+        </a>
+      </div>
+    </section>
+  {% endif %}
+
   <h1 class="page__title">
     {% if section %}
-      {{ section }}: акты
+      {{ section }}: {% translate 'акты' %}
     {% else %}
-      Акты
+      {% translate 'Акты' %}
     {% endif %}
   </h1>
 
-  <section class="acts">
-    <h2 class="acts__heading">
-      Основные акты
-    </h2>
-    {% include 'site/parts/act_entries.html' with entries=base %}
-  </section>
+  {% if has_acts %}
+    {% if base %}
+      <ul class="acts__cards">
+        {% for entry in base %}
+          <li class="acts__card">
+            {% include 'site/parts/act_entry.html' %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
 
-  <section class="acts">
-    <h2 class="acts__heading">
-      Изменяющие акты
-    </h2>
-    {% include 'site/parts/act_entries.html' with entries=amending %}
-  </section>
+    {% for group in groups %}
+      <details class="acts__group">
+        <summary class="acts__summary">
+          {{ group.title }}, {{ group.entries|length }}
+        </summary>
+        {% include 'site/parts/act_entries.html' with entries=group.entries %}
+      </details>
+    {% endfor %}
+  {% else %}
+    <p class="acts__empty">
+      {% translate 'В разделе пока нет актов: тексты готовятся.' %}
+    </p>
+  {% endif %}
 {% endblock %}

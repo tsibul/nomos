@@ -31,7 +31,24 @@ SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', '0') == '1'
 
-ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
+
+
+def env_list(name):
+    """Список из переменной окружения через запятую, без пустых."""
+    return [item.strip() for item in os.environ.get(name, '').split(',') if item.strip()]
+
+
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS')
+
+# адреса со схемой (https://example.org), с которых принимаются формы (вход)
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
+
+# сайт отдаётся по HTTPS: по умолчанию — при выключенном DEBUG;
+# DJANGO_HTTPS=0 — проверка сборки локально по http
+HTTPS = os.environ.get('DJANGO_HTTPS', '0' if DEBUG else '1') == '1'
+
+# Только публичные выражения для посетителя без входа (nomos.site.access); по умолчанию — всё
+NOMOS_PUBLIC_ONLY = os.environ.get('NOMOS_PUBLIC_ONLY', '0') == '1'
 
 
 # Application definition
@@ -56,8 +73,12 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # аноним при NOMOS_PUBLIC_ONLY видит только публичные выражения
+    'nomos.site.access.PublicOnlyMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # язык интерфейса из адреса, без cookies
+    'nomos.site.ui.InterfaceLanguageMiddleware',
 ]
 
 ROOT_URLCONF = 'nomos.urls'
@@ -73,6 +94,8 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'nomos.site.menu.menu',
+                'nomos.site.notices.notices',
+                'nomos.site.ui.ui',
             ],
         },
     },
@@ -121,7 +144,16 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+# исходный язык строк интерфейса; переводы — в nomos/locale/ (собираются compilemessages)
+LANGUAGE_CODE = 'ru'
+
+LANGUAGES = [
+    ('ru', 'Русский'),
+    ('el', 'Ελληνικά'),
+    ('en', 'English'),
+]
+
+LOCALE_PATHS = [BASE_DIR / 'nomos' / 'locale']
 
 TIME_ZONE = 'UTC'
 
@@ -135,13 +167,66 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# сюда collectstatic собирает статику для веб-сервера (по умолчанию — staticfiles/ в корне)
+STATIC_ROOT = os.environ.get('DJANGO_STATIC_ROOT', str(ROOT_DIR / 'staticfiles'))
+
+
+# Вход: стандартная аутентификация Django; регистрации и восстановления пароля нет
+
+LOGIN_URL = 'site:login'
+
+LOGIN_REDIRECT_URL = 'site:act_list'
+
+LOGOUT_REDIRECT_URL = 'site:act_list'
+
+# cookie сессии и CSRF: Secure при HTTPS, локально — по http
+SESSION_COOKIE_SECURE = HTTPS
+
+CSRF_COOKIE_SECURE = HTTPS
+
+SESSION_COOKIE_HTTPONLY = True
+
+CSRF_COOKIE_HTTPONLY = True
+
+SESSION_COOKIE_SAMESITE = 'Lax'
+
+CSRF_COOKIE_SAMESITE = 'Lax'
+
+
+# Заголовки безопасности
+
+SECURE_CONTENT_TYPE_NOSNIFF = True
+
+SECURE_REFERRER_POLICY = 'same-origin'
+
+X_FRAME_OPTIONS = 'DENY'
+
+# HTTPS: перенаправление с http и HSTS (срок в секундах, 0 — без HSTS)
+SECURE_SSL_REDIRECT = HTTPS
+
+SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_HSTS_SECONDS', '31536000')) if HTTPS else 0
+
+SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
+
+SECURE_HSTS_PRELOAD = False
+
+# за прокси, который снимает HTTPS: DJANGO_PROXY_SSL_HEADER=1 — верить X-Forwarded-Proto
+if os.environ.get('DJANGO_PROXY_SSL_HEADER', '0') == '1':
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
+# Сайт писем не шлёт (ни регистрации, ни восстановления пароля). Локально — в консоль,
+# на хостинге — SMTP с умолчаниями Django, чтобы случайное письмо не терялось молча.
 MAILERS = {
     'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
+        'BACKEND': (
+            'django.core.mail.backends.console.EmailBackend'
+            if DEBUG
+            else 'django.core.mail.backends.smtp.EmailBackend'
+        ),
     },
 }
 

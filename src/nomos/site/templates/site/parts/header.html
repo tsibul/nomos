@@ -1,5 +1,6 @@
+{% load i18n %}
 {% comment %}
-  Шапка: название, разделы, «О проекте», язык текста.
+  Шапка: название, разделы, «О проекте», «Выйти» (после входа), язык текста.
   Без JS меню видно всегда; с JS на телефоне сворачивается под кнопку.
 {% endcomment %}
 <div
@@ -8,7 +9,7 @@
 >
   <a
     class="header__brand"
-    href="/"
+    href="/{{ lang_query }}"
   >
     Nomos
   </a>
@@ -21,13 +22,13 @@
     data-menu-toggle
     hidden
   >
-    Меню
+    {% translate 'Меню' %}
   </button>
 
   <nav
     class="menu"
     id="main-menu"
-    aria-label="Разделы"
+    aria-label="{% translate 'Разделы' %}"
   >
     <ul class="menu__list">
       {% for section in menu_sections %}
@@ -35,7 +36,7 @@
           {% if section.active %}
             <a
               class="menu__link{% if section.current %} menu__link--current{% endif %}"
-              href="{{ section.url }}"
+              href="{{ section.url }}{{ lang_query }}"
               {% if section.current %}aria-current="page"{% endif %}
             >
               {{ section.label }}
@@ -44,7 +45,7 @@
             <span class="menu__link menu__link--disabled">
               {{ section.label }}
               <span class="menu__soon">
-                скоро
+                {% translate 'скоро' %}
               </span>
             </span>
           {% endif %}
@@ -53,28 +54,54 @@
       <li class="menu__item">
         <a
           class="menu__link{% if menu_about_current %} menu__link--current{% endif %}"
-          href="/about/"
+          href="/about/{{ lang_query }}"
           {% if menu_about_current %}aria-current="page"{% endif %}
         >
-          О проекте
+          {% translate 'О проекте' %}
         </a>
       </li>
+      {% if user.is_authenticated %}
+        <li class="menu__item">
+          <form
+            class="menu__logout"
+            method="post"
+            action="/logout/"
+          >
+            {% csrf_token %}
+            <button
+              class="menu__link menu__button"
+              type="submit"
+            >
+              {% translate 'Выйти' %}
+            </button>
+          </form>
+        </li>
+      {% endif %}
     </ul>
   </nav>
 
   {% if langs %}
     <nav
       class="header__langs"
-      aria-label="Язык текста"
+      aria-label="{% translate 'Язык текста' %}"
     >
       {% for lang in langs %}
-        <a
-          class="header__lang{% if lang.current %} header__lang--current{% endif %}"
-          href="{{ lang.url }}"
-          {% if lang.current %}aria-current="true"{% endif %}
-        >
-          {{ lang.code }}
-        </a>
+        {% if lang.current %}
+          <span
+            class="header__lang header__lang--current"
+            aria-current="true"
+          >
+            {{ lang.code }}
+          </span>
+        {% else %}
+          <a
+            class="header__lang"
+            href="{{ lang.url }}"
+            data-keep-hash
+          >
+            {{ lang.code }}
+          </a>
+        {% endif %}
       {% endfor %}
     </nav>
   {% endif %}

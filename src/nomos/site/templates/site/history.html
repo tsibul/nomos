@@ -1,9 +1,17 @@
 {% extends 'site/base.html' %}
 
-{% block title %}Редакции {{ fragment.eid }} — {{ label }} — Nomos{% endblock %}
+{% load i18n %}
+
+{% block title %}
+  {% translate 'Редакции:' %} {{ fragment_label }} — {{ label }} — Nomos
+{% endblock %}
 
 {% block header %}
   {% include 'site/parts/act_header.html' %}
+{% endblock %}
+
+{% block aside %}
+  {% include 'site/parts/sidenav.html' %}
 {% endblock %}
 
 {% block main %}
@@ -12,20 +20,48 @@
       class="crumbs__link"
       href="{{ act_url }}"
     >
-      Оглавление
+      {% translate 'Оглавление' %}
     </a>
     <a
       class="crumbs__link"
-      href="{{ fragment_url }}"
-      lang="{{ structure_lang }}"
+      href="{{ current_url }}"
+      lang="{{ fragment_label.lang }}"
     >
       {{ fragment_label }}
     </a>
   </nav>
 
-  <h1 class="page__title">
-    Редакции {{ fragment.eid }}
+  <p class="history__back">
+    <a
+      class="history__back-link"
+      href="{{ current_url }}"
+    >
+      {% translate '← К действующему тексту' %}
+    </a>
+    {% if dated_url %}
+      <a
+        class="history__back-link"
+        href="{{ dated_url }}"
+      >
+        {% translate '← К редакции на' %} {{ date|date:'d.m.Y' }}
+      </a>
+    {% endif %}
+  </p>
+
+  {% include 'site/parts/source_credit.html' %}
+
+  <h1
+    class="page__title"
+    lang="{{ fragment_label.lang }}"
+  >
+    {% translate 'Редакции:' %} {{ fragment_label }}
   </h1>
+
+  {% if not has_changes %}
+    <p class="history__none">
+      {% translate 'Изменений с 01.01.2024 нет.' %}
+    </p>
+  {% endif %}
 
   <ol class="history">
     {% for entry in versions %}
@@ -36,47 +72,103 @@
             href="{{ entry.url }}"
           >
             {% if entry.start %}
-              с {{ entry.start|date:'d.m.Y' }}
+              {% translate 'с' %} {{ entry.start|date:'d.m.Y' }}
             {% else %}
-              до 01.01.2024
+              {% translate 'до 01.01.2024' %}
             {% endif %}
           </a>
           {% if entry.version.state == 'repealed' %}
             <span class="history__state">
-              исключён
+              {% translate 'исключён' %}
             </span>
           {% endif %}
           {% if entry.current %}
             <span class="history__state">
-              действует на {{ date|date:'d.m.Y' }}
+              {% translate 'действует на' %} {{ date|date:'d.m.Y' }}
             </span>
           {% endif %}
         </div>
         <div class="history__source">
           {% if entry.introduced %}
-            <a
-              class="history__link"
-              href="{{ entry.introduced.url }}"
-            >
+            {% if entry.introduced.url %}
+              <a
+                class="history__link"
+                href="{{ entry.introduced.url }}"
+              >
+                {{ entry.introduced.label }}
+              </a>
+            {% else %}
               {{ entry.introduced.label }}
-            </a>
+            {% endif %}
             {% if entry.introduced.note %}
               — {{ entry.introduced.note }}
             {% endif %}
           {% else %}
-            Базовый текст
+            {% translate 'Базовый текст' %}
           {% endif %}
         </div>
         <div class="history__known">
-          Опубликовано {{ entry.version.known_from|date:'d.m.Y' }}
+          {% translate 'Опубликовано' %} {{ entry.version.known_from|date:'d.m.Y' }}
           {% if entry.version.valid_from %}
-            · в силе с {{ entry.version.valid_from|date:'d.m.Y' }}
+            · {% translate 'в силе с' %} {{ entry.version.valid_from|date:'d.m.Y' }}
           {% endif %}
           {% if entry.version.applies_from %}
-            · применяется с {{ entry.version.applies_from|date:'d.m.Y' }}
+            · {% translate 'применяется с' %} {{ entry.version.applies_from|date:'d.m.Y' }}
           {% endif %}
         </div>
       </li>
     {% endfor %}
   </ol>
+
+  {% if nested %}
+    <h2 class="history__heading">
+      {% translate 'Изменения вложенных пунктов' %}
+    </h2>
+
+    <ol class="history">
+      {% for entry in nested %}
+        <li class="history__item">
+          <div class="history__dates">
+            <a
+              class="history__link"
+              href="{{ entry.url }}"
+            >
+              {% translate 'с' %} {{ entry.start|date:'d.m.Y' }}
+            </a>
+            <span class="history__place">
+              {{ entry.place }}
+            </span>
+            {% if entry.version.state == 'repealed' %}
+              <span class="history__state">
+                {% translate 'исключён' %}
+              </span>
+            {% endif %}
+          </div>
+          <div class="history__source">
+            {% if entry.introduced.url %}
+              <a
+                class="history__link"
+                href="{{ entry.introduced.url }}"
+              >
+                {{ entry.introduced.label }}
+              </a>
+            {% else %}
+              {{ entry.introduced.label }}
+            {% endif %}
+            {% if entry.introduced.note %}
+              — {{ entry.introduced.note }}
+            {% endif %}
+          </div>
+          <div class="history__known">
+            <a
+              class="history__link"
+              href="{{ entry.history_url }}"
+            >
+              {% translate 'история пункта' %}
+            </a>
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
 {% endblock %}

@@ -123,6 +123,8 @@ def write_act(path, info, versions, uids):
         ('title', info.title),
         ('short-title', info.short_title),
     ]
+    # чего сборщик не знает (например short-title), берётся из прежнего файла
+    own = [(name, value or own_extra.get(name, '')) for name, value in own]
     names = {name for name, _ in own}
     own += [(name, value) for name, value in own_extra.items() if name not in names]
     lines.append('  <expression %s />' % attrs(own))
@@ -168,8 +170,10 @@ def write_act(path, info, versions, uids):
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
-def write_texts(path, info, versions, uids, markup):
-    """markup(paragraph) → разметка абзаца без <p>."""
+def write_texts(path, info, versions, uids, markup, refs=None):
+    """markup(paragraph) → разметка абзаца без <p>.
+
+    refs(node, version, абзацы) → абзацы со ссылками: разметка на весь текст сразу."""
     lines = ['<?xml version="1.0" encoding="utf-8"?>']
     lines.append('<texts %s>' % attrs([('act', info.uid), ('lang', info.lang)]))
     for node, node_versions in versions.items():
@@ -182,8 +186,11 @@ def write_texts(path, info, versions, uids, markup):
                 ('version', version.key),
                 ('unknown', unknown),
             ]))
-            for paragraph in version.paragraphs or []:
-                lines.append('    <p>%s</p>' % markup(paragraph))
+            paragraphs = [markup(paragraph) for paragraph in version.paragraphs or []]
+            if refs is not None:
+                paragraphs = refs(node, version, paragraphs)
+            for paragraph in paragraphs:
+                lines.append('    <p>%s</p>' % paragraph)
             for note in version.notes:
                 lines.append(
                     '    <note kind="editor_comment" status="open">%s</note>' % escape(note)
@@ -193,12 +200,19 @@ def write_texts(path, info, versions, uids, markup):
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 
-def write_notes(path, info, notes):
-    """Примечания CyLaw к закону, не привязанные к фрагментам: хранятся, в БД не грузятся."""
+def write_notes(path, info, notes, inline=()):
+    """Примечания редакции CyLaw: хранятся, в БД не грузятся.
+
+    notes — тексты без привязки; inline — (uid фрагмента, редакция, текст) из [Σ.Σ.: …]."""
     lines = ['<?xml version="1.0" encoding="utf-8"?>']
     lines.append('<notes %s>' % attrs([('act', info.uid), ('lang', info.lang)]))
     for note in notes:
         lines.append('  <note kind="source_comment">%s</note>' % escape(note))
+    for uid, key, note in inline:
+        lines.append('  <note %s>%s</note>' % (
+            attrs([('kind', 'source_comment'), ('fragment', uid), ('version', key)]),
+            escape(note),
+        ))
     lines.append('</notes>')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
@@ -212,7 +226,7 @@ def read_act(path):
 
 
 def read_texts(path):
-    """{(uid, key): (тело из <p>, [элементы <note> уровня текста], неизвестен ли текст)}."""
+    """{(uid, key): (тело из <p>, [<note> уровня текста], неизвестен ли текст, заголовок)}."""
     found = {}
     if not path.exists():
         return found
@@ -226,5 +240,10 @@ def read_texts(path):
             else:
                 body.append(ET.tostring(child, encoding='unicode'))
         key = (text.get('fragment'), text.get('version'))
-        found[key] = ('\n'.join(body), notes, text.get('unknown') == '1')
+        found[key] = (
+            '\n'.join(body),
+            notes,
+            text.get('unknown') == '1',
+            text.get('heading', ''),
+        )
     return found

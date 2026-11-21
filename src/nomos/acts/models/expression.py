@@ -24,6 +24,11 @@ class Expression(models.Model):
     short_title = models.CharField(max_length=255, blank=True)
     structure = models.CharField(max_length=10, choices=Structure, default=Structure.SAME)
     file = models.CharField(max_length=500, blank=True)
+    # показывать без входа; по умолчанию текст виден только после входа
+    # db_default: вставка из кода без этого поля (другие ветки на общей БД) не падает
+    public = models.BooleanField(default=False, db_default=False)
+    # адрес этого текста (страницы или файла акта) у источника; пусто — известен только сайт
+    url = models.URLField(max_length=500, blank=True, db_default='')
 
     class Meta:
         constraints = [

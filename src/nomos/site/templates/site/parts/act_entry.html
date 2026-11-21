@@ -1,0 +1,25 @@
+{% load i18n %}
+<a
+  class="acts__link"
+  href="{{ entry.url }}"
+>
+  <span
+    class="acts__label"
+    lang="{{ entry.short.lang }}"
+  >
+    {{ entry.short }}
+  </span>
+  {% if entry.changes %}
+    <span class="acts__changes">
+      {% translate 'Что меняет:' %} {{ entry.changes }}
+    </span>
+  {% endif %}
+  {% if entry.title and entry.title != entry.short.text %}
+    <span
+      class="acts__title"
+      lang="{{ entry.title_lang }}"
+    >
+      {{ entry.title }}
+    </span>
+  {% endif %}
+</a>

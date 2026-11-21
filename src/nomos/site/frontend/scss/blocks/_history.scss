@@ -33,3 +33,30 @@
   font-size: 0.875rem;
   color: var(--color-neutral-500);
 }
+
+.history__none {
+  margin: 0 0 1rem;
+  color: var(--color-neutral-500);
+}
+
+// Путь назад из истории: к действующему тексту и к редакции на дату
+.history__back {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0 0 0.75rem;
+}
+
+.history__back-link {
+  font-weight: 600;
+}
+
+// Изменения вложенных пунктов: заголовок раздела и номер пункта
+.history__heading {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1.125rem;
+}
+
+.history__place {
+  font-weight: 600;
+}

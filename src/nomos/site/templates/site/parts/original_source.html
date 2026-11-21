@@ -1,0 +1,21 @@
+{% load i18n %}
+
+{% comment %}
+  Ссылка на оригинал у источника — когда сам оригинал посетителю не показывается.
+{% endcomment %}
+{% if original_source %}
+  <p class="original-source">
+    {% translate 'Оригинал:' %}
+    {% if original_source.url %}
+      <a
+        class="original-source__link"
+        href="{{ original_source.url }}"
+        rel="external"
+      >
+        {{ original_source.name }}
+      </a>
+    {% else %}
+      {{ original_source.name }}
+    {% endif %}
+  </p>
+{% endif %}

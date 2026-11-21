@@ -1,0 +1,12 @@
+{# Подвал: отказ от ответственности на языке страницы (текст — nomos/site/notices.py) #}
+{% load i18n %}
+
+{% get_current_language as current_lang %}
+<footer class="footer">
+  <p
+    class="footer__disclaimer"
+    lang="{{ current_lang }}"
+  >
+    {{ disclaimer }}
+  </p>
+</footer>

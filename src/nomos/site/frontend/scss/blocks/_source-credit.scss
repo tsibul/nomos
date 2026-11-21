@@ -1,0 +1,11 @@
+// Подпись об источнике текста: неброско, во всю ширину строки
+.source-credit {
+  flex-basis: 100%;
+  margin: 0 0 0.5rem;
+  color: var(--color-neutral-500);
+  font-size: 0.75rem;
+}
+
+.toolbar .source-credit {
+  margin: 0;
+}
