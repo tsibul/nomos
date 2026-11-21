@@ -133,6 +133,8 @@ def merge_links(info, path):
     for relation in relations:
         if relation not in info.relations:
             info.relations.append(relation)
+    # порядок не зависит от того, какой из изменяемых актов собран последним
+    info.relations.sort()
     new = {amendment.key: amendment for amendment in info.amendments}
     merged = []
     for amendment in amendments:

@@ -29,7 +29,7 @@ DIVISION_WORDS = {
     'μεροσ': 'prt',
 }
 # «Section -1» (2006/112, гл. 1 разд. XII, вставлен 2020/285): номер с минусом
-DIVISION_RE = re.compile(r'^\s*(\S+)\s+(-?[0-9IVXLΙΧ]+[A-Za-zα-ω]?)\b')
+DIVISION_RE = re.compile(r'^\s*(\S+)\s+(-?[0-9IVXLΙΧ]+[A-Za-zΑ-Ωα-ω]?)\b')
 ARTICLE_RE = re.compile(r'(\d+[a-z]*)\s*$', re.I)
 # часть приложения: GR.SEQ с заголовком «PART A» / «ΜΕΡΟΣ Α» (приложения IX–XI 2006/112)
 ANNEX_PART_RE = re.compile(r'^\s*(?:PART|ΜΕΡΟΣ)\s+(\S+)\s*$', re.I)
@@ -45,7 +45,7 @@ INLINE_TAGS = {
     'SUP': 'sup',
     'SUB': 'sub',
 }
-LATIN_FOR_GREEK = str.maketrans('ΙΧ', 'IX')
+LATIN_FOR_GREEK = str.maketrans('ΙΧΑΒΓαβγ', 'IXABCabc')
 
 
 @dataclass

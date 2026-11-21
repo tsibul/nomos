@@ -107,6 +107,9 @@ def renumber_notes(paragraphs):
 def align(en, el, report, label):
     """eid опорного en → узел el; по порядку детей одного вида."""
     found = {}
+    # без пары по порядку: en-узлы и лишние el-узлы
+    missing = []
+    extras = []
 
     def walk(en_node, el_node):
         groups = {}
@@ -118,18 +121,37 @@ def align(en, el, report, label):
             positions[child.kind] = index + 1
             candidates = groups.get(child.kind, [])
             if index >= len(candidates):
-                report.append('%s: нет el для %s' % (label, child.eid))
+                missing.append(child)
+                # в el абзац не разбит на подабзацы (ст. 61а 282/2011): дети — у родителя
+                if child.kind == 'sub' and 'sub' not in groups:
+                    walk(child, el_node)
                 continue
             found[child.eid] = candidates[index]
             walk(child, candidates[index])
         for kind, candidates in groups.items():
-            extra = len(candidates) - positions.get(kind, 0)
-            if extra > 0:
-                report.append('%s: в el лишних %s: %d у %s' % (
-                    label, kind, extra, en_node.eid or 'акта',
-                ))
+            extras.extend(candidates[positions.get(kind, 0):])
 
     walk(en.root, el.root)
+    # раздел, вынесенный в el не на своё место («ΤΜΗΜΑ 3» главы XI 282/2011 — на верх акта):
+    # пара по виду и номеру среди лишних el-узлов
+    for child in missing:
+        pair = None
+        for candidate in extras:
+            if candidate.kind == child.kind and candidate.num == child.num:
+                pair = candidate
+                break
+        if pair is None:
+            report.append('%s: нет el для %s' % (label, child.eid))
+            continue
+        extras.remove(pair)
+        report.append('%s: el для %s взят не со своего места' % (label, child.eid))
+        found[child.eid] = pair
+        walk(child, pair)
+    paired = {id(node) for node in found.values()}
+    for candidate in extras:
+        if id(candidate) in paired:
+            continue
+        report.append('%s: в el лишний %s %s' % (label, candidate.kind, candidate.num))
     return found
 
 

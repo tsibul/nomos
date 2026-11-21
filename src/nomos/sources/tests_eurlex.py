@@ -397,6 +397,7 @@ class CollectTests(TestCase):
 
 TEXTS_DIR = Path(os.environ.get('NOMOS_TEXTS_DIR', '/nonexistent'))
 DIRECTIVE = 'eu/dir/2006/112'
+IMPLEMENTING = 'eu/reg/2011/282'
 
 
 @skipUnless((TEXTS_DIR / DIRECTIVE / 'act.xml').exists(), 'нет Nomos-texts с директивой НДС')
@@ -437,3 +438,27 @@ class EuVatTextsTests(TestCase):
         )
         self.assertGreater(references.count(), 0)
         self.assertFalse(references.filter(resolved=False).exists())
+
+    def test_implementing_regulation(self):
+        act = Act.objects.get(uid=IMPLEMENTING)
+        self.assertEqual(act.kind, Act.Kind.IMPLEMENTING_REGULATION)
+        self.assertGreater(act.fragments.count(), 500)
+        keys = set(
+            FragmentVersion.objects.filter(fragment__act__uid=IMPLEMENTING)
+            .values_list('key', flat=True)
+        )
+        self.assertEqual(keys, {'base', '2025-04-14'})
+        targets = set(
+            ActRelation.objects.filter(from_act__uid='eu/reg/2025/518')
+            .values_list('to_act__uid', flat=True)
+        )
+        self.assertEqual(targets, {IMPLEMENTING})
+
+    def test_section_out_of_place_in_greek(self):
+        # «ΤΜΗΜΑ 3» главы XI в el вынесен на верх акта; el взят по виду и номеру
+        version = FragmentVersion.objects.get(
+            fragment__act__uid=IMPLEMENTING,
+            fragment__eid='cpt_XI.sct_3',
+            key='base',
+        )
+        self.assertTrue(version.texts.filter(expression__lang='el').exists())
