@@ -10,7 +10,9 @@ from unittest import skipUnless
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
-from nomos.acts.models import Amendment, Expression, Fragment, FragmentText, Reference
+from nomos.acts.models import (
+    ActRelation, Amendment, Expression, Fragment, FragmentText, Reference,
+)
 from nomos.translate.models import Note
 
 from .cylaw import history, numbering, refs, texts_xml
@@ -588,3 +590,45 @@ class PublicAttributeTests(TestCase):
         self.assertEqual(
             dict(Expression.objects.values_list('lang', 'public')), {'el': True, 'ru': True},
         )
+
+
+GUIDE = 'cy/instr/2024/vat_return_guide'
+
+
+@skipUnless((TEXTS_DIR / GUIDE / 'act.xml').exists(), 'нет Nomos-texts с руководством по НДС')
+class VatReturnGuideTests(TestCase):
+    """Загрузка руководства по заполнению декларации НДС из Nomos-texts (только чтение)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=StringIO())
+
+    def test_act_and_relation(self):
+        relation = ActRelation.objects.get(from_act__uid=GUIDE)
+        self.assertEqual(relation.from_act.kind, 'instr')
+        self.assertEqual((relation.kind, relation.to_act.uid), ('explains', LAW))
+        self.assertEqual(
+            dict(
+                Expression.objects.filter(act__uid=GUIDE).values_list('lang', 'source__code')
+            ),
+            {'el': 'cy-tax'},
+        )
+
+    def test_fields(self):
+        fields = Fragment.objects.filter(act__uid=GUIDE, kind='fld')
+        self.assertEqual(
+            sorted(fields.values_list('eid', flat=True)),
+            sorted(
+                'fld_%s' % num
+                for num in ['1', '2', '3', '4', '5', '6', '7', '8A', '8B', '9', '10', '11A', '11B']
+            ),
+        )
+        self.assertTrue(all(field.parent.eid == 'sct_G' for field in fields))
+
+    def test_greek_refs(self):
+        texts = FragmentText.objects.filter(version__fragment__act__uid=GUIDE)
+        self.assertEqual(texts.count(), 145)
+        references = Reference.objects.filter(from_text__in=texts)
+        self.assertEqual(references.count(), 28)
+        self.assertFalse(references.filter(resolved=False).exists())
+        self.assertFalse(references.exclude(to_act__uid=LAW).exists())
