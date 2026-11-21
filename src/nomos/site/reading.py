@@ -42,6 +42,7 @@ CONTAINER_KINDS = {
     Fragment.Kind.TITLE,
     Fragment.Kind.CHAPTER,
     Fragment.Kind.SECTION,
+    Fragment.Kind.SUBSECTION,
 }
 
 # Порядок предпочтения текстов одного языка

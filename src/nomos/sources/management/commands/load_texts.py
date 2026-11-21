@@ -34,6 +34,18 @@ SOURCES = {
         'attribution': 'Сводная редакция CyLaw (www.cylaw.org, ΚΙΝΟΠ), неофициальная',
     },
     'cy-gazette': {'name': 'Официальная газета Республики Кипр'},
+    # правовое уведомление EUR-Lex: сводные тексты — CC BY 4.0, указать источник и изменения;
+    # сводный текст документальный, аутентичен только текст в OJ
+    'eurlex': {
+        'name': 'EUR-Lex — сводный текст (не аутентичен; аутентичен OJ)',
+        'publisher': 'Publications Office of the European Union',
+        'license': 'CC BY 4.0',
+        'terms_url': 'https://eur-lex.europa.eu/content/legal-notice/legal-notice.html',
+        'attribution': (
+            '© European Union, https://eur-lex.europa.eu; сводный текст без юридической силы,'
+            ' аутентичен текст в Official Journal; CC BY 4.0'
+        ),
+    },
     # сайт Τμήμα Φορολογίας на gov.cy; условия использования не выяснены
     'cy-tax': {
         'name': 'Τμήμα Φορολογίας (Tax Department), gov.cy',
@@ -119,6 +131,9 @@ class Loader:
             published_in=element.get('published-in', ''),
             in_force_from=date(element.get('in-force-from')),
             structure_lang=element.get('structure-lang', ''),
+            date_adopted=date(element.get('date-adopted')),
+            celex=element.get('celex', ''),
+            eli=element.get('eli', ''),
         )
         self.acts[act.uid] = act
         self.elements.append(element)
@@ -157,6 +172,7 @@ class Loader:
                 in_force_from=date(item.get('in-force-from')),
                 applies_from=date(item.get('applies-from')),
                 key=item.get('key'),
+                marker=item.get('marker', ''),
                 note=item.text or '',
             )
             self.amendments['%s#%s' % (act.uid, amendment.key)] = amendment
