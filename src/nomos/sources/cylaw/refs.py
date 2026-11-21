@@ -24,6 +24,9 @@ from . import numbering
 # разметка, которую ставит этот модуль; снимается перед повторной разметкой
 OWN_REF_RE = re.compile(r'<ref id="r\d+" to="[^"]*">(.*?)</ref>', re.S)
 
+# причины пропуска: другой акт; заглавное слово после упоминания — решает оригинал
+FOREIGN = 'похоже на другой акт'
+CAPITAL = 'заглавное слово после упоминания'
 SUB = r'\([0-9A-Za-zΑ-Ωα-ωА-Яа-яё]{1,5}\)'
 END = r'(?=[\s(,.;:·˙∙\u0387\u037e)»"\-—–]|$)'
 
@@ -64,6 +67,8 @@ class Language:
     base: str = r'(?!)'
     # «του παρόντος», «настоящего»: в изменяющем акте вне кавычек — сам этот акт
     this_act: str = r'(?!)'
+    # после упоминания слово с заглавной: другой акт, если в оригинале нет той же ссылки
+    capital: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -78,6 +83,7 @@ class Language:
         self.bare_qualified_re = re.compile(self.bare_qualified)
         self.base_re = re.compile(self.base)
         self.this_act_re = re.compile(self.this_act)
+        self.capital_re = re.compile(self.capital)
 
 
 def ordinal_pattern(ordinals):
@@ -135,8 +141,11 @@ RU = Language(
         r'[Пп]риложени(?:е|я|ю|ем|и)(?![\wё])' % ordinal_pattern(RU_ORDINALS)
     ),
     external=(
-        r'^\s+(?!настоящего)(?:[А-ЯЁΑ-ΩA-Z]|закона|кодекса|директивы|регламента|указа'
-        r'|постановления|упомянутого|указанного|этого|данного|его|её|их'
+        r'^\s+(?!настоящего)(?:[Α-ΩA-Z]'
+        r'|(?:Закон|Кодекс|Директив|Регламент|Указ|Постановлени|Конвенци|Правил|Договор'
+        r'|Соглашени|Протокол)[а-яё]*(?![\wё])'
+        r'|закона|кодекса|директивы|регламента|указа'
+        r'|постановления|упомянутого|указанного|этого|данного|его|её|их|т(?:ого|ой)\s+же'
         r'|к\s+(?!настоящему)[А-ЯЁа-яё])'
     ),
     ordinals=RU_ORDINALS,
@@ -149,11 +158,14 @@ RU = Language(
         r'|упомянутого|указанного|этого|данного|его|её|их|той\s+же|того\s+же)(?![\wё]))'
     ),
     base=(
-        r'^\s*(?:базового\s+[Зз]акона|к\s+базовому\s+[Зз]акону|к\s+[Зз]акону(?![\wё])'
+        r'^\s*(?:(?:базового|основного)\s+[Зз]акона|к\s+(?:базовому|основному)\s+[Зз]акону'
+        r'|к\s+[Зз]акону(?![\wё])'
         r'|[Зз]акон(?:а|ов)\s+о\s+налоге\s+на\s+добавленную\s+стоимость(?![\wё])'
         r'(?!\s*\(изменя))'
     ),
     this_act=r'^\s+настоящ\w+',
+    # «статьи 5 Части…» — другое; «статьи 33 Генеральный директор» — свой закон
+    capital=r'^\s+[А-ЯЁ]',
 )
 
 
@@ -225,6 +237,8 @@ class Marker:
         self.found = {}
         # глубина кавычек «…» в начале текущего абзаца
         self.depth = 0
+        # цели ссылок оригинала в этом тексте — для перевода (mark_translation)
+        self.agreed = set()
 
     def mark_text(self, paragraphs, own):
         """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
@@ -291,15 +305,16 @@ class Marker:
     def foreign(self, text, start, end):
         """Почему упоминание не размечается (другой акт), или None — размечается."""
         if not self.act:
-            return 'похоже на другой акт' if self.external(text, end, start) else None
+            return self.external(text, end, start)
         tail = text[end:]
         if self.language.base_re.match(tail):
             return None
         quoted = self.quoted(text, start)
         if self.language.this_act_re.match(tail):
             return None if quoted else 'ссылка на сам изменяющий акт'
-        if self.external(text, end, start):
-            return 'похоже на другой акт'
+        reason = self.external(text, end, start)
+        if reason:
+            return reason
         if quoted or self.implicit:
             return None
         return 'акт не указан'
@@ -346,9 +361,31 @@ class Marker:
         return spans
 
     def external(self, text, end, start=None):
+        """Причина «другой акт», CAPITAL — решает оригинал, или None."""
         if start is not None and self.language.external_before_re.search(text[:start]):
-            return True
-        return self.language.external_re.match(text[end:]) is not None
+            return FOREIGN
+        if self.language.external_re.match(text[end:]):
+            return FOREIGN
+        if self.language.capital_re.match(text[end:]):
+            return CAPITAL
+        return None
+
+    def agreed_target(self, top, subs):
+        """Цель найдена точно и есть среди ссылок оригинала этого текста."""
+        eid, partial = self.targets.resolve(top, subs)
+        # сведённое к предку («статьи 14, или (и)») не подтверждается оригиналом
+        if eid is None or partial:
+            return False
+        return ('%s#%s' % (self.act, eid) if self.act else eid) in self.agreed
+
+    def checked(self, reason, top, subs, start, end):
+        """Упоминание с причиной пропуска (или без) → (начало, конец, eid или None)."""
+        if reason == CAPITAL:
+            reason = None if self.agreed_target(top, subs) else FOREIGN
+        if reason:
+            self.skipped[reason] += 1
+            return (start, end, None)
+        return self.target(top, subs, start, end)
 
     def target(self, top, subs, start, end):
         eid, partial = self.targets.resolve(top, subs)
@@ -363,13 +400,9 @@ class Marker:
         spans = []
         for match in self.language.paragraph_re.finditer(text):
             reason = self.foreign(text, match.start(), match.end())
-            if reason:
-                self.skipped[reason] += 1
-                spans.append((match.start(), match.end(), None))
-                continue
             subs = re.findall(SUB, match.group(1))
             top = 'art_%s' % number_token(match.group(2))
-            spans.append(self.target(top, subs, match.start(), match.end()))
+            spans.append(self.checked(reason, top, subs, match.start(), match.end()))
         return spans
 
     def schedule_spans(self, text):
@@ -379,16 +412,12 @@ class Marker:
             if number is None:
                 continue
             reason = self.foreign(text, match.start(), match.end())
-            if reason:
-                self.skipped[reason] += 1
-                spans.append((match.start(), match.end(), None))
-                continue
             top = 'sch_%d' % number
             subs = []
             for name in ('part', 'table', 'item'):
                 if match.group(name):
                     subs = [match.group(name + '_num')]
-            spans.append(self.target(top, subs, match.start(), match.end()))
+            spans.append(self.checked(reason, top, subs, match.start(), match.end()))
         return spans
 
     def article_spans(self, text):
@@ -427,12 +456,8 @@ class Marker:
             if not items:
                 continue
             reason = self.foreign(text, word.start(), position)
-            if reason:
-                self.skipped[reason] += len(items)
-                spans.extend((item_start, end, None) for item_start, end, _, _ in items)
-                continue
             for item_start, end, item_top, subs in items:
-                spans.append(self.target(item_top, subs, item_start, end))
+                spans.append(self.checked(reason, item_top, subs, item_start, end))
         return spans
 
 
@@ -483,6 +508,8 @@ def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False
         own = eid_by_uid.get(key[0], '')
         # абзацы текста размечаются вместе: кавычки «…» бывают на несколько абзацев
         paragraphs = [item.group(2) for item in P_RE.finditer(match.group(2))]
+        el_targets = el_marks.get(key, [])
+        marker.agreed = set(el_targets)
         marked, found_all = marker.mark_text(paragraphs, own)
         replaced = iter(marked)
         body = P_RE.sub(
@@ -490,7 +517,6 @@ def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False
             match.group(2),
         )
         total[0] += len(found_all)
-        el_targets = el_marks.get(key, [])
         if key in el_marks and Counter(found_all) != Counter(el_targets):
             differences.append((own, key[1], sorted(el_targets), sorted(found_all)))
         return match.group(1) + align_ids(body, el_targets) + match.group(3)
