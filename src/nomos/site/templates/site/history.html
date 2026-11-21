@@ -115,4 +115,52 @@
       </li>
     {% endfor %}
   </ol>
+
+  {% if nested %}
+    <h2 class="history__heading">
+      {% translate 'Изменения вложенных пунктов' %}
+    </h2>
+
+    <ol class="history">
+      {% for entry in nested %}
+        <li class="history__item">
+          <div class="history__dates">
+            <a
+              class="history__link"
+              href="{{ entry.url }}"
+            >
+              {% translate 'с' %} {{ entry.start|date:'d.m.Y' }}
+            </a>
+            <span class="history__place">
+              {{ entry.place }}
+            </span>
+            {% if entry.version.state == 'repealed' %}
+              <span class="history__state">
+                {% translate 'исключён' %}
+              </span>
+            {% endif %}
+          </div>
+          <div class="history__source">
+            <a
+              class="history__link"
+              href="{{ entry.introduced.url }}"
+            >
+              {{ entry.introduced.label }}
+            </a>
+            {% if entry.introduced.note %}
+              — {{ entry.introduced.note }}
+            {% endif %}
+          </div>
+          <div class="history__known">
+            <a
+              class="history__link"
+              href="{{ entry.history_url }}"
+            >
+              {% translate 'история пункта' %}
+            </a>
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
 {% endblock %}

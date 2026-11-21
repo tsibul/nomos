@@ -9,7 +9,7 @@ from django.utils.http import urlencode
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy, gettext_noop
 
-from nomos.acts.models import Act, ActRelation, Expression, Fragment
+from nomos.acts.models import Act, ActRelation, Expression, Fragment, FragmentVersion
 from nomos.sources.models import Source
 
 from . import menu, notices, reading, ui
@@ -555,6 +555,7 @@ def history_page(request, route, structure, fragment):
     versions.sort(
         key=lambda entry: (entry['start'] or datetime.date.min, entry['version'].known_from)
     )
+    nested = nested_changes(structure, fragment, route)
     context = base_context(request, route)
     toc = reading.build_toc(structure, route)
     context.update(nav_context(route, toc, unit))
@@ -562,8 +563,9 @@ def history_page(request, route, structure, fragment):
         {
             'fragment': fragment,
             'fragment_label': history_label(structure, fragment, route),
-            'has_changes': any(entry['introduced'] for entry in versions),
+            'has_changes': bool(nested) or any(entry['introduced'] for entry in versions),
             'versions': versions,
+            'nested': nested,
             # путь назад: к действующему тексту того же пункта на том же языке
             'current_url': (
                 reading.build_url(route.act, eid=unit.eid, lang=route.lang)
@@ -581,6 +583,88 @@ def history_page(request, route, structure, fragment):
         }
     )
     return render(request, 'site/history.html', context)
+
+
+def descendants(structure, fragment):
+    """Все вложенные фрагменты по порядку текста."""
+    found = []
+    for kid in structure.kids(fragment):
+        found.append(kid)
+        found.extend(descendants(structure, kid))
+    return found
+
+
+def nested_changes(structure, fragment, route):
+    """Изменения вложенных пунктов и подпунктов: дата, пункт, изменяющий акт, ссылки.
+
+    Базовый текст изменением не считается. Номер пункта — путь номеров от фрагмента
+    страницы истории вниз («(3)(α)»); без номера — последняя часть eid.
+    """
+    nested = descendants(structure, fragment)
+    if not nested:
+        return []
+    by_fragment = {}
+    for version in FragmentVersion.objects.filter(fragment__in=nested).select_related(
+        'amendment__amending_act',
+        'amendment__amending_fragment',
+    ):
+        by_fragment.setdefault(version.fragment_id, []).append(version)
+    unit = structure.unit_of(fragment) or fragment
+    in_force = {}
+    changes = []
+    for kid in nested:
+        for version in by_fragment.get(kid.id, []):
+            amendment = version.amendment
+            if amendment.kind == amendment.Kind.BASE:
+                continue
+            start = version.start(Fragment.Axis.APPLIES)
+            if kid.id not in in_force:
+                in_force[kid.id] = kid.version_on(datetime.date.today())
+            current = in_force[kid.id]
+            read_on = start if start is not None and start >= reading.EARLIEST else None
+            if current is not None and version.id == current.id:
+                read_on = None
+            label = reading.act_label(amendment.amending_act)
+            if amendment.amending_fragment is not None:
+                label += ', ' + amendment.amending_fragment.eid
+            changes.append(
+                {
+                    'start': start,
+                    'version': version,
+                    'place': nested_place(structure, fragment, kid, by_fragment),
+                    'url': (
+                        reading.build_url(route.act, on=read_on, eid=unit.eid, lang=route.lang)
+                        + '#'
+                        + kid.eid
+                    ),
+                    'history_url': reading.build_url(
+                        route.act,
+                        eid=kid.eid,
+                        lang=route.lang,
+                        history=True,
+                    ),
+                    'introduced': {
+                        'label': label,
+                        'url': amendment_url(amendment),
+                        'note': amendment.note,
+                    },
+                }
+            )
+    changes.sort(key=lambda entry: (entry['start'] or datetime.date.min, entry['place']))
+    return changes
+
+
+def nested_place(structure, fragment, kid, by_fragment):
+    """«(3)(α)»: номера от фрагмента страницы истории (не включая его) до kid."""
+    chain = []
+    while kid is not None and kid.id != fragment.id:
+        chain.insert(0, kid)
+        kid = structure.parent(kid)
+    parts = []
+    for level in chain:
+        nums = [version.num for version in by_fragment.get(level.id, []) if version.num]
+        parts.append(nums[-1] if nums else level.eid.rsplit('.', 1)[-1])
+    return ''.join(parts)
 
 
 def history_label(structure, fragment, route):
