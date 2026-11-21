@@ -24,6 +24,7 @@ from nomos.acts.models import (
 )
 
 from .eurlex import editions, formex, refs
+from .management.commands.collect_eurlex import read_manifest
 
 ACT = 'eu/reg/2010/904'
 AMENDING_CELEX = '32099R0001'
@@ -295,6 +296,23 @@ class EditionsTests(SimpleTestCase):
     def test_loc_to_eid(self):
         self.assertEqual(editions.loc_to_eid('AR:24b;PA:2;PT:a'), 'art_24b.par_2.pnt_a')
         self.assertEqual(editions.loc_to_eid('AX:0;PT:9'), '')
+
+
+class ManifestTests(SimpleTestCase):
+    def test_root_note_is_base_note(self):
+        text = (
+            '<collect uid="eu/dir/2022/2523">'
+            '<note> Исправления  не внесены. </note>'
+            '<edition start="20221222" en="a" el="b" />'
+            '<amending uid="eu/dir/2025/1" celex="x" en="c" el="d"><note>Своя.</note></amending>'
+            '</collect>'
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(text, encoding='utf-8')
+            manifest = read_manifest(path)
+        self.assertEqual(manifest['note'], 'Исправления не внесены.')
+        self.assertEqual(manifest['amending'][0]['note'], 'Своя.')
 
 
 class GreekNumberTests(SimpleTestCase):
