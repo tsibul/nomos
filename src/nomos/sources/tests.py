@@ -902,6 +902,23 @@ class RefsTests(SimpleTestCase):
             self.assertEqual(path.read_text(encoding='utf-8'), result)
 
 
+    def test_translation_heading_only_record_not_text_start(self):
+        """95(Ι)/2000: «<text … heading="…" />» перед записью — тело размечается по своему ключу."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'ru.xml'
+            path.write_text(
+                '<texts>\n  <text fragment="u0" version="base" heading="Стоимость" />\n'
+                '  <text fragment="u1" version="base">\n'
+                '    <p>согласно статье 8 настоящего Закона</p>\n  </text>\n</texts>\n',
+                encoding='utf-8',
+            )
+            el_marks = {('u0', 'base'): [], ('u1', 'base'): ['art_8']}
+            _, differences, total = refs.mark_translation(
+                path, refs.Targets(REF_EIDS), {'u0': 'art_1', 'u1': 'art_1'}, el_marks,
+            )
+            self.assertEqual(total, 1)
+            self.assertEqual(differences, [])
+
 class PublicAttributeTests(TestCase):
     """Атрибут public у <expression>: читается загрузчиком, сохраняется при пересборке."""
 
