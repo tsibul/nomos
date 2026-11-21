@@ -90,12 +90,16 @@
         </div>
         <div class="history__source">
           {% if entry.introduced %}
-            <a
-              class="history__link"
-              href="{{ entry.introduced.url }}"
-            >
+            {% if entry.introduced.url %}
+              <a
+                class="history__link"
+                href="{{ entry.introduced.url }}"
+              >
+                {{ entry.introduced.label }}
+              </a>
+            {% else %}
               {{ entry.introduced.label }}
-            </a>
+            {% endif %}
             {% if entry.introduced.note %}
               — {{ entry.introduced.note }}
             {% endif %}
@@ -141,12 +145,16 @@
             {% endif %}
           </div>
           <div class="history__source">
-            <a
-              class="history__link"
-              href="{{ entry.introduced.url }}"
-            >
+            {% if entry.introduced.url %}
+              <a
+                class="history__link"
+                href="{{ entry.introduced.url }}"
+              >
+                {{ entry.introduced.label }}
+              </a>
+            {% else %}
               {{ entry.introduced.label }}
-            </a>
+            {% endif %}
             {% if entry.introduced.note %}
               — {{ entry.introduced.note }}
             {% endif %}

@@ -9,10 +9,17 @@ from django.utils.http import urlencode
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy, gettext_noop
 
-from nomos.acts.models import Act, ActRelation, Expression, Fragment, FragmentVersion
+from nomos.acts.models import (
+    Act,
+    ActRelation,
+    Expression,
+    Fragment,
+    FragmentVersion,
+    Reference,
+)
 from nomos.sources.models import Source
 
-from . import menu, notices, reading, ui
+from . import access, menu, notices, reading, ui
 
 
 def act_list(request, jurisdiction=None):
@@ -23,7 +30,10 @@ def act_list(request, jurisdiction=None):
         if jurisdiction not in menu.section_codes():
             raise Http404('Нет такого раздела')
         acts = acts.filter(jurisdiction=jurisdiction)
-    acts = sorted(acts, key=reading.act_sort_key)
+    acts = sorted(
+        (act for act in acts if access.act_visible(act)),
+        key=reading.act_sort_key,
+    )
     lang = reading.interface_lang()
     if jurisdiction is not None:
         section = menu.section_label(jurisdiction)
@@ -82,7 +92,13 @@ def about(request):
         {
             'source': source,
             'name': source_text(source.name),
-            'count': len(source.expressions.all()),
+            'count': len(
+                [
+                    expression
+                    for expression in source.expressions.all()
+                    if expression.public or not access.is_restricted()
+                ]
+            ),
         }
         for source in Source.objects.prefetch_related('expressions').order_by('name')
     ]
@@ -105,6 +121,8 @@ def robots(request):
 
 def read(request, path):
     route = reading.parse_path(path)
+    if not access.act_visible(route.act):
+        raise Http404('Акт не найден')
     translation.activate(ui.activation_lang(route.lang))
     if route.explicit_lang and route.lang == reading.default_lang(route.act):
         # язык по умолчанию в адресе не пишется: /ru/ → адрес без языка
@@ -165,7 +183,8 @@ def form_target(request, route):
         history=route.history,
     )
     # режим «оригинал рядом» и начало цепочки ссылок переходят на новую страницу
-    kept = {key: request.GET[key] for key in ('orig', *CHAIN_KEYS) if request.GET.get(key)}
+    keys = (*original_keys(), *CHAIN_KEYS)
+    kept = {key: request.GET[key] for key in keys if request.GET.get(key)}
     if kept:
         url += '?' + urlencode(kept)
     return url
@@ -176,7 +195,7 @@ def base_context(request, route):
     on = route.on
     # переключатель ведёт на ту же страницу, дату и режим «оригинал рядом»;
     # якорь добавляет JS (data-keep-hash)
-    keys = ('orig', 'from', 'at', *CHAIN_KEYS)
+    keys = (*original_keys(), 'from', 'at', *CHAIN_KEYS)
     kept = {key: request.GET[key] for key in keys if request.GET.get(key)}
     query = '?' + urlencode(kept) if kept else ''
     langs = [
@@ -208,10 +227,42 @@ def base_context(request, route):
         'date': route.date,
         'is_today': route.on is None or route.on == datetime.date.today(),
         'earliest': reading.EARLIEST,
-        'show_original': bool(request.GET.get('orig')),
+        'show_original': show_original(request, route),
+        'original_source': original_source(route),
         'back': back_link(request, route.lang, route.chain),
         'chain_start': chain_start_link(route),
         'source_credit': source_credit(act),
+    }
+
+
+def original_keys():
+    """Параметр режима «оригинал рядом» — если режим доступен посетителю."""
+    return () if access.is_restricted() else ('orig',)
+
+
+def show_original(request, route):
+    """Режим «греческий рядом»: только если оригинал виден посетителю."""
+    if not request.GET.get('orig'):
+        return False
+    return access.lang_visible(route.act, route.act.structure_lang or reading.DEFAULT_LANG)
+
+
+def original_source(route):
+    """Источник скрытого оригинала — для ссылки «Оригинал: <источник>»; виден — None.
+
+    Адреса статьи у источника в данных нет: ссылка ведёт на адрес источника.
+    """
+    lang = route.act.structure_lang or reading.DEFAULT_LANG
+    if route.lang == lang or access.lang_visible(route.act, lang):
+        return None
+    expression = (
+        route.act.expressions.select_related('source').filter(lang=lang).first()
+    )
+    if expression is None:
+        return None
+    return {
+        'name': source_text(expression.source.name),
+        'url': expression.source.url,
     }
 
 
@@ -232,8 +283,8 @@ def return_target(path, at, lang):
     """Страница возврата из параметра адреса и место на ней: (route, at) или None.
 
     Адрес собирается заново из разобранного пути — только страницы актов сайта.
-    Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта,
-    к пункту ссылки: якоря ссылок (`r1`, `r2`…) в каждом языке свои.
+    Язык сменили на странице цели — возврат на том же языке, если он есть у исходного акта:
+    к месту ссылки, если такая ссылка есть и в тексте этого языка, иначе к её пункту.
     """
     if not path.startswith('/') or path.startswith('//'):
         return None
@@ -245,8 +296,26 @@ def return_target(path, at, lang):
         at = ''
     if lang != route.lang and lang in reading.act_langs(route.act):
         route.lang = lang
-        at = fragment_of_anchor(at)
+        if not anchor_in_lang(route.act, at, lang):
+            at = fragment_of_anchor(at)
     return route, at
+
+
+def anchor_in_lang(act, at, lang):
+    """Есть ли место ссылки `ref-<пункт>-<якорь>` в тексте акта на языке lang.
+
+    id у ссылки ставится, только когда её цель найдена (`reading.render_body`).
+    """
+    if not at.startswith('ref-'):
+        return False
+    eid, _sep, anchor = at.removeprefix('ref-').rpartition('-')
+    return Reference.objects.filter(
+        from_text__version__fragment__act=act,
+        from_text__version__fragment__eid=eid,
+        from_text__expression__lang=lang,
+        anchor=anchor,
+        resolved=True,
+    ).exists()
 
 
 def chain_target(request, lang):
@@ -374,8 +443,12 @@ def act_page(request, route, structure):
     context.update(
         {
             'toc': toc,
-            'amended_by': [related_entry(other, route) for other in amended_by],
-            'amends': [related_entry(other, route) for other in amends],
+            'amended_by': [
+                related_entry(other, route) for other in amended_by if access.act_visible(other)
+            ],
+            'amends': [
+                related_entry(other, route) for other in amends if access.act_visible(other)
+            ],
             'short': reading.act_short_label(act, route.lang),
             'sources': text_sources(act),
         }
@@ -422,7 +495,9 @@ def text_sources(act):
             'name': source_text(expression.source.name),
             'attribution': source_text(expression.source.attribution),
         }
-        for expression in act.expressions.select_related('source').order_by('lang')
+        for expression in access.expression_queryset(
+            act.expressions.select_related('source').order_by('lang')
+        )
     ]
 
 
@@ -489,7 +564,8 @@ def translation_expression(route):
     """Выражение перевода страницы — для строки «Источник перевода»."""
     if route.lang == reading.DEFAULT_LANG:
         return None
-    return route.act.expressions.select_related('source').filter(lang=route.lang).first()
+    expressions = route.act.expressions.select_related('source').filter(lang=route.lang)
+    return access.expression_queryset(expressions).first()
 
 
 def unit_link(item, route):
@@ -689,6 +765,8 @@ def history_label(structure, fragment, route):
 
 
 def amendment_url(amendment):
-    """Вводящее положение изменяющего акта (или сам акт)."""
+    """Вводящее положение изменяющего акта (или сам акт); акт скрыт — пустой адрес."""
+    if not access.act_visible(amendment.amending_act):
+        return ''
     eid = amendment.amending_fragment.eid if amendment.amending_fragment else None
     return reading.build_url(amendment.amending_act, eid=eid)

@@ -33,6 +33,9 @@ DEBUG = os.environ.get('DJANGO_DEBUG', '0') == '1'
 
 ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
 
+# Только публичные выражения для посетителя без входа (nomos.site.access); по умолчанию — всё
+NOMOS_PUBLIC_ONLY = os.environ.get('NOMOS_PUBLIC_ONLY', '0') == '1'
+
 
 # Application definition
 
@@ -56,6 +59,8 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # аноним при NOMOS_PUBLIC_ONLY видит только публичные выражения
+    'nomos.site.access.PublicOnlyMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # язык интерфейса из адреса, без cookies
