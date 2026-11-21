@@ -124,7 +124,7 @@ def read(request, path):
         raise Http404('Редакции раньше 01.01.2024 не прослеживаются')
     if route.lang not in reading.act_langs(route.act):
         raise Http404('Нет такого языка')
-    route.chain = chain_params(request, route.lang)
+    route.chain = chain_params(request)
     structure = reading.Structure(route.act)
     if route.eid is None:
         return act_page(request, route, structure)
@@ -256,9 +256,14 @@ def chain_target(request, lang):
     return return_target(request.GET.get('from', ''), request.GET.get('at', ''), lang)
 
 
-def chain_params(request, lang):
-    """Начало цепочки для адресов страницы (`Route.chain`): {'start': …, 'start_at': …}."""
-    target = chain_target(request, lang)
+def chain_params(request):
+    """Начало цепочки для адресов страницы (`Route.chain`): {'start': …, 'start_at': …}.
+
+    Передаётся как пришло, без смены языка: иначе после смены языка якорь ссылки
+    (`ref-art_9.par_1-r1`) усекается до пункта и при возврате на исходный язык не восстановим.
+    Язык учитывает только сама ссылка «К началу» (`chain_start_link`).
+    """
+    target = chain_target(request, None)
     if target is None:
         return {}
     route, at = target

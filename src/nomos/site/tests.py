@@ -732,6 +732,22 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL + 'art_1/', {'on': '2024-06-01', **chain})
         self.assertIn('start=', response['Location'])
 
+    def test_chain_keeps_full_anchor_through_history_and_language(self):
+        self.add_ru()
+        self.link_texts_both_ways()
+        start = ACT_URL + '@2025-06-01/art_1/el/'
+        anchor = 'ref-art_1.par_1-r1'
+        chain = {'start': start, 'start_at': anchor}
+        # история на другом языке передаёт якорь целиком
+        response = self.client.get(ACT_URL + 'art_1/history/', chain)
+        self.assertEqual(response.context['route'].chain, chain)
+        switch = {lang['code']: lang['url'] for lang in response.context['langs']}
+        self.assertIn('start_at=' + anchor, switch['el'])
+        self.assertNotContains(response, 'start_at=art_1.par_1')
+        # после смены языка обратно «К началу» ведёт к самой ссылке
+        response = self.client.get(switch['el'])
+        self.assertEqual(response.context['chain_start']['url'], start + '#' + anchor)
+
     def test_about_in_greek(self):
         Source.objects.filter(code='test').update(name='Официальная газета Республики Кипр')
         response = self.client.get('/about/', {'lang': 'el'})

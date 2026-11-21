@@ -55,6 +55,11 @@
   overflow-wrap: anywhere;
 }
 
+// греческий текст как основной: та же читаемая длина строки, что у русского
+.fragment__text[lang='el'] {
+  max-width: base.$measure-el;
+}
+
 .fragment__original {
   overflow-wrap: anywhere;
 }
