@@ -1226,7 +1226,7 @@ HEALTH_LAW = 'cy/law/2001/89_I'
 
 @skipUnless((TEXTS_DIR / HEALTH_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 89(Ι)/2001')
 class HealthSystemLawTests(TestCase):
-    """Закон о ГеСИ 89(Ι)/2001 с изменениями 29, 53, 118, 139(Ι)/2025 и 60(Ι)/2026."""
+    """Закон о ГеСИ 89(Ι)/2001 с изменениями 29, 53, 118, 139(Ι)/2025, 60 и 61(Ι)/2026."""
 
     @classmethod
     def setUpTestData(cls):
@@ -1284,6 +1284,12 @@ class HealthSystemLawTests(TestCase):
         eid = 'art_44.par_1'
         self.assertIn('ο Επίτροπος', self.text(eid, datetime.date(2025, 4, 24)))
         self.assertIn('η αρμόδια αρχή', self.text(eid, datetime.date(2025, 4, 25)))
+
+    def test_counselling_psychologists_by_law_61_2026(self):
+        eid = 'art_2.def_alloi_epaggelmaties_ygeias'
+        phrase = 'ειδικότητα στη συμβουλευτική ψυχολογία'
+        self.assertNotIn(phrase, self.text(eid, datetime.date(2026, 4, 8)))
+        self.assertIn(phrase, self.text(eid, datetime.date(2026, 4, 9)))
 
     def test_subparagraph_by_law_118_2025(self):
         eid = 'art_19.par_4.pnt_b.sub_2'
