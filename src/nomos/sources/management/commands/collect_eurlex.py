@@ -28,6 +28,8 @@ def read_manifest(path):
         raise CommandError('нет манифеста %s' % path)
     root = ET.parse(path).getroot()
     act = dict(root.attrib)
+    note = root.find('note')
+    act['note'] = ' '.join((note.text or '').split()) if note is not None else ''
     act['editions'] = [dict(item.attrib) for item in root.iter('edition')]
     act['amending'] = []
     for item in root.iter('amending'):
@@ -224,7 +226,7 @@ class Command(BaseCommand):
             'en': latest.en.info.get('title', ''),
             'el': latest.el.info.get('title', ''),
         })
-        info.amendments.append(base_amendment(info))
+        info.amendments.append(base_amendment(info, manifest['note']))
 
         parsed = []
         for item in manifest['amending']:
