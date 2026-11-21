@@ -607,12 +607,14 @@ class VatReturnGuideTests(TestCase):
         relation = ActRelation.objects.get(from_act__uid=GUIDE)
         self.assertEqual(relation.from_act.kind, 'instr')
         self.assertEqual((relation.kind, relation.to_act.uid), ('explains', LAW))
-        self.assertEqual(
-            dict(
-                Expression.objects.filter(act__uid=GUIDE).values_list('lang', 'source__code')
-            ),
-            {'el': 'cy-tax'},
+        sources = dict(
+            Expression.objects.filter(act__uid=GUIDE).values_list('lang', 'source__code')
         )
+        self.assertEqual(sources.pop('el'), 'cy-tax')
+        # русский перевод может быть, а может ещё не быть
+        self.assertLessEqual(set(sources), {'ru'})
+        if 'ru' in sources:
+            self.assertEqual(sources['ru'], 'nomos')
 
     def test_fields(self):
         fields = Fragment.objects.filter(act__uid=GUIDE, kind='fld')
@@ -627,8 +629,24 @@ class VatReturnGuideTests(TestCase):
 
     def test_greek_refs(self):
         texts = FragmentText.objects.filter(version__fragment__act__uid=GUIDE)
-        self.assertEqual(texts.count(), 145)
-        references = Reference.objects.filter(from_text__in=texts)
+        greek = texts.filter(expression__lang='el')
+        self.assertEqual(greek.count(), 145)
+        references = Reference.objects.filter(from_text__in=greek)
         self.assertEqual(references.count(), 28)
         self.assertFalse(references.filter(resolved=False).exists())
         self.assertFalse(references.exclude(to_act__uid=LAW).exists())
+
+    def test_translation_if_present(self):
+        """Русский — если перевод уже есть: фрагменты те же, ссылки разрешены."""
+        texts = FragmentText.objects.filter(version__fragment__act__uid=GUIDE)
+        russian = texts.filter(expression__lang='ru')
+        if not russian.exists():
+            self.skipTest('перевода руководства ещё нет')
+        greek_fragments = set(
+            texts.filter(expression__lang='el').values_list('version__fragment', flat=True)
+        )
+        self.assertLessEqual(
+            greek_fragments, set(russian.values_list('version__fragment', flat=True)),
+        )
+        references = Reference.objects.filter(from_text__in=russian)
+        self.assertFalse(references.filter(resolved=False).exists())
