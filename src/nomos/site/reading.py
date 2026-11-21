@@ -26,7 +26,7 @@ from nomos.acts.models import (
 )
 from nomos.translate.models import Note
 
-from . import access
+from . import access, paths
 
 
 EARLIEST = datetime.date(2024, 1, 1)
@@ -171,7 +171,7 @@ def build_url(act, on=None, eid=None, lang=None, history=False):
         parts.append(HISTORY)
     if lang is not None and lang != default_lang(act):
         parts.append(lang)
-    return '/' + '/'.join(parts) + '/'
+    return paths.url('/' + '/'.join(parts) + '/')
 
 
 # языки, на которые переведён весь интерфейс; на прочих строки выходят по-русски
