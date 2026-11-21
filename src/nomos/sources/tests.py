@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest import skipUnless
 
 from django.core.management import call_command
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 
 from nomos.acts.models import (
     ActRelation, Amendment, Expression, Fragment, FragmentText, Reference,
@@ -185,18 +185,35 @@ class VatLawTests(TestCase):
             found.exclude(to_fragment__act__uid=LAW).exists(),
         )
 
-    def test_public_only_on_ru_of_cyprus_laws_and_kdp(self):
-        """public — только у ru-выражений кипрских законов и ΚΔΠ (отметки могут и не стоять).
+    def test_public_only_on_ru_of_laws_kdp_and_eu(self):
+        """public — только у ru-выражений кипрских законов, ΚΔΠ и актов ЕС.
 
-        У el/en, у руководства cy/instr/... и у актов ЕС отметки нет.
+        Отметки могут и не стоять. У el/en и у руководства cy/instr/... отметки нет.
         """
         public = Expression.objects.filter(public=True)
         self.assertFalse(public.exclude(lang='ru').exists())
         self.assertFalse(
             public.exclude(act__uid__startswith='cy/law/')
             .exclude(act__uid__startswith='cy/kdp/')
+            .exclude(act__uid__startswith='eu/')
             .exists()
         )
+
+    @override_settings(DJANGO_VITE={'default': {'dev_mode': True}}, NOMOS_PUBLIC_ONLY=True)
+    def test_anonymous_reads_public_eu_acts_in_russian(self):
+        """Акт ЕС с публичным переводом: по-русски открыт, en/el — 404, оригинал — ELI."""
+        marked = Expression.objects.filter(public=True, act__uid__startswith='eu/')
+        if not marked.exists():
+            self.skipTest('отметок public у актов ЕС ещё нет')
+        for expression in marked.select_related('act'):
+            act = expression.act
+            response = self.client.get('/%s/ru/' % act.uid, follow=True)
+            self.assertEqual(response.status_code, 200, act.uid)
+            self.assertContains(response, expression.title)
+            self.assertContains(response, 'href="%s"' % act.eli)
+            for lang in ('en', 'el'):
+                response = self.client.get('/%s/%s/' % (act.uid, lang))
+                self.assertEqual(response.status_code, 404, (act.uid, lang))
 
     def active_eids(self, prefix, day):
         found = set()
