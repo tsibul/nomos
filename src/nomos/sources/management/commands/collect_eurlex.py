@@ -70,7 +70,7 @@ def article_of(eid):
     return head if head.startswith('art_') else ''
 
 
-def amended_acts(fragments, own_uid, target_uid):
+def amended_acts(fragments, own_uid):
     """Статья изменяющего акта → акт, к которому относятся её ссылки без «of …».
 
     «Regulation (EU) No 904/2010 is amended as follows» — ссылки внутри — на 904/2010;
@@ -87,11 +87,67 @@ def amended_acts(fragments, own_uid, target_uid):
     for article, text in first.items():
         if not any(word in text for word in AMENDED_WORDS):
             continue
-        if '904/2010' in text:
-            found[article] = target_uid
-        elif '2006/112' in text:
-            found[article] = refs.DIRECTIVE
+        for number, uid in refs.EU_ACTS.items():
+            if number in text and uid != own_uid:
+                found[article] = uid
+                break
     return found
+
+
+def known_eids(root_dir, uid):
+    """Адреса фрагментов уже собранного акта (act.xml в Nomos-texts) или None."""
+    path = root_dir / uid / 'act.xml'
+    if not path.exists():
+        return None
+    root = ET.parse(path).getroot()
+    return {element.get('eid') for element in root.iter('fragment')}
+
+
+def previous_links(path):
+    """Связи и изменения из прежнего act.xml изменяющего акта.
+
+    Изменяющий акт может менять несколько актов (2020/285 — директиву и 904/2010); сборка
+    одного из них не должна стирать изменения, записанные сборкой другого."""
+    if not path.exists():
+        return [], []
+    root = ET.parse(path).getroot()
+    relations = [(item.get('kind'), item.get('to')) for item in root.iter('relation')]
+    amendments = []
+    for item in root.iter('amendment'):
+        amendments.append(texts_xml.AmendmentInfo(
+            key=item.get('key'),
+            provision=item.get('provision', ''),
+            kind=item.get('kind'),
+            published_on=day(item.get('published-on')),
+            in_force_from=day(item.get('in-force-from')),
+            applies_from=day(item.get('applies-from')),
+            marker=item.get('marker', ''),
+            note=' '.join((item.text or '').split()),
+        ))
+    return relations, amendments
+
+
+def merge_links(info, path):
+    """Добавить к связям и изменениям info прежние, которых сборка не породила."""
+    relations, amendments = previous_links(path)
+    for relation in relations:
+        if relation not in info.relations:
+            info.relations.append(relation)
+    # порядок не зависит от того, какой из изменяемых актов собран последним
+    info.relations.sort()
+    new = {amendment.key: amendment for amendment in info.amendments}
+    merged = []
+    for amendment in amendments:
+        fresh = new.pop(amendment.key, None)
+        if fresh is None:
+            merged.append(amendment)
+            continue
+        # пометка — из манифеста собираемого акта; без неё — прежняя
+        if not fresh.note:
+            fresh.note = amendment.note
+        merged.append(fresh)
+    merged.extend(new.values())
+    info.amendments = merged
 
 
 def write(folder, info, fragments, known, defaults=None):
@@ -176,7 +232,12 @@ class Command(BaseCommand):
             el = self.parse(raw / item['el'], 'el', report)
             parsed.append((item, en, el))
 
-        known = {info.uid: {fragment.eid for fragment in fragments}}
+        known = {}
+        for uid in refs.EU_ACTS.values():
+            eids = known_eids(root_dir, uid)
+            if eids is not None:
+                known[uid] = eids
+        known[info.uid] = {fragment.eid for fragment in fragments}
         amending_fragments = {}
         for item, en, el in parsed:
             edition = editions.Edition(start='', end='', source_end='', en=en, el=el)
@@ -217,7 +278,8 @@ class Command(BaseCommand):
                     applies_from=day(applies_from),
                     marker=marker,
                 ))
-            defaults = amended_acts(own, uid, info.uid)
+            merge_links(amending_info, root_dir / uid / 'act.xml')
+            defaults = amended_acts(own, uid)
             counts = write(root_dir / uid, amending_info, own, known, defaults)
             self.stdout.write('%s: фрагментов %d, изменений %d' % (
                 uid, len(own), len(amending_info.amendments),

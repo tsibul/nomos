@@ -5,7 +5,7 @@
 Цель внутри известного акта проверяется по его адресам; если точного адреса нет, берётся
 ближайший существующий предок. Цель в акте, которого нет в базе (директива 2006/112), строится
 по номерам без проверки и остаётся неразрешённой, пока акт не загружен.
-Ссылки на прочие акты («Article 24 of Regulation (EU) 2017/1939») не ставятся.
+Ссылки ставятся на акты из EU_ACTS; на прочие («Article 24 of Regulation (EU) 2017/1939») — нет.
 """
 
 import re
@@ -14,6 +14,13 @@ from dataclasses import dataclass
 from nomos.sources.eurlex.formex import strip_accents
 
 DIRECTIVE = 'eu/dir/2006/112'
+
+# акты ЕС базы: номер в обозначении → адрес; ссылки «of Regulation (EU) No 904/2010» ставятся
+EU_ACTS = {
+    '2006/112': DIRECTIVE,
+    '904/2010': 'eu/reg/2010/904',
+    '282/2011': 'eu/reg/2011/282',
+}
 
 # греческие буквенные номера: α=1 … θ=9, ι=10, κ=20; στ=6
 GREEK_VALUES = [
@@ -202,7 +209,10 @@ class Linker:
             return default_act
         if 'this directive' in plain:
             return default_act
-        if '2006/112' in plain or 'that directive' in plain:
+        for number, uid in EU_ACTS.items():
+            if re.search(r'\b%s\b' % re.escape(number), plain):
+                return uid
+        if 'that directive' in plain:
             return DIRECTIVE
         if 'οδηγιασ' in plain and ('εν λογω' in plain or 'αυτησ' in plain):
             return DIRECTIVE
@@ -262,6 +272,8 @@ class Linker:
         eids = self.known.get(target.act)
         eid = target.eid
         if eids is not None:
+            if eid not in eids:
+                eid = hidden_levels(eid, eids) or eid
             while eid and eid not in eids:
                 eid = eid.rpartition('.')[0]
             if not eid:
@@ -269,6 +281,25 @@ class Linker:
         if target.act == self.own_uid:
             return eid
         return '%s#%s' % (target.act, eid)
+
+
+def collapse(eid, kinds):
+    """art_284.par_3.sub_1.pnt_a без уровней kinds (sub) → art_284.par_3.pnt_a."""
+    return '.'.join(part for part in eid.split('.') if part.split('_')[0] not in kinds)
+
+
+def hidden_levels(eid, eids):
+    """Адрес с пропущенными в ссылке уровнями: «point (a) of Article 284(3)» —
+    art_284.par_3.sub_1.pnt_a, «point (b) of Article 214» — art_214.par_1.pnt_b.
+
+    Сначала пропускаются только подабзацы, затем и абзацы; берётся единственный кандидат."""
+    for kinds in (('sub',), ('sub', 'par')):
+        found = [item for item in eids if item != eid and collapse(item, kinds) == eid]
+        if len(found) == 1:
+            return found[0]
+        if found:
+            return None
+    return None
 
 
 def points_to_self(resolved, own_eid):
