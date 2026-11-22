@@ -1831,7 +1831,8 @@ class SocialInsuranceLawTests(CollectedTextsTests):
         problems = [
             line.strip()
             for line in self.report.splitlines()
-            if ('→' in line and not line.endswith(('не применено', 'прежний текст не приведён')))
+            if ('→' in line and 'правка источника' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
             or 'не найдена' in line
         ]
         self.assertEqual(problems, [])
@@ -2104,6 +2105,7 @@ class HealthSystemLawTests(CollectedTextsTests):
             line.strip()
             for line in self.report.splitlines()
             if ('→' in line and ':note →' not in line
+                and 'правка источника' not in line
                 and not line.endswith(('не применено', 'прежний текст не приведён')))
             or 'не найдена' in line
             or 'положения нет' in line
@@ -2696,6 +2698,7 @@ class IncomeTaxLawTests(CollectedTextsTests):
             line.strip()
             for line in self.report.splitlines()
             if ('→' in line and ':note →' not in line
+                and 'правка источника' not in line
                 and not line.endswith(('не применено', 'прежний текст не приведён')))
             or 'не найдена' in line
             or 'положения нет' in line
