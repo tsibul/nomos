@@ -227,6 +227,9 @@ def is_doubled(num):
     return len(num) == 2 and num[0] == num[1] and 'α' <= num[0] <= 'ω'
 
 
+ABBREVIATION_RE = re.compile(r'(?<![\wά-ώ])κ\.τ\.λ\.')
+
+
 def looks_like_heading(block, following):
     """Короткая строка на полях (левее текста) перед статьёй или пунктом приложения.
 
@@ -239,7 +242,11 @@ def looks_like_heading(block, following):
         return False
     if following is not None and block.indent <= MARGIN and following.indent > MARGIN:
         return bool(TOP_RE.match(following.text))
-    if len(text) > HEADING_MAX or text[-1] == '.':
+    if len(text) > HEADING_MAX:
+        return False
+    # с точкой — только если она после сокращения: «… αθλητικές κ.τ.λ. εκδηλώσεις.»
+    # (95(Ι), прил. 13, п. 4); обычная фраза перед пунктом — не заголовок
+    if text[-1] == '.' and not ABBREVIATION_RE.search(text[:-1]):
         return False
     if match_item(text)[0] or TOP_RE.match(text):
         return False
@@ -286,8 +293,36 @@ def join_broken_headings(blocks):
     return result
 
 
+def split_blocks(blocks, splits):
+    """Правка из манифеста `<split before="…">`: блок делится перед словами `before`.
+
+    Вторая часть — заключительные слова списка, в PDF слитые с последним пунктом без
+    разрыва строки («… δεν ικανοποιείται,και η παρουσία …», 95(Ι), ст. 25(10)(β)); её
+    отступ — отступ ближайшего блока выше с меньшим отступом (того, что открыл список)."""
+    result = list(blocks)
+    for before in splits:
+        found = [index for index, block in enumerate(result) if before in block.text]
+        if len(found) != 1:
+            raise ValueError('split: «%s» найдено в %d блоках' % (before, len(found)))
+        index = found[0]
+        block = result[index]
+        position = block.text.index(before)
+        if position == 0:
+            raise ValueError('split: «%s» — начало блока' % before)
+        owner = next(
+            (earlier for earlier in reversed(result[:index]) if earlier.indent < block.indent),
+            block,
+        )
+        result[index:index + 1] = [
+            layout.Block(block.line, block.indent, block.text[:position].rstrip()),
+            layout.Block(block.line, owner.indent, block.text[position:]),
+        ]
+    return result
+
+
 class Parser:
-    def __init__(self, act_uid):
+    def __init__(self, act_uid, splits=()):
+        self.splits = list(splits)
         self.earlier = act_uid in BEFORE_118_ACTS
         self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
         self.root = Node('act', token=act_uid)
@@ -325,6 +360,7 @@ class Parser:
             for part in split_history(block)
         ]
         all_blocks = join_broken_headings(all_blocks)
+        all_blocks = split_blocks(all_blocks, self.splits)
         # приложения — после «ΠΑΡΑΡΤΗΜΑΤΑ» или сразу с «ΠΙΝΑΚΑΣ Ι» без общего заголовка
         self.has_schedules = any(
             block.text == 'ΠΑΡΑΡΤΗΜΑΤΑ' or roman_schedule(block) for block in all_blocks
@@ -446,7 +482,7 @@ class Parser:
             return False
         if block.indent >= 14:
             return True
-        return not self.earlier and block.indent > MARGIN and block.text.isupper()
+        return block.indent > MARGIN and block.text.isupper()
 
     def open_part(self, text):
         part = PART_RE.match(text)
@@ -809,9 +845,11 @@ def mark_definitions(article):
         current.add(node)
 
 
-def parse(path, act_uid, source='cylaw'):
-    """`source` — откуда сводка: 'cylaw' или 'leginet' (у них разная раскладка PDF)."""
-    parser = Parser(act_uid)
+def parse(path, act_uid, source='cylaw', splits=()):
+    """`source` — откуда сводка: 'cylaw' или 'leginet' (у них разная раскладка PDF).
+
+    `splits` — правки манифеста `<split before="…">` (см. split_blocks)."""
+    parser = Parser(act_uid, splits)
     lines = leginet.pdf_lines(path) if source == 'leginet' else layout.pdf_lines(path)
     root = parser.parse(lines)
     article = next(node for node in root.walk() if node.eid == 'art_2')

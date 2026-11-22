@@ -511,6 +511,38 @@ class ConsolidatedTests(SimpleTestCase):
             ['ψηφισθέντος είτε προ είτε κατόπιν.', 'Νοείται ότι άλλο', 'Άλλος.'],
         )
 
+    def test_heading_ends_with_abbreviation(self):
+        """Заголовок с точкой после «κ.τ.λ.» — заголовок; обычная фраза с точкой — нет."""
+        following = layout.Block(2, 12, '4. Υπηρεσίες.')
+        heading = layout.Block(1, 12, 'Πρόσβαση σε αθλητικές κ.τ.λ. εκδηλώσεις.')
+        phrase = layout.Block(1, 12, 'Πρόσβαση σε αθλητικές εκδηλώσεις.')
+        self.assertTrue(consolidated.looks_like_heading(heading, following))
+        self.assertFalse(consolidated.looks_like_heading(phrase, following))
+
+    def test_split_blocks_from_manifest(self):
+        """`<split before>`: заключительные слова отделены от пункта, отступ — открывшего список."""
+        blocks = [
+            layout.Block(1, 12, '(10) Όταν-'),
+            layout.Block(2, 16, '(β) δεν ικανοποιείται,και η παρουσία των αγαθών.'),
+        ]
+        result = consolidated.split_blocks(blocks, ['και η παρουσία'])
+        self.assertEqual(
+            [(block.indent, block.text) for block in result],
+            [
+                (12, '(10) Όταν-'),
+                (16, '(β) δεν ικανοποιείται,'),
+                (12, 'και η παρουσία των αγαθών.'),
+            ],
+        )
+        with self.assertRaises(ValueError):
+            consolidated.split_blocks(blocks, ['Λείπει'])
+
+    def test_part_left_of_centre_in_earlier_act(self):
+        """«ΜΕΡΟΣ ΙΙΙ …» с отступом 13 — Часть и в актах, собранных до 118(Ι) (59(Ι)/2010)."""
+        parser = consolidated.Parser('cy/law/2010/59_I')
+        block = layout.Block(1, 13, 'ΜΕΡΟΣ ΙΙΙ ΠΑΡΟΧΕΣ')
+        self.assertTrue(parser.is_part(block))
+
 
 class SplitNotesTests(SimpleTestCase):
     def test_note_goes_to_act_by_number(self):
@@ -638,6 +670,36 @@ class GazetteTests(SimpleTestCase):
             path.write_text('Расшифровка скана 52.pdf\nв раскладке.\n\nα\n', encoding='utf-8')
             self.assertEqual(layout.pdf_lines(path), ['', '', '', 'α', ''])
 
+    def test_short_line_continuing_phrase_is_text(self):
+        """Страница без полей: короткая строка с края после длинной незаконченной — текст."""
+        previous = 'σε σχέση με τις μικρές επιχειρήσεις που εφαρμόζει την εκεί προβλε-'
+        self.assertEqual(
+            gazette.split_line('πόμενη επιλογή.', 22, previous),
+            ('', 'πόμενη επιλογή.'),
+        )
+        # после законченной фразы или строки с полем — поле
+        self.assertEqual(
+            gazette.split_line('Ερμηνεία.', 22, previous[:-1] + '.'),
+            ('Ερμηνεία.', ''),
+        )
+        self.assertEqual(
+            gazette.split_line('Ερμηνεία.', 22, 'Συνοπτικός      1. Ο παρών Νόμος θα αναφέρεται'),
+            ('Ερμηνεία.', ''),
+        )
+
+    def test_subsection_followed_by_point_number(self):
+        """«(5)(α) …» после законченной фразы — новый абзац, как «(5) …» (53(Ι)/2025)."""
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2.-(1) Οι έρευνες δεν δημοσιεύονται.'),
+            ('', '(2)(α) Η διαδικασία είναι κατάλληλη.'),
+        )
+        self.assertEqual(
+            root.children[2].paragraphs,
+            ['(1) Οι έρευνες δεν δημοσιεύονται.', '(2)(α) Η διαδικασία είναι κατάλληλη.'],
+        )
+
 
 class OrderKeyTests(SimpleTestCase):
     def test_siblings_of_different_kinds_keep_document_order(self):
@@ -676,6 +738,8 @@ class RefsTests(SimpleTestCase):
             'του άρθρου 9(4), (5) ή (10)': ['art_9.par_4', 'art_9.par_5', 'art_9.par_10'],
             'του άρθρου 11Α και του άρθρου 13ΣΤ(1)(α)': ['art_11A', 'art_13ST.par_1.pnt_a'],
             'το εδάφιο (2) του άρθρου 6': ['art_6.par_2'],
+            # без «του» перед «άρθρου»: пункт статьи 6, не пункт своей статьи
+            'του εδαφίου (2) άρθρου 6': ['art_6.par_2'],
             'στο Πέμπτο Παράρτημα': ['sch_5'],
             'του Μέρους ΙΙΙ του Πρώτου Παραρτήματος': ['sch_1.prt_III'],
             'του Πίνακα Γ του Πέμπτου Παραρτήματος': ['sch_5.tbl_G'],
@@ -1182,6 +1246,44 @@ class FollowTextsTests(SimpleTestCase):
         old = {'aaaaaaaaaa': {'base': 'Ένα.'}, 'bbbbbbbbbb': {'base': 'Δύο.'}}
         new = {parent: {'base': 'Ένα.'}}
         self.assertEqual(texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb']), [])
+
+    def test_fragment_became_heading(self):
+        """Абзац прежнего разбора стал заголовком следующего пункта: перевод — в heading."""
+        place = Place('sch_13.prt_I.par_4')
+        uids = {place: 'bbbbbbbbbb'}
+        headings = {place: {'base': 'Πρόσβαση κ.τ.λ. εκδηλώσεις.'}}
+        old = {
+            'aaaaaaaaaa': {'base': 'Πρόσβαση κ.τ.λ. εκδηλώσεις.'},
+            'bbbbbbbbbb': {'base': 'Υπηρεσίες.'},
+        }
+        triples = texts_xml.headed_uids(uids, headings, old, ['aaaaaaaaaa'])
+        self.assertEqual(triples, [('aaaaaaaaaa', 'bbbbbbbbbb', 'base')])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'ru.xml').write_text(
+                '<texts>\n'
+                '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+                '    <p>Доступ на «мероприятия».</p>\n'
+                '    <note kind="doubt">заголовок?</note>\n'
+                '  </text>\n'
+                '  <text fragment="bbbbbbbbbb" version="base" review="draft">\n'
+                '    <p>Услуги.</p>\n'
+                '  </text>\n'
+                '</texts>\n',
+                encoding='utf-8',
+            )
+            texts_xml.move_to_headings(root, triples)
+            result = (root / 'ru.xml').read_text(encoding='utf-8')
+        self.assertEqual(
+            result,
+            '<texts>\n'
+            '  <text fragment="bbbbbbbbbb" version="base" heading="Доступ на «мероприятия»."'
+            ' review="draft">\n'
+            '    <note kind="doubt">заголовок?</note>\n'
+            '    <p>Услуги.</p>\n'
+            '  </text>\n'
+            '</texts>\n',
+        )
 
 
 GUIDE = 'cy/instr/2024/vat_return_guide'

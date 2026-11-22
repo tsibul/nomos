@@ -18,7 +18,8 @@ ARTICLE_RE = re.compile(r'^(?P<num>\d+)\.\s*(?:[-—–]\s*)?(?P<rest>.*)$')
 POINT_RE = re.compile(r'^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$')
 # строка поля из одного номера закона: «82(I) του 2020», «25(Ι) του 2022.»
 LAW_NUMBER_RE = re.compile(r'^\s*\d+\s*\([ΙI]\)\s+του\s+\d{4}\.?\s*$')
-SUBSECTION_RE = re.compile(r'^\(\d+\)\s')
+# «(2) …», «(5)(α) …» — εδάφιο, сразу за номером может идти номер пункта (53(Ι)/2025)
+SUBSECTION_RE = re.compile(r'^\(\d+\)(\s|\()')
 ITEM_RE = re.compile(r'^(«\s*)?(\(\w{1,5}\)|\d+[Α-Ω]{0,3}\.)')
 END_RE = re.compile(r'^\s*(_{5,}|[TΤ]υπώθηκε)')
 HEADER_RE = re.compile(r'^\s*(Ε\.Ε\.\s*Παρ\.|Αρ\.\s*\d+,|Αριθμός\s+\d+|\d{3,5}\s*$)')
@@ -54,8 +55,11 @@ LAW_CITATION_PREFIX_RE = re.compile(LAW_CITATION + r'(?=\s{3,}\S)')
 TITLE_RE = re.compile(r'ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})')
 
 
-def split_line(line, column):
-    """Строка → (поле, текст). Короткая строка без разрыва левее текста — поле."""
+def split_line(line, column, previous=''):
+    """Строка → (поле, текст). Короткая строка без разрыва левее текста — поле.
+
+    `previous` — предыдущая непустая строка: короткая строка, продолжающая её фразу, — текст
+    (см. continues_text)."""
     if not line.strip():
         return '', ''
     if DATE_RE.match(line) or LAW_NUMBER_RE.match(line):
@@ -72,8 +76,23 @@ def split_line(line, column):
     # короткий хвост цитаты («αναλογιών.»·») — текст: в полях кавычек «» нет
     quoted = '«' in line or '»' in line
     if indent < column - 3 and len(line.rstrip()) < column and not quoted:
+        if continues_text(previous, indent):
+            return '', line.strip()
         return line.strip(), ''
     return '', line.strip()
+
+
+def continues_text(previous, indent):
+    """Строка продолжает фразу строки выше: на странице без полей текст начинается с края
+    («… που εφαρμόζει την εκεί προβλε-» / «πόμενη επιλογή.», 104(Ι)/2025, Πρώτο Παράρτημα).
+
+    Строка выше — длинная строка текста без поля (без разрыва), с тем же отступом, фраза в ней
+    не закончена."""
+    if not previous.strip() or GAP_RE.search(previous.strip()):
+        return False
+    above = len(previous) - len(previous.lstrip())
+    text = previous.strip()
+    return abs(above - indent) <= 3 and len(text) >= 40 and text[-1] not in '.:;·˙'
 
 
 def restore_collapsed_margin(lines, column):
@@ -213,12 +232,15 @@ class GazetteParser:
         column, self.expected = body_column(lines)
         if not self.legacy:
             lines = restore_collapsed_margin(lines, column)
+        previous = ''
         for index, line in enumerate(lines):
             if END_RE.match(line) and self.article is not None:
                 break
             if HEADER_RE.match(line):
                 continue
-            margin, body = split_line(line, column)
+            margin, body = split_line(line, column, previous)
+            if line.strip():
+                previous = line
             # в преамбуле (шапка газеты до статьи 1) полей внутри цитат нет
             if body and not margin and self.article is not None and not self.legacy:
                 inner = inner_margin(lines, index, column)

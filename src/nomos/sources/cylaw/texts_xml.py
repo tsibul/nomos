@@ -232,6 +232,93 @@ def merged_uids(uids, new, old, lost):
     return found
 
 
+def headed_uids(uids, headings, old, lost):
+    """Фрагменты, ставшие заголовком следующего: [(uid потерянного, uid нового, редакция)].
+
+    Прежний разбор принимал заголовок пункта за абзац («Πρόσβαση … κ.τ.λ. εκδηλώσεις.»
+    в конце п. 3 прил. 13 95(Ι)); новый ставит его заголовком следующего фрагмента.
+    headings — {узел: {редакция: заголовок}}."""
+    node_by_uid = {uid: node for node, uid in uids.items()}
+    order = list(old)
+    found = []
+    for uid in lost:
+        if uid not in old or len(old[uid]) != 1:
+            continue
+        (key, text), = old[uid].items()
+        index = order.index(uid)
+        for following in order[index + 1:index + 2] + [None]:
+            # следующий по el.xml или, если у него нет текста, первый узел с этим заголовком
+            nodes = [node_by_uid.get(following)] if following else list(headings)
+            target = next(
+                (node for node in nodes if node and headings.get(node, {}).get(key) == text),
+                None,
+            )
+            if target is not None:
+                found.append((uid, uids[target], key))
+                break
+    return found
+
+
+def move_to_headings(folder, triples):
+    """Перевод фрагмента, ставшего заголовком, — в атрибут heading записи нового фрагмента.
+
+    Текст записи (абзацы без разметки) становится заголовком; запись потерянного убирается,
+    её примечания переходят в запись нового. Запись нового создаётся, если её нет."""
+    moves = {(uid, key): target for uid, target, key in triples}
+    for path in sorted(folder.glob('*.xml')):
+        if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
+            continue
+        source = path.read_text(encoding='utf-8')
+        blocks = {
+            (match.group('uid'), match.group('key')): match
+            for match in TEXT_BLOCK_RE.finditer(source)
+        }
+        headings = {}
+        drop = {}
+        for (uid, key), target in moves.items():
+            match = blocks.get((uid, key))
+            if match is None:
+                continue
+            body = match.group('body')
+            paragraphs = re.findall(r'^    <p>(.*)</p>$', body, re.M)
+            heading = ' '.join(re.sub(r'<[^>]+>', '', item) for item in paragraphs)
+            heading = heading.replace('"', '&quot;')
+            rest = ''.join(
+                line for line in body.splitlines(keepends=True)
+                if not line.startswith('    <p>')
+            )
+            attributes = re.search(r'^  <text [^>]*?((?: translator="[^"]*")?'
+                                   r'(?: review="[^"]*")?)>', match.group(0)).group(1)
+            headings[(target, key)] = (heading, rest, attributes)
+            drop[(uid, key)] = (target, key)
+        if not drop:
+            continue
+
+        def rewrite(match):
+            key = (match.group('uid'), match.group('key'))
+            if key in drop:
+                target = drop[key]
+                if target in blocks or target not in headings:
+                    return ''
+                # записи нового фрагмента нет: новая запись на месте убранной
+                heading, rest, attributes = headings.pop(target)
+                return '  <text fragment="%s" version="%s" heading="%s"%s>\n%s  </text>\n' % (
+                    target[0], target[1], heading, attributes, rest,
+                )
+            if key not in headings:
+                return match.group(0)
+            heading, rest, _ = headings.pop(key)
+            head, body = match.group(0).split('\n', 1)
+            head = re.sub(r' heading="[^"]*"', '', head)
+            head = head.replace(
+                ' version="%s"' % key[1], ' version="%s" heading="%s"' % (key[1], heading), 1,
+            )
+            return head + '\n' + rest + body
+
+        result = TEXT_BLOCK_RE.sub(rewrite, source)
+        path.write_text(result, encoding='utf-8')
+
+
 def merge_translations(folder, pairs):
     """Перевод слитого фрагмента дописывается к переводу предыдущего: первый абзац — в конец
     последнего абзаца через пробел, прочее — следом. Запись слитого убирается.
