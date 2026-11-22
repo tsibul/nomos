@@ -429,6 +429,21 @@ class SourceFixTests(SimpleTestCase):
             'правка источника: цели art_7 нет в разборе',
         ])
 
+    def test_heading_replaced(self):
+        path = Path(tempfile.mkdtemp()) / 'collect.xml'
+        self.addCleanup(shutil.rmtree, path.parent)
+        path.write_text(
+            '<collect><source-fix target="art_21" heading="Καταβολή\n  χορηγήματος" />'
+            '</collect>',
+            encoding='utf-8',
+        )
+        root = Node(kind='act')
+        article = root.add(Node(kind='art', num='21', heading='Καταβολή της φράσης'))
+        report = []
+        history.apply_source_fixes(root, history.read_source_fixes(path), report)
+        self.assertEqual((article.heading, article.num), ('Καταβολή χορηγήματος', '21'))
+        self.assertEqual(report, ['правка источника art_21 → art_21: текст заменён'])
+
 
 class BeforeTests(SimpleTestCase):
     """<before>: прежний текст целиком — по прежней сводной редакции."""
