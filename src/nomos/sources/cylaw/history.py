@@ -139,6 +139,12 @@ def parse_date(value):
     return datetime.date.fromisoformat(value)
 
 
+def read_splits(path):
+    """Правки разбора `<split before="…">` из манифеста (см. consolidated.split_blocks)."""
+    root = ET.parse(path).getroot()
+    return [item.get('before') for item in root.iter('split')]
+
+
 def read_manifest(path):
     """Манифест → (атрибуты закона, список изменяющих актов с изменениями)."""
     root = ET.parse(path).getroot()

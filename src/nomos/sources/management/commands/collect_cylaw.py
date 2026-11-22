@@ -227,11 +227,19 @@ def write(folder, info, versions, notes=(), marker=None):
     merged = texts_xml.merged_uids(uids, current, previous, [uid for _, uid in lost])
     joined = {uid for _, uid in merged}
     lost = [(eid, uid) for eid, uid in lost if uid not in joined]
+    headings = {
+        node: {version.key: version.heading or node.heading for version in node_versions}
+        for node, node_versions in versions.items()
+    }
+    headed = texts_xml.headed_uids(uids, headings, previous, [uid for _, uid in lost])
+    moved = {uid for uid, _, _ in headed}
+    lost = [(eid, uid) for eid, uid in lost if uid not in moved]
     if lost:
         raise CommandError('%s: пересборка убирает фрагменты с переводом: %s' % (
             info.uid, ', '.join('%s (%s)' % item for item in lost),
         ))
     texts_xml.merge_translations(folder, merged)
+    texts_xml.move_to_headings(folder, headed)
     texts_xml.write_act(act_path, info, versions, uids)
     inline = []
     for node, node_versions in versions.items():
@@ -308,6 +316,7 @@ class Command(BaseCommand):
             root_dir / manifest['file'],
             info.uid,
             manifest['source'],
+            history.read_splits(folder / 'collect.xml'),
         )
         act_notes, other_notes = split_notes(notes, acts)
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
