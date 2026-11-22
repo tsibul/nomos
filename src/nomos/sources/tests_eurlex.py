@@ -204,6 +204,21 @@ class FormexTests(SimpleTestCase):
         self.assertEqual(editions.marker_label(point.markers[0].id), 'M2')
 
 
+class HomoglyphTests(SimpleTestCase):
+    """Кириллические двойники в латинском тексте Formex → латиница."""
+
+    def test_single_letters(self):
+        self.assertEqual(formex.fix_homoglyphs('points (\u0430) to (f)'), 'points (a) to (f)')
+        self.assertEqual(formex.fix_homoglyphs('with \u0430 maximum'), 'with a maximum')
+
+    def test_mixed_word(self):
+        self.assertEqual(formex.fix_homoglyphs('\u0410rticle 5'), 'Article 5')
+
+    def test_cyrillic_text_kept(self):
+        text = '“събирателното а дружество”'
+        self.assertEqual(formex.fix_homoglyphs(text), text)
+
+
 class EditionsTests(SimpleTestCase):
     def history(self):
         found = []
