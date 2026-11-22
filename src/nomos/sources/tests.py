@@ -3182,3 +3182,42 @@ class LandRegistryFeesLawTests(CollectedTextsTests):
             body__startswith='ΚΕΦ.219',
         )
         self.assertFalse(texts.exists())
+
+
+UPLOAD_GUIDE = 'cy/instr/2021/sis_contributions_file'
+
+
+@skipUnless(
+    (TEXTS_DIR / UPLOAD_GUIDE / 'act.xml').exists(),
+    'нет Nomos-texts с руководством ΥΚΑ по файлу взносов',
+)
+class ContributionsFileGuideTests(TestCase):
+    """Руководство ΥΚΑ по файлу TEXT для оплаты взносов (только чтение)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=StringIO())
+
+    def test_act_and_relation(self):
+        relation = ActRelation.objects.get(from_act__uid=UPLOAD_GUIDE)
+        self.assertEqual(relation.from_act.kind, 'instr')
+        self.assertEqual((relation.kind, relation.to_act.uid), ('explains', SOCIAL_LAW))
+        expression = Expression.objects.get(act__uid=UPLOAD_GUIDE, lang='el')
+        self.assertEqual(expression.source.code, 'cy-sis')
+
+    def test_records_and_fields(self):
+        fragments = Fragment.objects.filter(act__uid=UPLOAD_GUIDE)
+        fields = fragments.filter(kind='fld')
+        counts = {
+            'sct_%d' % index: count
+            for index, count in enumerate([6, 7, 13, 11, 8, 9], 2)
+        }
+        for parent, count in counts.items():
+            self.assertEqual(fields.filter(parent__eid=parent).count(), count, parent)
+        self.assertEqual(fields.count(), sum(counts.values()))
+        tables = fragments.filter(parent__eid='anx_1', kind='sct')
+        self.assertEqual(tables.count(), 3)
+        self.assertEqual(
+            [fragments.filter(parent=table).count() for table in tables.order_by('order_key')],
+            [9, 7, 8],
+        )
