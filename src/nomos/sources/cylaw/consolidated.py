@@ -9,7 +9,7 @@
 
 import re
 
-from . import layout, leginet, numbering
+from . import columns, layout, leginet, numbering
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
@@ -90,6 +90,9 @@ BEFORE_118_ACTS = {'cy/law/2000/95_I', 'cy/law/2010/59_I'}
 # акты, собранные до правил оговорок для 117(Ι)/2002 и 118(Ι)/2002 (оговорка N — к пункту
 # оговорки N-1, «Νοείται … ότι,» открывает перечень): правила меняют их фрагменты с переводом
 PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {'cy/law/1978/4', 'cy/law/2001/89_I'}
+# акты, где таблицы приложений разбираются по столбцам (columns.py); у 118(Ι) Παράρτημα 2
+# ряды таблиц ставок разделены одной пустой строкой — разбор под них не проверен
+COLUMN_TABLE_ACTS = {'cy/law/2010/59_I'}
 
 HEADING_MAX = 110
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
@@ -108,6 +111,28 @@ def roman_schedule(block):
     if match.group('num') is None:
         return 1
     return numbering.roman_value(match.group('num').replace('Ι', 'I').replace('Χ', 'X'))
+
+
+def schedules_start(lines):
+    """Номер строки, с которой начинаются приложения, или None."""
+    for index, line in enumerate(lines):
+        text = line.strip()
+        indent = len(line) - len(line.lstrip(' '))
+        if text == 'ΠΑΡΑΡΤΗΜΑΤΑ' or SCHEDULE_RE.match(text):
+            return index
+        if ROMAN_SCHEDULE_RE.match(text) and indent >= 25:
+            return index
+    return None
+
+
+def ends_table(text):
+    """Заголовок части или приложения: таблица в столбцах до него."""
+    return bool(
+        text == 'ΠΑΡΑΡΤΗΜΑΤΑ'
+        or PART_RE.match(text)
+        or SCHEDULE_RE.match(text)
+        or ROMAN_SCHEDULE_RE.match(text)
+    )
 
 
 def is_page_furniture(line):
@@ -322,6 +347,7 @@ def split_blocks(blocks, splits):
 
 class Parser:
     def __init__(self, act_uid, splits=()):
+        self.act_uid = act_uid
         self.splits = list(splits)
         self.earlier = act_uid in BEFORE_118_ACTS
         self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
@@ -335,8 +361,13 @@ class Parser:
         self.dropped = []
         # примечания CyLaw после приложений: «Σημείωση N του Ν. …Έναρξη Ισχύος …»
         self.notes = []
+        # таблицы в столбцах из приложений (columns.Table); в строках — их метки
+        self.tables = []
 
     def parse(self, lines):
+        start = schedules_start(lines) if self.act_uid in COLUMN_TABLE_ACTS else None
+        if start is not None:
+            lines, self.tables = columns.extract(lines, start, is_page_furniture, ends_table)
         all_blocks = layout.blocks(
             lines,
             skip=is_page_furniture,
@@ -389,6 +420,9 @@ class Parser:
 
     def feed(self, block, following):
         text = block.text
+        if text.startswith(columns.MARK):
+            self.open_table(self.tables[int(text[len(columns.MARK):]) - 1])
+            return
         if is_history(text):
             article = self.current_top()
             if article is not None:
@@ -411,6 +445,24 @@ class Parser:
             self.pending_heading.append(text)
             return
         self.feed_text(block)
+
+    def open_table(self, table):
+        """Таблица в столбцах — фрагмент `tbl` у текущего пункта, ячейки — его `cel`;
+        пункты внутри ячейки («(α)», «(i)») — её дети, как в обычном тексте."""
+        owner = self.stack[-1]
+        count = sum(1 for child in owner.children if child.kind == 'tbl') + 1
+        node = owner.add(Node('tbl', token='tbl_%d' % count, heading=table.caption))
+        for cell in table.cells:
+            child = node.add(Node('cel', token=cell.token))
+            if cell.header:
+                child.paragraphs.append(cell.text)
+                continue
+            inner = Parser(self.act_uid)
+            inner.in_schedules = True
+            inner.container = child
+            inner.stack = [child]
+            for block in cell.blocks:
+                inner.feed_text(block)
 
     def feed_schedule_heading(self, text, block):
         schedule = SCHEDULE_RE.match(text)

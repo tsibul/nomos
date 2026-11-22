@@ -73,6 +73,9 @@ class Language:
     enabling_before: str = r'(?!)'
     # «статьи 3 Закона, как…» — без названия: базовый ли закон, решает оригинал
     bare_law: str = r'(?!)'
+    # пункты своей части приложения без её названия (Marker.inner_spans)
+    inner_paragraphs: str = r'(?!)'
+    inner_points: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -90,6 +93,13 @@ class Language:
         self.capital_re = re.compile(self.capital)
         self.enabling_before_re = re.compile(self.enabling_before)
         self.bare_law_re = re.compile(self.bare_law)
+        self.inner_paragraphs_re = re.compile(self.inner_paragraphs)
+        self.inner_points_re = re.compile(self.inner_points)
+
+
+# пункт в перечислении внутри приложения: «1(1)(α)», «(β)», «(2)(α)»
+INNER_ITEM_RE = re.compile(r'(\d+[Α-Ω]?)((?:%s)*)|((?:%s)+)' % (SUB, SUB))
+INNER_SEPARATORS = r'(?:,?\s+(?:και|ή|μέχρι|έως)\s+|,\s+)'
 
 
 def ordinal_pattern(ordinals):
@@ -127,6 +137,18 @@ EL = Language(
     ),
     this_act=r'^\s+(?:(?:του|της)\s+)?παρόντος',
     enabling_before=r'(?<![\wά-ώ])Κανονισμοί\s+δυνάμει\s+(?:των|του)\s+$',
+    # «παραγράφους 1(1)(α) και (β) και (2)(α) και (β) πιο πάνω» (95(Ι), Πρώτο Παράρτημα)
+    inner_paragraphs=(
+        r'(?<![\wά-ώ])(?:παράγραφο|παραγράφου|παραγράφους|παραγράφων)\s+'
+        r'(\d+[Α-Ω]?(?:%s)*(?:%s(?:\d+[Α-Ω]?)?(?:%s)+)*)'
+        r'\s+πιο\s+(?:πάνω|κάτω)(?![\wά-ώ])' % (SUB, INNER_SEPARATORS, SUB)
+    ),
+    # «υποπαραγράφους (α) έως (ε) της παραγράφου (2) του σημείου 5»
+    inner_points=(
+        r'(?<![\wά-ώ])(?:υποπαράγραφο|υποπαραγράφου|υποπαραγράφους|υποπαραγράφων)\s+'
+        r'(%s(?:%s%s)*)\s+της\s+(παραγράφου\s+(%s)\s+του\s+σημείου\s+(\d+[Α-Ω]?))%s'
+        % (SUB, INNER_SEPARATORS, SUB, SUB, END)
+    ),
 )
 
 RU = Language(
@@ -290,6 +312,7 @@ class Marker:
             + self.paragraph_spans(text)
             + self.schedule_spans(text)
             + self.article_spans(text)
+            + self.inner_spans(text, own)
         )
         taken = []
         for start, end, eid in candidates:
@@ -426,6 +449,56 @@ class Marker:
             spans.append(self.checked(reason, top, subs, match.start(), match.end()))
         return spans
 
+    def inner_spans(self, text, own):
+        """Пункты своей части приложения без её названия (95(Ι), Πρώτο Παράρτημα):
+        «παραγράφους 1(1)(α) και (β) και (2)(α) πιο πάνω» — 1(1)(α), 1(1)(β), 1(2)(α);
+        «υποπαραγράφους (α) έως (ε) της παραγράφου (2) του σημείου 5» — 5(2)(α), 5(2)(ε).
+
+        Часть — то, что выше параграфов текущего фрагмента (`sch_1.prt_I.sct_1`)."""
+        if self.act or not own.startswith('sch_') or '.par_' not in own:
+            return []
+        root = own.split('.par_')[0]
+        spans = []
+        for match in self.language.inner_paragraphs_re.finditer(text):
+            if self.external(text, match.end(), match.start()):
+                continue
+            previous = None
+            items = INNER_ITEM_RE.finditer(text, match.start(1), match.end(1))
+            for item in items:
+                if item.group(1):
+                    path = [item.group(1)] + re.findall(SUB, item.group(2))
+                else:
+                    path = continued(previous, re.findall(SUB, item.group(3)))
+                if path is None:
+                    break
+                previous = path
+                spans.append(self.inner_target(root, path, item.start(), item.end()))
+        for match in self.language.inner_points_re.finditer(text):
+            if self.external(text, match.end(), match.start()):
+                continue
+            paragraph = [match.group(4), match.group(3)]
+            for item in re.finditer(SUB, match.group(1)):
+                start = match.start(1) + item.start()
+                end = match.start(1) + item.end()
+                spans.append(self.inner_target(root, paragraph + [item.group()], start, end))
+            spans.append(
+                self.inner_target(root, paragraph, match.start(2), match.end(2))
+            )
+        return spans
+
+    def inner_target(self, root, path, start, end):
+        token = number_token(path[0])
+        top = self.targets.child(root, token) if token else None
+        if top is None:
+            self.skipped['пункта нет в своей части приложения'] += 1
+            return (start, end, None)
+        eid, partial = self.targets.resolve(top, path[1:])
+        if partial:
+            # без названия части предок вместо пункта не подтверждён ничем: не размечается
+            self.skipped['пункта нет в своей части приложения'] += 1
+            return (start, end, None)
+        return (start, end, eid)
+
     def schedule_spans(self, text):
         spans = []
         for match in self.language.schedule_re.finditer(text):
@@ -480,6 +553,28 @@ class Marker:
             for item_start, end, item_top, subs in items:
                 spans.append(self.checked(reason, item_top, subs, item_start, end))
         return spans
+
+
+def sub_kind(raw):
+    """«(1)» — цифра, «(i)» — римская, «(α)» — буква."""
+    inner = raw.strip('()')
+    if inner[0].isdigit():
+        return 'digit'
+    if set(inner) <= set('ivx'):
+        return 'roman'
+    return 'letter'
+
+
+def continued(previous, subs):
+    """Продолжение перечисления: «1(1)(α) και (β)» — (β) вместо (α); «… και (2)(α)» —
+    (2) вместо (1). Уровень — первый в предыдущем пункте того же вида; None — не найден."""
+    if previous is None or not subs:
+        return None
+    kind = sub_kind(subs[0])
+    for level in range(1, len(previous)):
+        if sub_kind(previous[level]) == kind:
+            return previous[:level] + subs
+    return None
 
 
 def align_ids(text, el_targets):

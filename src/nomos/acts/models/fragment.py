@@ -17,6 +17,7 @@ class Fragment(models.Model):
         INDENT = 'ind', 'Отступ'
         ANNEX = 'anx', 'Приложение'
         TABLE = 'tbl', 'Таблица'
+        CELL = 'cel', 'Ячейка таблицы'
         DEFINITION = 'def', 'Определение'
         RECITAL = 'rct', 'Соображение'
         CITATION = 'cit', 'Преамбула'
