@@ -24,7 +24,7 @@ from nomos.acts.models import (
 )
 
 from .eurlex import editions, formex, refs
-from .management.commands.collect_eurlex import read_manifest
+from .management.commands.collect_eurlex import fix_refs, read_manifest
 
 ACT = 'eu/reg/2010/904'
 AMENDING_CELEX = '32099R0001'
@@ -328,6 +328,25 @@ class ManifestTests(SimpleTestCase):
             manifest = read_manifest(path)
         self.assertEqual(manifest['note'], 'Исправления не внесены.')
         self.assertEqual(manifest['amending'][0]['note'], 'Своя.')
+
+    def test_ref_fix(self):
+        """<ref-fix>: цель ссылки исправлена только в своём фрагменте и языке."""
+        fixes = [{
+            'lang': 'el', 'fragment': 'art_381', 'from': 'anx_IX', 'to': 'anx_X', 'reason': '',
+        }]
+        paragraphs = [
+            '<ref id="r1" to="anx_IX">παράρτημα ΙΧ</ref>, '
+            '<ref id="r2" to="anx_IX.pnt_1">σημείο 1</ref>, <ref id="r3" to="anx_IXa">x</ref>'
+        ]
+        applied = [0]
+        fixed = fix_refs(paragraphs, 'el', 'art_381', fixes, applied)
+        self.assertEqual(fixed, [
+            '<ref id="r1" to="anx_X">παράρτημα ΙΧ</ref>, '
+            '<ref id="r2" to="anx_X.pnt_1">σημείο 1</ref>, <ref id="r3" to="anx_IXa">x</ref>'
+        ])
+        self.assertEqual(applied, [2])
+        self.assertEqual(fix_refs(paragraphs, 'en', 'art_381', fixes, applied), paragraphs)
+        self.assertEqual(fix_refs(paragraphs, 'el', 'art_380', fixes, applied), paragraphs)
 
 
 class GreekNumberTests(SimpleTestCase):

@@ -7,6 +7,7 @@
 
 import datetime
 import os
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -37,7 +38,27 @@ def read_manifest(path):
         note = item.find('note')
         amending['note'] = ' '.join((note.text or '').split()) if note is not None else ''
         act['amending'].append(amending)
+    act['ref_fixes'] = [
+        dict(item.attrib, reason=' '.join((item.text or '').split()))
+        for item in root.iter('ref-fix')
+    ]
     return act
+
+
+def fix_refs(paragraphs, lang, eid, fixes, applied):
+    """Цель ссылки исправлена по манифесту (<ref-fix>): текст как в EUR-Lex, а номер
+    приложения в нём ошибочен (2006/112, el, ст. 295(1)(5) и 381)."""
+    for index, fix in enumerate(fixes):
+        if fix['lang'] != lang or fix['fragment'] != eid:
+            continue
+        pattern = re.compile(r'to="%s(?=[".])' % re.escape(fix['from']))
+        fixed = []
+        for paragraph in paragraphs:
+            paragraph, count = pattern.subn('to="%s' % fix['to'], paragraph)
+            applied[index] += count
+            fixed.append(paragraph)
+        paragraphs = fixed
+    return paragraphs
 
 
 def act_info(manifest, titles):
@@ -152,21 +173,28 @@ def merge_links(info, path):
     info.amendments = merged
 
 
-def write(folder, info, fragments, known, defaults=None):
+def write(folder, info, fragments, known, defaults=None, fixes=(), report=None):
     """act.xml, en.xml, el.xml; число ссылок по языкам."""
     defaults = defaults or {}
+    applied = [0] * len(fixes)
     uids = texts_xml.assign_uids(info, fragments, folder / 'act.xml')
     texts_xml.write_act(folder / 'act.xml', info, fragments, uids)
     counts = {}
     for lang in texts_xml.LANGS:
         linker = refs.Linker(lang, info.uid, known)
 
-        def mark(fragment, paragraphs):
+        def mark(fragment, paragraphs, lang=lang, linker=linker):
             default = defaults.get(article_of(fragment.eid))
-            return linker.mark(paragraphs, fragment.eid, default)
+            marked = linker.mark(paragraphs, fragment.eid, default)
+            return fix_refs(marked, lang, fragment.eid, fixes, applied)
 
         texts_xml.write_texts(folder / ('%s.xml' % lang), info.uid, lang, fragments, uids, mark)
         counts[lang] = linker.found
+    if report is not None:
+        for fix, count in zip(fixes, applied):
+            report.append('ссылка исправлена %s %s: %s → %s — %d' % (
+                fix['lang'], fix['fragment'], fix['from'], fix['to'], count,
+            ))
     return counts
 
 
@@ -251,7 +279,10 @@ class Command(BaseCommand):
             amending_fragments[item['uid']] = own
             known[item['uid']] = {fragment.eid for fragment in own}
 
-        counts = write(root_dir / info.uid, info, fragments, known)
+        counts = write(
+            root_dir / info.uid, info, fragments, known,
+            fixes=manifest['ref_fixes'], report=report,
+        )
         versions = sum(len(fragment.versions) for fragment in fragments)
         self.stdout.write('%s: фрагментов %d, редакций %d' % (info.uid, len(fragments), versions))
         for lang, found in counts.items():
