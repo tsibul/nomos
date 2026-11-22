@@ -23,6 +23,7 @@ from . import numbering
 
 # разметка, которую ставит этот модуль; снимается перед повторной разметкой
 OWN_REF_RE = re.compile(r'<ref id="r\d+" to="[^"]*">(.*?)</ref>', re.S)
+KEPT_REF_RE = re.compile(r'<ref id="r\d+" to="([^"]*)">(.*?)</ref>', re.S)
 
 # причины пропуска: другой акт; заглавное слово после упоминания — решает оригинал
 FOREIGN = 'похоже на другой акт'
@@ -195,7 +196,9 @@ RU = Language(
         r'[Пп]риложени(?:е|я|ю|ем|и)(?![\wё])' % ordinal_pattern(RU_ORDINALS)
     ),
     external=(
-        r'^\s+(?!настоящего)(?:[Α-ΩA-Z]'
+        # «статье 5, пункт 17) Таможенного кодекса Союза» — другой акт
+        r'^,\s*пункт\w*\s+\S+\s+[А-ЯЁA-ZΑ-Ω]'
+        r'|^\s+(?!настоящего)(?:[Α-ΩA-Z]'
         r'|(?:Закон|Кодекс|Директив|Регламент|Указ|Постановлени|Конвенци|Правил|Договор'
         r'|Соглашени|Протокол)[а-яё]*(?![\wё])'
         r'|закона|кодекса|директивы|регламента|указа'
@@ -323,8 +326,11 @@ class Marker:
         # статьи закона, упомянутые в текущем тексте (кроме места вставки)
         self.articles = set()
 
-    def mark_text(self, paragraphs, own):
-        """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
+    def mark_text(self, paragraphs, own, keep=False):
+        """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку).
+
+        keep — прежние <ref> остаются (перевод: ручные и уже размеченные ссылки), новые
+        ставятся только там, где их нет."""
         found = []
         marked = []
         self.depth = 0
@@ -332,6 +338,8 @@ class Marker:
         for paragraph in paragraphs:
             plain = OWN_REF_RE.sub(r'\1', paragraph)
             spans = self.spans(plain, own)
+            if keep:
+                spans = self.kept_spans(paragraph, spans)
             marked.append(self.insert(plain, spans, found))
             self.depth = max(0, self.depth + plain.count('«') - plain.count('»'))
         if self.act and own and self.articles:
@@ -339,6 +347,26 @@ class Marker:
                 next(iter(self.articles)) if len(self.articles) == 1 else None
             )
         return marked, found
+
+    def kept_spans(self, paragraph, spans):
+        """Прежние ссылки абзаца и новые, не перекрывающие их, по порядку.
+
+        Прежняя ссылка на фрагмент, которого больше нет, снимается."""
+        kept = []
+        shift = 0
+        for match in KEPT_REF_RE.finditer(paragraph):
+            start = match.start() - shift
+            end = start + len(match.group(2))
+            shift += len(match.group(0)) - len(match.group(2))
+            target = match.group(1)
+            if self.act and target.startswith(self.act + '#'):
+                target = target[len(self.act) + 1:]
+            if '#' not in target and '/' not in target and target not in self.targets.eids:
+                self.skipped['прежняя ссылка: цели нет'] += 1
+                continue
+            kept.append((start, end, target))
+        added = [span for span in spans if not self.overlaps(kept, span[0], span[1])]
+        return sorted(kept + added)
 
     def amended_article(self, own):
         """Изменяемая статья закона для пунктов без статьи в изменяющем акте, или None.
@@ -722,7 +750,7 @@ def mark_translation(
         paragraphs = [item.group(2) for item in P_RE.finditer(match.group(2))]
         el_targets = el_marks.get(key, [])
         marker.agreed = set(el_targets)
-        marked, found_all = marker.mark_text(paragraphs, own)
+        marked, found_all = marker.mark_text(paragraphs, own, keep=True)
         replaced = iter(marked)
         body = P_RE.sub(
             lambda item: item.group(1) + next(replaced) + item.group(3),

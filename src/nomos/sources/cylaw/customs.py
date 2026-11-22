@@ -16,18 +16,32 @@ from . import layout, leginet
 SCHEDULE_HEADING = 'ΠΑΡΑΡΤΗΜΑ'
 TEXT_HEADING = 'Ιστορικό Τροποποιήσεων'
 # номер статьи отдельным словом: по нему находится левый край колонки текста
-ARTICLE_NUMBER_RE = re.compile(r'^\d+[Α-Ω]?\.$')
+# номер статьи — с буквой или с двумя буквами-числом: 18ΣΤ, 18ΙΑ (91(Ι)/2004)
+NUMBER = r'\d+(?:ΣΤ|Ι[Α-Θ]|[Α-Ω])?'
+ARTICLE_NUMBER_RE = re.compile(rf'^{NUMBER}\.$')
 # номер страницы — отдельной строкой
 FURNITURE_RE = re.compile(r'^\d+$')
 FIRST_ARTICLE_RE = re.compile(r'^1\.\s')
-ARTICLE_RE = leginet.ARTICLE_RE
+ARTICLE_RE = re.compile(rf'^({NUMBER})\.')
 # знак препинания отдельным словом и насколько он может отстоять от слова перед ним, pt
 PUNCTUATION_RE = re.compile(r'^[.,·;:ꞏ∙]$')
 PUNCTUATION_DX = 3
 PUNCTUATION_DY = 10
 PART_RE = re.compile(r'^ΜΕΡΟΣ\s')
+# заголовок Μέρους или Κεφαλαίου, к которому присоединяется название заглавными
+HEADING_START_RE = re.compile(r'^(ΜΕΡΟΣ|ΚΕΦΑΛΑΙΟ)\s')
 # строка оглавления: «1.     Συνοπτικός τίτλος» или «1     Συνοπτικός τίτλος»
-TOC_RE = re.compile(r'^(\d+[Α-Ω]?)\.?\s+(\S.*)$')
+TOC_RE = re.compile(rf'^({NUMBER})\.?\s+(\S.*)$')
+# «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» в оглавлении и по центру — начало приложений
+ORDINAL_SCHEDULE_RE = re.compile(r'^[Α-Ω]+ ΠΑΡΑΡΤΗΜΑ$')
+# таблица приложения «Προϊόντα | Συντελεστής …»: ставка — «€429,00», «0%», «Ατελώς»;
+# просвет перед ставкой, pt, и насколько ставка после просвета бывает левее столбца, pt
+RATE_HEADER = 'Συντελεστής'
+RATE_RE = re.compile(r'^(€|\d+(,\d+)?%|Ατελώς)')
+RATE_GAP = 8
+RATE_REACH = 30
+# пункт приложения «1) Προϊόντα …» — как «1. Προϊόντα …»
+ITEM_PAREN_RE = re.compile(r'^(\d+)\)\s')
 # заголовок Μέρους перед статьёй 1 — не дальше стольких строк
 PART_LOOKBACK = 12
 # заголовок на поле стоит выше или ниже строки номера не больше чем на столько, pt;
@@ -40,6 +54,10 @@ CENTER_OFFSET = 90
 
 # отступ строки у левого края текста (leginet.indent_of)
 TEXT_INDENT = 12
+# номер статьи бывает сдвинут вправо на столько знаков (18.(1) в 91(Ι)/2004)
+ARTICLE_SHIFT = 3
+# «N.» у края текста, которое не статья: отступ больше, чем у статьи (consolidated.TOP_RE)
+NOT_ARTICLE_INDENT = 17
 CENTERED_INDENT = 25
 
 
@@ -89,12 +107,24 @@ def text_start(all_rows):
 
 
 def toc_headings(toc_rows):
-    """Оглавление → {номер статьи: заголовок}; первая запись номера."""
+    """Оглавление → {номер статьи: заголовок} в порядке статей; первая запись номера.
+
+    Заголовок, перенесённый на следующую строку без просвета, продолжается ею. Записи
+    приложений («ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ») кончают оглавление статей."""
     found = {}
-    for margin, body, _, _ in toc_rows:
-        match = TOC_RE.match(' '.join(part for part in (margin, body) if part))
+    last = None
+    for margin, body, _, gap in toc_rows:
+        text = ' '.join(part for part in (margin, body) if part)
+        match = TOC_RE.match(text)
+        if ORDINAL_SCHEDULE_RE.match(text) or text == SCHEDULE_HEADING:
+            break
         if match:
+            last = match.group(1) if match.group(1) not in found else None
             found.setdefault(match.group(1), match.group(2))
+        elif PART_RE.match(text) or text.isupper() or gap is not None:
+            last = None
+        elif last is not None and text:
+            found[last] += ' ' + text
     return found
 
 
@@ -117,29 +147,69 @@ def attach_punctuation(words):
     return fixed
 
 
-def mark_articles(all_rows):
+def mark_articles(all_rows, toc=None):
     """Статья «N.» у левого края текста начинает абзац, даже если просвет перед ней мал.
 
-    Отступ статьи, сдвинутой на знак лишним пробелом («86.- (1)»), — отступ текста."""
+    Отступ статьи, сдвинутой на знак лишним пробелом («86.- (1)»), — отступ текста. С
+    оглавлением `toc` статья — только номер из него, идущий в оглавлении позже предыдущей
+    статьи; другие «N.» у края текста (код «8703.» в перечне) — текст с отступом больше."""
+    order = list(toc or ())
+    reach = ARTICLE_SHIFT if order else 1
+    last = -1
+    last_number = None
     marked = []
     for margin, body, indent, gap in all_rows:
-        if abs(indent - TEXT_INDENT) <= 1 and ARTICLE_RE.match(body):
-            indent = TEXT_INDENT
-            if gap is None:
-                gap = ''
+        article = ARTICLE_RE.match(body)
+        if abs(indent - TEXT_INDENT) <= reach and article:
+            number = article.group(1)
+            if not order or is_next_article(number, order, last, last_number):
+                if number in order:
+                    last = order.index(number)
+                last_number = number
+                indent = TEXT_INDENT
+                if gap is None:
+                    gap = ''
+            else:
+                indent = NOT_ARTICLE_INDENT
         marked.append((margin, body, indent, gap))
     return marked
 
 
+def is_next_article(number, order, last, last_number):
+    """Номер из оглавления позже предыдущей статьи или статья с буквой после статьи с тем
+    же номером, которой в оглавлении нет (80Α после 80 в 91(Ι)/2004)."""
+    if number in order:
+        return order.index(number) > last
+    digits = re.match(r'\d+', number).group()
+    return (
+        last_number is not None
+        and number != digits
+        and re.match(r'\d+', last_number).group() == digits
+        and number > last_number
+    )
+
+
+def toc_article_headings(all_rows, toc):
+    """Заголовки статей из оглавления: {номер строки статьи: заголовок}. На поле сводки
+    акцизов заголовки без точек и вперемешку со ссылками на Επίσημη Εφημερίδα της Ε.Ε."""
+    headings = {}
+    for index, (_, body, indent, gap) in enumerate(all_rows):
+        article = ARTICLE_RE.match(body)
+        number = article.group(1) if article else None
+        if number in toc and indent == TEXT_INDENT and gap is not None:
+            headings[index] = toc[number].rstrip('.') + '.'
+    return headings
+
+
 def join_parts(lines):
-    """«ΜΕΡΟΣ N» и название Μέρους заглавными (по центру, через пустые строки) — одна строка,
-    как в сводке CyLaw."""
+    """«ΜΕΡΟΣ N» («ΚΕΦΑΛΑΙΟ Β») и название заглавными (по центру, через пустые строки) —
+    одна строка, как в сводке CyLaw."""
     joined = []
     index = 0
     while index < len(lines):
         line = lines[index]
         index += 1
-        if not PART_RE.match(line.strip()):
+        if not HEADING_START_RE.match(line.strip()):
             joined.append(line)
             continue
         parts = [line.rstrip()]
@@ -173,13 +243,32 @@ def is_part_title(line):
         and text.isupper()
         and len(line) - len(line.lstrip()) > TEXT_INDENT
         and not ARTICLE_RE.match(text)
-        and not PART_RE.match(text)
+        and not HEADING_START_RE.match(text)
     )
 
 
+def uncenter_text(lines):
+    """Строка текста статьи правее центра (пункт перечня «– τσιγάρα 800 τεμάχια·», «λιμένα·
+    και» после разрыва страницы в 91(Ι)/2004) — не заголовок: заголовок по центру начинается
+    с заглавной («Ελεύθερες Ζώνες» в 94(Ι)/2004)."""
+    return [
+        ' ' * (CENTERED_INDENT - 1) + line.strip()
+        if indent_of_line(line) >= CENTERED_INDENT and not line.strip()[0].isupper()
+        else line
+        for line in lines
+    ]
+
+
 def split_schedule(pages, columns):
-    """Страницы до «ΠΑΡΑΡΤΗΜΑ» по центру и с него: у Παράρτημα нет поля, номера пунктов
-    стоят левее края текста статей."""
+    """Страницы до «ΠΑΡΑΡΤΗΜΑ» (или первого «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ») по центру и с него: у
+    Παράρτημα нет поля, номера пунктов стоят левее края текста статей."""
+    for index, page in enumerate(pages):
+        for y, parts in leginet.page_lines(page, columns.line_tolerance):
+            text = ' '.join(word for _, _, word in parts)
+            if ORDINAL_SCHEDULE_RE.match(text) and parts[0][0] >= columns.center_left - 40:
+                above = [word for word in page if word[1] < y - columns.line_tolerance]
+                below = [word for word in page if word[1] >= y - columns.line_tolerance]
+                return pages[:index] + [above], [below] + pages[index + 1:]
     for index in range(len(pages) - 1, -1, -1):
         for y, parts in leginet.page_lines(pages[index], columns.line_tolerance):
             text = ' '.join(word for _, _, word in parts)
@@ -236,19 +325,122 @@ def close_before_centered(lines):
     return closed
 
 
+def split_schedules(pages, columns):
+    """Страницы приложений → [[страницы одного приложения], …]: приложение «ΠΡΩΤΟ
+    ΠΑΡΑΡΤΗΜΑ», «ΔΕΥΤΕΡΟ ΠΑΡΑΡΤΗΜΑ» … начинается со своей страницы."""
+    groups = []
+    for page in pages:
+        starts = any(
+            ORDINAL_SCHEDULE_RE.match(' '.join(word for _, _, word in parts))
+            for _, parts in leginet.page_lines(page, columns.line_tolerance)
+        )
+        if starts or not groups:
+            groups.append([])
+        groups[-1].append(page)
+    return groups
+
+
+def rate_left(pages, columns):
+    """Левый край столбца ставок таблицы приложения: самый частый левый край ставки
+    («€429,00», «0%», «Ατελώς»), отделённой от слов перед ней просветом; None — таблицы нет."""
+    lefts = Counter()
+    started = False
+    for page in pages:
+        for _, parts in leginet.page_lines(page, columns.line_tolerance):
+            started = started or any(RATE_HEADER in word for _, _, word in parts)
+            if not started:
+                continue
+            for previous, (x0, _, word) in zip([None] + parts, parts):
+                if RATE_RE.match(word) and (previous is None or x0 - previous[1] >= RATE_GAP):
+                    lefts[round(x0)] += 1
+    if not lefts:
+        return None
+    return lefts.most_common(1)[0][0] - 2
+
+
+def split_rate(parts, left):
+    """Слова строки таблицы → (столбец товаров, столбец ставок). Ставка начинается с
+    первого слова у столбца ставок или со ставки после просвета чуть левее его (короткое
+    «Ατελώς.» в 91(Ι)/2004, Τέταρτο Παράρτημα)."""
+    text = ' '.join(word for _, _, word in parts)
+    if text.replace('(', '').replace(')', '').isupper():
+        # заголовок Μέρους таблицы по центру
+        return parts, []
+    for index, (x0, _, word) in enumerate(parts):
+        previous = parts[index - 1] if index else None
+        after_gap = previous is None or x0 - previous[1] >= RATE_GAP
+        if x0 >= left or (RATE_RE.match(word) and after_gap and x0 >= left - RATE_REACH):
+            return parts[:index], parts[index:]
+    return parts, []
+
+
+def schedule_rows(pages, columns):
+    """Строки приложения, как leginet.rows. В таблице «Προϊόντα | Συντελεστής» ряд — строки
+    без просвета; текст столбца ставок идёт после текста товара отдельным абзацем."""
+    left = rate_left(pages, columns)
+    result = []
+    in_table = False
+    for words in pages:
+        block = []
+        previous = None
+        for y, parts in leginet.page_lines(words, columns.line_tolerance):
+            line = ' '.join(text for _, _, text in parts)
+            if columns.furniture.match(line):
+                continue
+            in_table = in_table or (left is not None and RATE_HEADER in line)
+            gap = None
+            if previous is None:
+                gap = leginet.PAGE_BREAK
+            elif y - previous > columns.gap:
+                gap = ''
+            previous = y
+            if gap is not None:
+                result.extend(table_rows(block, columns))
+                block = []
+            product, rate = split_rate(parts, left) if in_table else (parts, [])
+            block.append((gap, product, rate))
+        result.extend(table_rows(block, columns))
+    return result
+
+
+def table_rows(block, columns):
+    """Ряд таблицы (или абзац вне её) → строки: сначала столбец товаров, затем ставки."""
+    rows = []
+    gap = block[0][0] if block else None
+    for _, product, _ in block:
+        if product:
+            _, body, left = leginet.split(product, columns)
+            body = ITEM_PAREN_RE.sub(r'\1. ', body)
+            rows.append(('', body, leginet.indent_of(left, columns), gap))
+            gap = None
+    rates = [rate for _, _, rate in block if rate]
+    for index, rate in enumerate(rates):
+        body = ' '.join(word for _, _, word in rate)
+        rows.append(('', body, TEXT_INDENT, gap if not rows else ('' if not index else None)))
+        gap = None
+    return rows
+
+
 def pdf_lines(path):
     pages = [attach_punctuation(words) for words in leginet.pdf_words(path)]
     columns = columns_of(pages)
     body_pages, schedule_pages = split_schedule(pages, columns)
-    all_rows = mark_articles(leginet.rows(path, columns, body_pages))
-    start = text_start(all_rows)
-    toc = toc_headings(all_rows[:start])
-    lines = leginet.body_lines(all_rows[start:], toc, across_gaps=True)
-    if schedule_pages:
+    raw_rows = leginet.rows(path, columns, body_pages)
+    start = text_start(mark_articles(raw_rows))
+    toc = toc_headings(raw_rows[:start])
+    all_rows = mark_articles(raw_rows[start:], toc)
+    headings = leginet.article_headings(all_rows, toc, across_gaps=True)
+    toc_texts = [' '.join((margin, body)).strip() for margin, body, _, _ in raw_rows[:start]]
+    if any(ORDINAL_SCHEDULE_RE.match(text) for text in toc_texts):
+        # оглавление сводки акцизов: заголовки на поле без точек и со ссылками на Ε.Ε.
+        headings = toc_article_headings(all_rows, toc)
+    lines = uncenter_text(
+        leginet.body_lines(all_rows, toc, across_gaps=True, headings=headings)
+    )
+    for pages_of_one in split_schedules(schedule_pages, columns):
         # заголовки статей из оглавления к пунктам Παράρτημα не относятся
-        schedule_rows = leginet.rows(path, schedule_columns(schedule_pages, columns),
-                                     schedule_pages)
-        margin, body, indent, _ = schedule_rows[0]
-        schedule_rows[0] = (margin, body, indent, '')
-        lines += center_headings(leginet.body_lines(schedule_rows, {}, across_gaps=True))
+        rows = schedule_rows(pages_of_one, schedule_columns(pages_of_one, columns))
+        margin, body, indent, _ = rows[0]
+        rows[0] = (margin, body, indent, '')
+        lines += center_headings(leginet.body_lines(rows, {}, across_gaps=True))
     return [TEXT_HEADING, ''] + close_before_centered(join_parts(lines))
