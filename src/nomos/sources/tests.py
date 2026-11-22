@@ -627,6 +627,44 @@ class ColumnsTests(SimpleTestCase):
         self.assertEqual(result, lines)
 
 
+    def test_stacked_rate_table(self):
+        """118(Ι) Παράρτημα 2: название столбца в строках через пустую, ряд — строка;
+        строка перед таблицей и после неё — обычный текст."""
+        lines = column_lines(
+            [(7, 'β) Από το φορολογικό έτος 2008 και μετέπειτα:')],
+            [],
+            [(56, 'Φορολογικός')],
+            [(21, 'Φορολογητέο Εισόδημα')],
+            [(56, 'Συντελεστής')],
+            [],
+            [(7, 'Για κάθε ευρώ μέχρι €19.500'), (60, '0%')],
+            [(7, 'Για κάθε ευρώ πάνω από €19.500 μέχρι €28.000'), (60, '20%')],
+            [],
+            [(11, 'Νοείται ότι για τους σκοπούς της παρούσας παραγράφου.')],
+        )
+        result, tables = columns.extract(
+            lines, 0, lambda line: False, table_stops, stacked=True,
+        )
+        self.assertEqual(len(tables), 1)
+        cells = {
+            cell.token: cell.text or cell.blocks[0].text for cell in tables[0].cells
+        }
+        self.assertEqual(cells, {
+            'cel_h1_1': 'Φορολογητέο Εισόδημα',
+            'cel_h1_2': 'Φορολογικός Συντελεστής',
+            'cel_1_1': 'Για κάθε ευρώ μέχρι €19.500',
+            'cel_1_2': '0%',
+            'cel_2_1': 'Για κάθε ευρώ πάνω από €19.500 μέχρι €28.000',
+            'cel_2_2': '20%',
+        })
+        texts = [line.strip() for line in result if line.strip()]
+        self.assertEqual(texts, [
+            'β) Από το φορολογικό έτος 2008 και μετέπειτα:',
+            columns.MARK + '1',
+            'Νοείται ότι για τους σκοπούς της παρούσας παραγράφου.',
+        ])
+
+
 class SplitNotesTests(SimpleTestCase):
     def test_note_goes_to_act_by_number(self):
         act = make_act('cy/law/2025/104_I', datetime.date(2025, 6, 25))

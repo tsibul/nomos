@@ -1,4 +1,5 @@
-"""Таблицы в несколько столбцов в приложениях сводки CyLaw (59(Ι)/2010, Πίνακες 4 и 5).
+"""Таблицы в несколько столбцов в приложениях сводки CyLaw (59(Ι)/2010, Πίνακες 4 и 5;
+118(Ι)/2002, Παράρτημα 2 — таблицы ставок, разбор `stacked`).
 
 pdftotext -layout ставит столбцы рядом в одной строке («Βασικό … Συμπληρωματικό»), и
 обычный разбор склеивал их построчно. Здесь таблица находится по строке шапки, столбцы
@@ -29,6 +30,10 @@ ROW_GAP = 2
 CUT_REACH = 12
 ITEM_START_RE = re.compile(r'^(\([0-9α-ωivxν]{1,5}\)|\d+\.)\s')
 PHRASE_END_RE = re.compile(r'([.:;∙·˙-]|\sκαι|\sή)$')
+# шапка `stacked`: не больше трёх строк, между ними — не больше одной пустой
+STACKED_HEADER_LINES = 3
+# названия одного столбца в строках шапки `stacked`: центры не дальше этого
+STACKED_COLUMN_REACH = 12
 
 
 @dataclass
@@ -127,21 +132,23 @@ def caption_of(line):
     return text
 
 
-def extract(lines, start, skip, stops):
+def extract(lines, start, skip, stops, stacked=False):
     """Таблицы с шапкой после строки `start` → (строки с метками, [Table]).
 
     `skip(line)` — колонтитулы; `stops(text)` — заголовок части или приложения: на нём
-    таблица кончается."""
+    таблица кончается. `stacked` — таблицы ставок 118(Ι): название столбца в нескольких
+    строках через пустую, ряд — одна строка, таблица кончается пустой строкой."""
     result = list(lines[:start])
     tables = []
     index = start
     while index < len(lines):
-        header = header_at(lines, index, skip)
-        if header is None:
-            result.append(lines[index])
-            index += 1
-            continue
-        table, after = read_table(lines, index, header, skip, stops)
+        if stacked:
+            table, after = read_stacked(lines, index, skip, stops)
+        else:
+            header = header_at(lines, index, skip)
+            table, after = None, index
+            if header is not None:
+                table, after = read_table(lines, index, header, skip, stops)
         if table is None:
             result.append(lines[index])
             index += 1
@@ -191,6 +198,94 @@ def read_table(lines, index, header, skip, stops):
             if blocks:
                 table.cells.append(Cell(str(row_number), column, blocks=blocks))
     return table, index
+
+
+def header_words(segment):
+    text = segment.text
+    return (
+        len(text.split()) <= HEADER_WORDS
+        and text[0].isupper()
+        and not re.search(r'[\d.,:;()]', text)
+    )
+
+
+def stacked_header(lines, index, skip, stops):
+    """Шапка `stacked` с строки `index` → (столбцы [[Segment]], индекс после неё) или None.
+
+    Строки шапки — только короткие названия; столбцы — отрезки, близкие по центру."""
+    header_lines = []
+    blank = 0
+    while index < len(lines) and len(header_lines) < STACKED_HEADER_LINES:
+        line = lines[index]
+        if skip(line):
+            index += 1
+            continue
+        if not line.strip():
+            if not header_lines or blank:
+                break
+            blank += 1
+            index += 1
+            continue
+        found = segments(line)
+        if stops(line.strip()) or not all(header_words(segment) for segment in found):
+            break
+        header_lines.append(found)
+        blank = 0
+        index += 1
+    if len(header_lines) < 2:
+        return None
+    columns = []
+    for found in header_lines:
+        for segment in found:
+            near = [
+                column for column in columns
+                if abs(column[0].center - segment.center) <= STACKED_COLUMN_REACH
+            ]
+            if near:
+                near[0].append(segment)
+            else:
+                columns.append([segment])
+    if len(columns) < 2:
+        return None
+    return sorted(columns, key=lambda column: column[0].start), index
+
+
+def read_stacked(lines, index, skip, stops):
+    """Таблица `stacked` с строки `index` → (Table, индекс после неё) или (None, index)."""
+    found = stacked_header(lines, index, skip, stops)
+    if found is None:
+        return None, index
+    columns, after = found
+    leaves = [
+        Segment(
+            min(segment.start for segment in column),
+            max(segment.end for segment in column),
+            ' '.join(segment.text for segment in column),
+        )
+        for column in columns
+    ]
+    body = []
+    while after < len(lines):
+        line = lines[after]
+        if skip(line) or (not body and not line.strip()):
+            after += 1
+            continue
+        if not line.strip() or len(segments(line)) < len(leaves):
+            break
+        body.append(line)
+        after += 1
+    cuts = boundaries(body, leaves) if body else None
+    if cuts is None:
+        return None, index
+    table = Table()
+    for number, leaf in enumerate(leaves, 1):
+        table.cells.append(Cell('h1', number, header=True, text=leaf.text))
+    for row_number, line in enumerate(body, 1):
+        for column, part in enumerate(cut(line, cuts), 1):
+            blocks = cell_blocks([part])
+            if blocks:
+                table.cells.append(Cell(str(row_number), column, blocks=blocks))
+    return table, after
 
 
 def top_cells(table, header, lower, leaves):
