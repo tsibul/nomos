@@ -233,9 +233,10 @@ class Marker:
     """Разметка абзацев одного текста; счётчики пропусков — на весь акт.
 
     act — uid базового закона, если размечается изменяющий акт (цели — в законе);
-    implicit — упоминание без указания акта тоже ссылка на базовый закон (ΚΔΠ)."""
+    implicit — упоминание без указания акта тоже ссылка на базовый закон (ΚΔΠ);
+    mentions — упоминания других актов (acts.Mentions): ссылка на акт целиком."""
 
-    def __init__(self, targets, language, act='', implicit=False):
+    def __init__(self, targets, language, act='', implicit=False, mentions=None):
         self.targets = targets
         self.language = language
         self.act = act
@@ -247,6 +248,9 @@ class Marker:
         self.depth = 0
         # цели ссылок оригинала в этом тексте — для перевода (mark_translation)
         self.agreed = set()
+        self.mentions = mentions
+        if mentions is not None:
+            mentions.skipped = self.skipped
 
     def mark_text(self, paragraphs, own):
         """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
@@ -267,7 +271,8 @@ class Marker:
         parts = []
         position = 0
         for start, end, eid in spans:
-            target = '%s#%s' % (self.act, eid) if self.act else eid
+            # «uid» акта целиком (из mentions) — как есть
+            target = '%s#%s' % (self.act, eid) if self.act and '/' not in eid else eid
             found.append(target)
             parts.append(text[position:start])
             parts.append('<ref id="r%d" to="%s">%s</ref>' % (len(found), target, text[start:end]))
@@ -278,7 +283,8 @@ class Marker:
     def spans(self, text, own):
         """Неперекрывающиеся (начало, конец, eid) по порядку."""
         candidates = (
-            self.paragraph_spans(text)
+            (self.mentions.spans(text, self.agreed) if self.mentions is not None else [])
+            + self.paragraph_spans(text)
             + self.schedule_spans(text)
             + self.article_spans(text)
         )
@@ -506,13 +512,16 @@ def strip_own_refs(text):
     return OWN_REF_RE.sub(r'\1', text)
 
 
-def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False):
+def mark_translation(
+    path, targets, eid_by_uid, el_marks, act='', implicit=False, mentions=None,
+):
     """Разметка ссылок в файле перевода; текст вне тегов <ref> не меняется.
 
-    el_marks: {(uid, редакция): [цели el]}; act, implicit — как у Marker.
+    el_marks: {(uid, редакция): [цели el]}; act, implicit, mentions — как у Marker
+    (mentions — для русского текста).
     Возвращает (пропуски, расхождения с el, число ссылок)."""
     source = path.read_text(encoding='utf-8')
-    marker = Marker(targets, RU, act, implicit)
+    marker = Marker(targets, RU, act, implicit, mentions)
     differences = []
     total = [0]
 

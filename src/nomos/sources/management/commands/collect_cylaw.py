@@ -12,6 +12,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from nomos.sources.cylaw import consolidated, gazette, history, layout, refs, texts_xml
+from nomos.sources.cylaw import acts as acts_index
 
 BASE_KEY = history.BASE_KEY
 
@@ -266,8 +267,9 @@ def mark_translation(folder, marker, prefix=''):
     if not path.exists():
         return lines
     eid_by_uid = {uid: eid for eid, uid in texts_xml.existing_uids(folder / 'act.xml').items()}
+    mentions = marker.mentions.translated() if marker.mentions is not None else None
     skipped, differences, total = refs.mark_translation(
-        path, marker.targets, eid_by_uid, marker.found, marker.act, marker.implicit,
+        path, marker.targets, eid_by_uid, marker.found, marker.act, marker.implicit, mentions,
     )
     lines.append('%sссылок ru: %d; не размечено ru: %s' % (
         prefix, total, skipped_text(skipped),
@@ -312,7 +314,11 @@ class Command(BaseCommand):
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
         known_from_publication(versions, info.published_on, base_ref)
-        marker = refs.Marker(refs.Targets(node.eid for node in versions), refs.EL)
+        index = acts_index.Index.read(root_dir)
+        marker = refs.Marker(
+            refs.Targets(node.eid for node in versions), refs.EL,
+            mentions=acts_index.Mentions(index, 'el', info.uid),
+        )
         inline = write(folder, info, versions, other_notes, marker)
         report.extend(mark_translation(folder, marker))
         self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
@@ -335,6 +341,7 @@ class Command(BaseCommand):
             # ссылки на базовый закон; у ΚΔΠ своих статей нет — без указания акта тоже он
             amending_marker = refs.Marker(
                 marker.targets, refs.EL, info.uid, implicit=amending.kind != 'law',
+                mentions=acts_index.Mentions(index, 'el', amending.uid),
             )
             write(
                 root_dir / amending.uid,
