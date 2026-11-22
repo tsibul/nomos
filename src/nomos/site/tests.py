@@ -297,6 +297,30 @@ class ViewerTests(TestCase):
         self.assertContains(response, f'href="{ACT_URL}art_2/history/"')
         self.assertNotContains(response, 'Καταργούμενο')
 
+    def test_repealed_article_page_in_english(self):
+        self.add_repealed_article()
+        english = Expression.objects.create(
+            act=self.law,
+            lang='en',
+            status='our_translation',
+            source=self.el.source,
+            title='Test Law',
+        )
+        base_version = Fragment.objects.get(uid='lw00000005').versions.get(key='base')
+        FragmentText.objects.create(
+            version=base_version,
+            expression=english,
+            body='<p>Repealed text</p>',
+            text_hash='en',
+        )
+        response = self.client.get(ACT_URL + '@2025-06-01/art_2/en/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This provision ceased to have effect on 01.03.2025.')
+        self.assertContains(response, 'Last version in force (as at 28.02.2025)')
+        self.assertContains(response, f'href="{ACT_URL}@2025-02-28/art_2/en/"')
+        response = self.client.get(ACT_URL + '@2025-06-01/art_2/', {'lang': 'en'}, follow=True)
+        self.assertContains(response, 'This provision ceased to have effect on 01.03.2025.')
+
     def test_repealed_article_before_repeal_shows_text(self):
         self.add_repealed_article()
         response = self.client.get(ACT_URL + '@2025-02-28/art_2/')
