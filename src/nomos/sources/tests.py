@@ -12,7 +12,8 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from nomos.acts.models import (
-    ActRelation, Amendment, Expression, Fragment, FragmentText, Reference,
+    ActRelation, Amendment, Expression, Fragment, FragmentText, FragmentVersion,
+    Reference,
 )
 from nomos.translate.models import Note
 
@@ -1108,6 +1109,12 @@ class VatReturnGuideTests(TestCase):
         )
         references = Reference.objects.filter(from_text__in=russian)
         self.assertFalse(references.filter(resolved=False).exists())
+        # заголовки разделов (в el — в act.xml) переведены записями без текста
+        headed = FragmentVersion.objects.filter(fragment__act__uid=GUIDE).exclude(heading='')
+        self.assertEqual(
+            set(russian.exclude(heading='').values_list('version', flat=True)),
+            set(headed.values_list('pk', flat=True)),
+        )
 
 
 TAX_LAW = 'cy/law/1978/4'
