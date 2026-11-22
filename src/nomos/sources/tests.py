@@ -115,25 +115,56 @@ class SlugTests(SimpleTestCase):
         self.assertEqual(numbering.slug('«αναδιάρθρωση»'), 'anadiarthrwsh')
 
 
-@skipUnless((TEXTS_DIR / LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом о НДС')
-class VatLawTests(TestCase):
-    """Сборка и загрузка закона о НДС из Nomos-texts (NOMOS_TEXTS_DIR)."""
+class CollectedTextsTests(TestCase):
+    """Основа тестов сборки: копия Nomos-texts, сборка актов `collected`, загрузка в БД.
+
+    Сборка пишет файлы — в копию, а не в рабочее дерево Nomos-texts. `loads` — сколько раз
+    подряд грузятся тексты, `report` — вывод сборщика, `main_uid` — акт для version и text."""
+
+    collected = ()
+    main_uid = None
+    loads = 1
 
     @classmethod
     def setUpTestData(cls):
-        # сборка пишет файлы — в копию, а не в рабочее дерево Nomos-texts
         cls.temp = tempfile.TemporaryDirectory()
         cls.copy = Path(cls.temp.name) / 'texts'
         shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
         output = StringIO()
-        call_command('collect_cylaw', LAW, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+        for uid in cls.collected:
+            call_command('collect_cylaw', uid, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        for _ in range(cls.loads):
+            call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
 
     @classmethod
     def tearDownClass(cls):
         super().tearDownClass()
         cls.temp.cleanup()
+
+    def differing(self, uid):
+        """Файлы акта в копии, отличающиеся от Nomos-texts."""
+        return [
+            path.name
+            for path in (self.copy / uid).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
+        ]
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=self.main_uid, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+
+@skipUnless((TEXTS_DIR / LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом о НДС')
+class VatLawTests(CollectedTextsTests):
+    """Сборка и загрузка закона о НДС из Nomos-texts (NOMOS_TEXTS_DIR)."""
+
+    collected = (LAW,)
+    main_uid = LAW
+    loads = 2
 
     def test_rebuild_keeps_files_and_translation(self):
         """Пересборка и две загрузки подряд: файлы как в git, русский перевод на месте."""
@@ -243,9 +274,6 @@ class VatLawTests(TestCase):
         today = self.active_eids('art_45.', datetime.date(2026, 11, 20))
         self.assertEqual(today - before, {'art_45.par_7G', 'art_45.par_7D'})
         self.assertEqual(before - today, set())
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=LAW, eid=eid).version_on(day)
 
     def test_schedule_12_item_6_periods(self):
         """82/2026 вставляет с 1.4.2026, 167/2026 отменяет с 30.4.2026, 363/2026 — новый."""
@@ -1730,38 +1758,14 @@ TAX_LAW = 'cy/law/1978/4'
 
 
 @skipUnless((TEXTS_DIR / TAX_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 4/1978')
-class TaxCollectionLawTests(TestCase):
+class TaxCollectionLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о начислении и взимании налогов 4/1978."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', TAX_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=TAX_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (TAX_LAW,)
+    main_uid = TAX_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / TAX_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / TAX_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(TAX_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -1797,38 +1801,14 @@ SOCIAL_LAW = 'cy/law/2010/59_I'
 @skipUnless(
     (TEXTS_DIR / SOCIAL_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 59(I)/2010',
 )
-class SocialInsuranceLawTests(TestCase):
+class SocialInsuranceLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о социальном страховании 59(Ι)/2010."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', SOCIAL_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=SOCIAL_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (SOCIAL_LAW,)
+    main_uid = SOCIAL_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / SOCIAL_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / SOCIAL_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(SOCIAL_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -1880,29 +1860,16 @@ CONTRIBUTIONS = 'cy/kdp/2010/289'
 @skipUnless(
     (TEXTS_DIR / CONTRIBUTIONS / 'collect.xml').exists(), 'нет Nomos-texts с ΚΔΠ 289/2010',
 )
-class ContributionRegulationsTests(TestCase):
+class ContributionRegulationsTests(CollectedTextsTests):
     """Регламент о взносах ΚΔΠ 289/2010: расшифровка скана, 4Α из ΚΔΠ 52/2012."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', CONTRIBUTIONS, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = (CONTRIBUTIONS,)
 
     def test_rebuild_keeps_files(self):
         changed = [
-            '%s/%s' % (act, path.name)
+            '%s/%s' % (act, name)
             for act in (CONTRIBUTIONS, 'cy/kdp/2012/52')
-            for path in (self.copy / act).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+            for name in self.differing(act)
         ]
         self.assertEqual(changed, [])
 
@@ -1936,30 +1903,16 @@ ORDERS = ('cy/kdp/2024/392', 'cy/kdp/2025/378')
     all((TEXTS_DIR / order / 'collect.xml').exists() for order in ORDERS),
     'нет Nomos-texts с приказами ΚΔΠ 392/2024 и 378/2025',
 )
-class BasicEarningsOrderTests(TestCase):
+class BasicEarningsOrderTests(CollectedTextsTests):
     """Приказы о базовых заработках (ст. 20 закона 59(Ι)/2010): ст. 2 без определений."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        for order in ORDERS:
-            call_command('collect_cylaw', order, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = ORDERS
 
     def test_rebuild_keeps_files(self):
         changed = [
-            '%s/%s' % (order, path.name)
+            '%s/%s' % (order, name)
             for order in ORDERS
-            for path in (self.copy / order).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / order / path.name, shallow=False)
+            for name in self.differing(order)
         ]
         self.assertEqual(changed, [])
 
@@ -2019,38 +1972,14 @@ HEALTH_LAW = 'cy/law/2001/89_I'
 
 
 @skipUnless((TEXTS_DIR / HEALTH_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 89(Ι)/2001')
-class HealthSystemLawTests(TestCase):
+class HealthSystemLawTests(CollectedTextsTests):
     """Закон о ГеСИ 89(Ι)/2001 с изменениями 29, 53, 118, 139(Ι)/2025, 60 и 61(Ι)/2026."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', HEALTH_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=HEALTH_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (HEALTH_LAW,)
+    main_uid = HEALTH_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / HEALTH_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / HEALTH_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(HEALTH_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -2410,30 +2339,16 @@ HRDA_AMENDING = 'cy/law/2026/15_I'
     all((TEXTS_DIR / act / 'collect.xml').exists() for act in (HRDA_LAW, HRDA_FEE)),
     'нет Nomos-texts с 125(Ι)/1999 и ΚΔΠ 128/2026',
 )
-class HumanResourcesLawTests(TestCase):
+class HumanResourcesLawTests(CollectedTextsTests):
     """Закон об АРЧР 125(Ι)/1999 по сводке Leginet и регламент о сборе ΚΔΠ 128/2026."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        for act in (HRDA_LAW, HRDA_FEE):
-            call_command('collect_cylaw', act, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = (HRDA_LAW, HRDA_FEE)
 
     def test_rebuild_keeps_files(self):
         changed = [
-            '%s/%s' % (act, path.name)
+            '%s/%s' % (act, name)
             for act in (HRDA_LAW, HRDA_FEE, HRDA_AMENDING)
-            for path in (self.copy / act).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+            for name in self.differing(act)
         ]
         self.assertEqual(changed, [])
 
@@ -2649,38 +2564,14 @@ INCOME_TAX_LAW = 'cy/law/2002/118_I'
 @skipUnless(
     (TEXTS_DIR / INCOME_TAX_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 118(Ι)/2002',
 )
-class IncomeTaxLawTests(TestCase):
+class IncomeTaxLawTests(CollectedTextsTests):
     """Закон о подоходном налоге 118(Ι)/2002 с изменениями 2024–2026 гг."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', INCOME_TAX_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=INCOME_TAX_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (INCOME_TAX_LAW,)
+    main_uid = INCOME_TAX_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / INCOME_TAX_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / INCOME_TAX_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(INCOME_TAX_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -2861,38 +2752,14 @@ class DefenceContributionParsingTests(SimpleTestCase):
 DEFENCE_LAW = 'cy/law/2002/117_I'
 
 
-class DefenceContributionLawTests(TestCase):
+class DefenceContributionLawTests(CollectedTextsTests):
     """Закон о взносе на оборону 117(Ι)/2002 с изменениями 2024–2025 гг."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', DEFENCE_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=DEFENCE_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (DEFENCE_LAW,)
+    main_uid = DEFENCE_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / DEFENCE_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / DEFENCE_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(DEFENCE_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -2938,41 +2805,15 @@ CAPITAL_GAINS_LAW = 'cy/law/1980/52'
 @skipUnless(
     (TEXTS_DIR / CAPITAL_GAINS_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 52/1980',
 )
-class CapitalGainsLawTests(TestCase):
+class CapitalGainsLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о налоге на прирост капитала 52/1980."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command(
-            'collect_cylaw', CAPITAL_GAINS_LAW, texts_dir=str(cls.copy), stdout=output,
-        )
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=CAPITAL_GAINS_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (CAPITAL_GAINS_LAW,)
+    main_uid = CAPITAL_GAINS_LAW
 
     def test_rebuild_keeps_files(self):
         for uid in (CAPITAL_GAINS_LAW, 'cy/law/2025/218_I', 'cy/law/2025/242_I'):
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_article_32_fixed_from_law_169_2024(self):
@@ -3006,39 +2847,15 @@ COLLECTION_LAW = 'cy/law/1962/31'
 @skipUnless(
     (TEXTS_DIR / COLLECTION_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 31/1962',
 )
-class TaxRecoveryLawTests(TestCase):
+class TaxRecoveryLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о взыскании налогов 31/1962."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', COLLECTION_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=COLLECTION_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (COLLECTION_LAW,)
+    main_uid = COLLECTION_LAW
 
     def test_rebuild_keeps_files(self):
         for uid in (COLLECTION_LAW, 'cy/law/2025/241_I'):
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_all_ops_applied(self):
@@ -3150,35 +2967,15 @@ TRUSTS_LAW = 'cy/law/1992/69_I'
 
 
 @skipUnless((TEXTS_DIR / TRUSTS_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 69(Ι)/1992')
-class InternationalTrustsLawTests(TestCase):
+class InternationalTrustsLawTests(CollectedTextsTests):
     """Закон о международных трастах 69(Ι)/1992: сводка CyLaw с 240(Ι)/2025."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', TRUSTS_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=TRUSTS_LAW, eid=eid).version_on(day)
+    collected = (TRUSTS_LAW,)
+    main_uid = TRUSTS_LAW
 
     def test_rebuild_keeps_files(self):
         for uid in (TRUSTS_LAW, 'cy/law/2025/240_I'):
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_parts_numbered_by_ordinal_words(self):
@@ -3200,32 +2997,14 @@ class InternationalTrustsLawTests(TestCase):
 EMPLOYER_FUND_LAWS = ['cy/law/1967/8', 'cy/law/1967/24', 'cy/law/2002/124_I']
 
 
-class EmployerFundLawsTests(TestCase):
+class EmployerFundLawsTests(CollectedTextsTests):
     """Отпуска 8/1967, прекращение занятости 24/1967, фонд соцсплочённости 124(Ι)/2002."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        for uid in EMPLOYER_FUND_LAWS:
-            call_command('collect_cylaw', uid, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = EMPLOYER_FUND_LAWS
 
     def test_rebuild_keeps_files(self):
         for uid in EMPLOYER_FUND_LAWS:
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_old_style_schedules_of_law_24_1967(self):
@@ -3251,37 +3030,14 @@ class EmployerFundLawsTests(TestCase):
 LAND_FEES_LAW = 'cy/law/cap/219'
 
 
-class LandRegistryFeesLawTests(TestCase):
+class LandRegistryFeesLawTests(CollectedTextsTests):
     """Сборы Κτηματολόγιο, Κεφ. 219, с изменениями 166(Ι)/2024, 51(Ι)/2025, 222(Ι)/2025."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', LAND_FEES_LAW, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=LAND_FEES_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (LAND_FEES_LAW,)
+    main_uid = LAND_FEES_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / LAND_FEES_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / LAND_FEES_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(LAND_FEES_LAW)
         self.assertEqual(changed, [])
 
     def test_restructuring_term_9_10_11_years(self):

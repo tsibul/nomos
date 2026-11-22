@@ -1,0 +1,21 @@
+{% load i18n %}
+
+<nav
+  class="crumbs"
+  aria-label="{% translate 'Положение в акте' %}"
+>
+  <a
+    class="crumbs__link"
+    href="{{ act_url }}"
+  >
+    {% translate 'Оглавление' %}
+  </a>
+  {% for crumb in crumbs %}
+    <span
+      class="crumbs__item"
+      lang="{{ crumb.lang }}"
+    >
+      {{ crumb }}
+    </span>
+  {% endfor %}
+</nav>
