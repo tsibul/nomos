@@ -2864,3 +2864,70 @@ class DefenceContributionLawTests(TestCase):
         eid = 'art_4.par_2.sub_1'
         self.assertIn('ή τα ενοίκια', self.text(eid, datetime.date(2025, 12, 31)))
         self.assertNotIn('ή τα ενοίκια', self.text(eid, datetime.date(2026, 1, 1)))
+
+
+LAND_FEES_LAW = 'cy/law/cap/219'
+
+
+class LandRegistryFeesLawTests(TestCase):
+    """Сборы Κτηματολόγιο, Κεφ. 219, с изменениями 166(Ι)/2024, 51(Ι)/2025, 222(Ι)/2025."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', LAND_FEES_LAW, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=LAND_FEES_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        folder = self.copy / LAND_FEES_LAW
+        changed = [
+            path.name
+            for path in folder.iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / LAND_FEES_LAW / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_restructuring_term_9_10_11_years(self):
+        eid = 'art_2.def_anadiarthrwsh'
+        self.assertIn('εντός εννέα (9) ετών', self.text(eid, datetime.date(2024, 1, 1)))
+        self.assertIn('εντός δέκα (10) ετών', self.text(eid, datetime.date(2025, 1, 1)))
+        self.assertIn('εντός έντεκα (11) ετών', self.text(eid, datetime.date(2025, 12, 12)))
+
+    def test_new_provisions(self):
+        self.assertIsNone(self.version('art_14.par_2', datetime.date(2024, 12, 30)))
+        self.assertIsNotNone(self.version('art_14.par_2', datetime.date(2024, 12, 31)))
+        self.assertIsNone(self.version('art_7B', datetime.date(2025, 4, 24)))
+        self.assertIsNotNone(self.version('art_7B', datetime.date(2025, 4, 25)))
+        self.assertIsNotNone(self.version('art_7B_2', datetime.date(2024, 1, 1)))
+        eid = 'art_14.par_2.pnt_g'
+        self.assertIn('31η Δεκεμβρίου 2025', self.text(eid, datetime.date(2025, 1, 1)))
+        self.assertIn('31η Δεκεμβρίου 2026', self.text(eid, datetime.date(2025, 12, 12)))
+
+    def test_note_with_lone_number_not_a_schedule_paragraph(self):
+        """«Σημείωση» / «3» / «3. … καταργείται» — примечание CyLaw, не пункт приложения."""
+        self.assertFalse(
+            Fragment.objects.filter(act__uid=LAND_FEES_LAW, eid='sch_1.par_3_2').exists()
+        )
+
+    def test_margin_history_with_cap_number_not_in_text(self):
+        """«ΚΕΦ.219 34(I)/2013 …» на полях — история изменений, не текст статьи."""
+        texts = FragmentText.objects.filter(
+            version__fragment__act__uid=LAND_FEES_LAW,
+            body__startswith='ΚΕΦ.219',
+        )
+        self.assertFalse(texts.exists())

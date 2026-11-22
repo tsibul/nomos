@@ -13,7 +13,8 @@ from . import columns, customs, layout, leginet, numbering
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
-LAW_NUMBER_RE = re.compile(r'^\d+(\([IΙ]\))?/\d{4}$')
+# номер в истории на полях: «95(I)/2000» или закон колониального свода «ΚΕΦ.219» (Κεφ. 219)
+LAW_NUMBER_RE = re.compile(r'^(\d+(\([IΙ]\))?/\d{4}|ΚΕΦ\.\d+[Α-Ω]?)$')
 CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
 # «244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075» (118(Ι)/2002, ст. 14Β)
 CORRIGENDUM_FULL_RE = re.compile(r'ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+')
@@ -283,8 +284,9 @@ def looks_like_heading(block, following):
 
 
 EDITOR_NOTE_RE = re.compile(r'^Σημείωση\s+\S+\s+(του|της)\s')
-# «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978)
-LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+\D|$)')
+# «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978);
+# «Σημείωση 3» без закона — номер на своей строке (Κεφ. 219)
+LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+(\D|$)|$)')
 
 
 def is_editor_note(block):
