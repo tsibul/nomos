@@ -687,6 +687,19 @@ class GazetteTests(SimpleTestCase):
             ('Ερμηνεία.', ''),
         )
 
+    def test_subsection_followed_by_point_number(self):
+        """«(5)(α) …» после законченной фразы — новый абзац, как «(5) …» (53(Ι)/2025)."""
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2.-(1) Οι έρευνες δεν δημοσιεύονται.'),
+            ('', '(2)(α) Η διαδικασία είναι κατάλληλη.'),
+        )
+        self.assertEqual(
+            root.children[2].paragraphs,
+            ['(1) Οι έρευνες δεν δημοσιεύονται.', '(2)(α) Η διαδικασία είναι κατάλληλη.'],
+        )
+
 
 class OrderKeyTests(SimpleTestCase):
     def test_siblings_of_different_kinds_keep_document_order(self):
