@@ -1081,20 +1081,20 @@ class PublicAttributeTests(TestCase):
 
 
 
-def write_simple_act(root, uid, kind, text, fragment):
+def write_simple_act(root, uid, kind, text, fragment, source='cy-tax'):
     """Акт из одного фрагмента: act.xml и el.xml."""
     folder = root / uid
     folder.mkdir(parents=True)
     (folder / 'act.xml').write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
         '<act uid="%s" jurisdiction="cy" kind="%s" structure-lang="el">\n'
-        '  <expression lang="el" status="official_text" source="cy-tax" file="el.xml" />\n'
+        '  <expression lang="el" status="official_text" source="%s" file="el.xml" />\n'
         '  <amendment key="base" kind="base" published-on="2024-08-06"></amendment>\n'
         '  <fragment uid="%s" kind="sub" eid="sub_1" order-key="0001">\n'
         '    <version key="base" amendment="%s#base" valid-from="2024-08-06"'
         ' known-from="2024-08-06" />\n'
         '  </fragment>\n'
-        '</act>\n' % (uid, kind, fragment, uid),
+        '</act>\n' % (uid, kind, source, fragment, uid),
         encoding='utf-8',
     )
     (folder / 'el.xml').write_text(
@@ -1133,6 +1133,17 @@ class FormKindTests(TestCase):
         leaflet = references['r2']
         self.assertFalse(leaflet.resolved)
         self.assertIsNone(leaflet.to_act)
+
+    def test_social_insurance_form_source(self):
+        """Бланк Υπηρεσίες Κοινωνικών Ασφαλίσεων: источник cy-sis есть в списке источников."""
+        with tempfile.TemporaryDirectory() as folder:
+            write_simple_act(
+                Path(folder), 'cy/form/yka/1-003', 'form', 'Δήλωση πρόσληψης', 'formfrag02',
+                source='cy-sis',
+            )
+            call_command('load_texts', texts_dir=folder, stdout=StringIO())
+        expression = Expression.objects.get(act__uid='cy/form/yka/1-003')
+        self.assertEqual(expression.source.code, 'cy-sis')
 
 
 class LostUidsTests(SimpleTestCase):
