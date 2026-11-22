@@ -631,6 +631,13 @@ class GazetteTests(SimpleTestCase):
             path.write_text('α\nβ\n', encoding='utf-8')
             self.assertEqual(layout.pdf_lines(path), ['α', 'β', ''])
 
+    def test_transcription_header_dropped(self):
+        """Пометка «Расшифровка скана …» до пустой строки — не текст; строки на месте."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / '52.txt'
+            path.write_text('Расшифровка скана 52.pdf\nв раскладке.\n\nα\n', encoding='utf-8')
+            self.assertEqual(layout.pdf_lines(path), ['', '', '', 'α', ''])
+
 
 class OrderKeyTests(SimpleTestCase):
     def test_siblings_of_different_kinds_keep_document_order(self):
