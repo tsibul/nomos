@@ -11,10 +11,11 @@ from unittest import skipUnless
 from unittest.mock import patch
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from nomos.acts.models import (
-    ActRelation, Amendment, Expression, Fragment, FragmentText, FragmentVersion,
+    Act, ActRelation, Amendment, Expression, Fragment, FragmentText, FragmentVersion,
     Reference,
 )
 from nomos.translate.models import Note
@@ -3414,3 +3415,88 @@ class LandRegistryFeesLawTests(TestCase):
             body__startswith='ΚΕΦ.219',
         )
         self.assertFalse(texts.exists())
+
+
+def write_translated_act(root, title='Закон', heading='Определения', body='<p>Текст</p>'):
+    """Акт cy/law/2000/1_I из одной статьи с заголовком: el и ru."""
+    folder = root / 'cy/law/2000/1_I'
+    folder.mkdir(parents=True)
+    (folder / 'act.xml').write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<act uid="cy/law/2000/1_I" jurisdiction="cy" kind="law" structure-lang="el">\n'
+        '  <expression lang="el" status="official_text" source="cylaw" file="el.xml"'
+        ' title="Νόμος" />\n'
+        '  <expression lang="ru" status="our_translation" source="nomos" file="ru.xml"'
+        ' title="%s" />\n'
+        '  <amendment key="base" kind="base" />\n'
+        '  <fragment uid="aaaaaaaaaa" kind="art" eid="art_1" order-key="0001">\n'
+        '    <version key="base" num="1" heading="Ορισμοί" amendment="cy/law/2000/1_I#base"'
+        ' known-from="2024-01-01" />\n'
+        '  </fragment>\n'
+        '</act>\n' % title,
+        encoding='utf-8',
+    )
+    for lang, text_heading, text_body in (('el', '', '<p>Κείμενο</p>'), ('ru', heading, body)):
+        (folder / ('%s.xml' % lang)).write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<texts act="cy/law/2000/1_I" lang="%s">\n'
+            '  <text fragment="aaaaaaaaaa" version="base" heading="%s">%s</text>\n'
+            '</texts>\n' % (lang, text_heading, text_body),
+            encoding='utf-8',
+        )
+
+
+class CheckTranslationsTests(SimpleTestCase):
+    """check_translations: неполный ru — список и ошибка (код 1), акт без ru только считается."""
+
+    def check(self, **parts):
+        with tempfile.TemporaryDirectory() as folder:
+            write_translated_act(Path(folder), **parts)
+            write_simple_act(Path(folder), 'cy/form/vat/4B', 'form', 'Κείμενο', 'bbbbbbbbbb')
+            out = StringIO()
+            try:
+                call_command('check_translations', texts_dir=folder, stdout=out)
+            except CommandError:
+                return False, out.getvalue()
+            return True, out.getvalue()
+
+    def test_complete(self):
+        passed, out = self.check()
+        self.assertTrue(passed, out)
+        self.assertIn('ru полный: 1, неполный: 0, без ru: 1', out)
+
+    def test_incomplete(self):
+        cases = {
+            'нет названия': {'title': ''},
+            'нет заголовков: 1 (art_1)': {'heading': ''},
+            'нет текста: 1 (art_1)': {'body': ''},
+        }
+        for reason, parts in cases.items():
+            with self.subTest(reason=reason):
+                passed, out = self.check(**parts)
+                self.assertFalse(passed, out)
+                self.assertIn('cy/law/2000/1_I: %s\n' % reason, out)
+                self.assertIn('ru полный: 0, неполный: 1, без ru: 1', out)
+
+
+class PublicOnlyLoadTests(TestCase):
+    """load_texts при NOMOS_PUBLIC_ONLY: загружаются только акты с полным ru."""
+
+    def load(self, public_only=True, **parts):
+        with tempfile.TemporaryDirectory() as folder:
+            write_translated_act(Path(folder), **parts)
+            write_simple_act(Path(folder), 'cy/form/vat/4B', 'form', 'Κείμενο', 'bbbbbbbbbb')
+            with self.settings(NOMOS_PUBLIC_ONLY=public_only):
+                call_command('load_texts', texts_dir=folder, stdout=StringIO())
+        return set(Act.objects.values_list('uid', flat=True))
+
+    def test_incomplete_skipped(self):
+        self.assertEqual(self.load(body=''), set())
+
+    def test_complete_loaded_without_ru_skipped(self):
+        self.assertEqual(self.load(), {'cy/law/2000/1_I'})
+
+    def test_incomplete_loaded_without_public_only(self):
+        self.assertEqual(
+            self.load(public_only=False, body=''), {'cy/law/2000/1_I', 'cy/form/vat/4B'},
+        )
