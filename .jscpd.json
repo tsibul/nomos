@@ -1,0 +1,17 @@
+{
+  "path": [
+    "src"
+  ],
+  "ignore": [
+    "**/node_modules/**",
+    "**/site/static/dist/**",
+    "**/raw/**",
+    "**/migrations/**",
+    "**/locale/**",
+    "**/*.min.*"
+  ],
+  "reporters": [
+    "console"
+  ],
+  "gitignore": true
+}
