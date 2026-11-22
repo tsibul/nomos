@@ -9,7 +9,7 @@
 
 import re
 
-from . import columns, customs, layout, leginet, numbering
+from . import columns, customs, layout, leginet, numbering, rate_table
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
@@ -95,6 +95,8 @@ PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {'cy/law/1978/4', 'cy/law/2001/89_I'}
 COLUMN_TABLE_ACTS = {'cy/law/2010/59_I', 'cy/law/2002/118_I'}
 # из них — таблицы ставок 118(Ι) Παράρτημα 2: шапка через пустую строку, ряд — строка
 STACKED_TABLE_ACTS = {'cy/law/2002/118_I'}
+# акты, где таблица ставок Πρώτο Παράρτημα собирается по координатам слов (rate_table.py)
+RATE_TABLE_ACTS = {'cy/law/1963/19'}
 
 HEADING_MAX = 110
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
@@ -370,6 +372,10 @@ class Parser:
         self.notes = []
         # таблицы в столбцах из приложений (columns.Table); в строках — их метки
         self.tables = []
+        # первые строки абзацев таблицы ставок (rate_table): текст позиций, не заголовки;
+        # из них — строки ставок
+        self.table_lines = set()
+        self.rate_lines = set()
 
     def parse(self, lines):
         start = schedules_start(lines) if self.act_uid in COLUMN_TABLE_ACTS else None
@@ -435,6 +441,12 @@ class Parser:
         text = block.text
         if text.startswith(columns.MARK):
             self.open_table(self.tables[int(text[len(columns.MARK):]) - 1])
+            return
+        if block.line in self.rate_lines:
+            self.attach_rate(block)
+            return
+        if block.line in self.table_lines:
+            self.feed_text(block)
             return
         if is_history(text):
             article = self.current_top()
@@ -814,6 +826,15 @@ class Parser:
         # каждый следующий абзац без номера — свой фрагмент (ответ координатора на вопрос 1)
         self.open_unnumbered(owner, text, indent)
 
+    def attach_rate(self, block):
+        """Ставка таблицы (rate_table) — свой абзац без номера у пункта своей строки таблицы
+        (после строки без номера — следующий за ней); перечень она не закрывает."""
+        while len(self.stack) > 1 and (
+            self.stack[-1].indent > block.indent or self.stack[-1].unnumbered
+        ):
+            self.stack.pop()
+        self.open_unnumbered(self.stack[-1], block.text, block.indent)
+
     def opens_list(self, node):
         return opens_list(node, self.provisos)
 
@@ -933,6 +954,8 @@ def parse(path, act_uid, source='cylaw', splits=()):
         lines = customs.pdf_lines(path)
     else:
         lines = layout.pdf_lines(path)
+    if act_uid in RATE_TABLE_ACTS:
+        lines, parser.table_lines, parser.rate_lines = rate_table.rewrite(lines, path)
     root = parser.parse(lines)
     article = next(node for node in root.walk() if node.eid == 'art_2')
     mark_definitions(article)

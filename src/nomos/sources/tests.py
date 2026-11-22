@@ -1,8 +1,10 @@
 import datetime
 import filecmp
 import os
+import re
 import shutil
 import tempfile
+import xml.etree.ElementTree as ET
 from io import StringIO
 from pathlib import Path
 from unittest import skipUnless
@@ -18,8 +20,8 @@ from nomos.acts.models import (
 from nomos.translate.models import Note
 
 from .cylaw import (
-    acts, columns, consolidated, customs, gazette, history, layout, leginet, numbering, refs,
-    texts_xml,
+    acts, columns, consolidated, customs, gazette, history, layout, leginet, numbering,
+    rate_table, refs, texts_xml,
 )
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
@@ -1978,6 +1980,41 @@ class BasicEarningsOrderTests(TestCase):
         self.assertIn('€220,76', text)
 
 
+class RepealTests(SimpleTestCase):
+    """Закон отменён целиком (19/1963 — 239(Ι)/2025): текст в сводке остаётся."""
+
+    def test_repealed_from(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(
+                '<collect uid="cy/law/1963/19">\n'
+                '  <repealed by="cy/law/2025/239_I" provision="art_2" from="2026-01-01"'
+                ' published="2025-12-31" />\n</collect>\n',
+                encoding='utf-8',
+            )
+            repeal = history.read_repeal(path)
+        base = history.Version(key='base', amendment='cy/law/1963/19#base', paragraphs=['α'])
+        versions = {'art_1': [base]}
+        collect_cylaw.apply_repeal(versions, repeal)
+        expired = versions['art_1'][-1]
+        self.assertEqual(versions['art_1'][0].paragraphs, ['α'])
+        self.assertEqual(
+            (expired.amendment, expired.state, expired.valid_from, expired.known_from),
+            (
+                'cy/law/2025/239_I#base',
+                'repealed',
+                datetime.date(2026, 1, 1),
+                datetime.date(2025, 12, 31),
+            ),
+        )
+
+    def test_not_repealed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text('<collect uid="cy/law/1978/4" />\n', encoding='utf-8')
+            self.assertIsNone(history.read_repeal(path))
+
+
 HEALTH_LAW = 'cy/law/2001/89_I'
 
 
@@ -3022,3 +3059,88 @@ class TaxRecoveryLawTests(TestCase):
         self.assertIsNone(self.version('art_9ST', datetime.date(2025, 12, 31)))
         self.assertEqual(self.version('art_9ST', datetime.date(2026, 1, 1)).state, 'active')
         self.assertIsNone(self.version('art_9D.par_1.sub_2', datetime.date(2024, 7, 25)))
+
+
+def rate_line(y, text, x0=87, page=0):
+    return rate_table.Line(page, y, x0, text)
+
+
+class RateTableTests(SimpleTestCase):
+    """Таблица ставок Πρώτο Παράρτημα 19/1963: номер и ставка — к своей строке таблицы."""
+
+    def test_rows(self):
+        rows = rate_table.text_rows([
+            rate_line(100, 'Γραπτή Ένορκη Κατάθεση'),
+            rate_line(110, 'ή Δήλωση.'),
+            rate_line(130, 'Σύμβαση:'),
+            rate_line(150, '(α) πώλησης ακινήτου'),
+            rate_line(170, 'στην Κύπρο.'),
+            rate_line(190, 'Νοείται ότι εξαιρείται.'),
+        ])
+        self.assertEqual(
+            [row.text for row in rows],
+            [
+                'Γραπτή Ένορκη Κατάθεση ή Δήλωση.',
+                'Σύμβαση:',
+                '(α) πώλησης ακινήτου στην Κύπρο.',
+                'Νοείται ότι εξαιρείται.',
+            ],
+        )
+
+    def test_numbers_and_rates(self):
+        rows = rate_table.text_rows([
+            rate_line(100, 'Γραπτή Ένορκη Κατάθεση.'),
+            rate_line(130, 'Σύμβαση:'),
+            rate_line(150, '(α) πώλησης ακινήτου.'),
+            rate_line(170, 'Νοείται ότι εξαιρείται.'),
+        ])
+        numbers = [rate_line(100, '2', x0=60), rate_line(150, '3', x0=60)]
+        heads = rate_table.place_numbers(rows, numbers)
+        self.assertEqual(heads, [0, 1])
+        cells = rate_table.rate_cells([
+            rate_line(100, 'Τέσσερα ευρώ', x0=450),
+            rate_line(128, 'Δύο', x0=450),
+            rate_line(138, 'ευρώ', x0=450),
+            rate_line(170, 'Ένα ευρώ', x0=450),
+        ])
+        rate_table.place_rates(rows, cells, heads)
+        self.assertEqual([row.number for row in rows], ['2', '3', '', ''])
+        # «Σύμβαση:» передаёт ставку пункту, оговорка — строке перед собой
+        self.assertEqual(
+            [row.rates for row in rows],
+            [['Τέσσερα ευρώ'], [], ['Δύο ευρώ', 'Ένα ευρώ'], []],
+        )
+
+    def test_layout(self):
+        row = rate_table.Row([rate_line(100, 'Γραπτή Κατάθεση.')], '2', ['Τέσσερα ευρώ'])
+        output, starts, rates = rate_table.layout_lines([row])
+        self.assertEqual(output[2:], [
+            '          2. Γραπτή Κατάθεση.',
+            '',
+            '            Τέσσερα ευρώ',
+            '',
+        ])
+        self.assertEqual((starts, rates), ({2, 4}, {4}))
+
+
+@skipUnless((TEXTS_DIR / 'cy/law/1963/19/act.xml').exists(), 'нет Nomos-texts с 19/1963')
+class StampDutyScheduleTests(SimpleTestCase):
+    """Πρώτο Παράρτημα 19/1963 в Nomos-texts: позиции и их ставки отдельными фрагментами."""
+
+    def test_items_and_rates(self):
+        directory = TEXTS_DIR / 'cy/law/1963/19'
+        eids = {
+            fragment.get('uid'): fragment.get('eid')
+            for fragment in ET.parse(directory / 'act.xml').getroot().iter('fragment')
+        }
+        texts = {}
+        for text in ET.parse(directory / 'el.xml').getroot().iter('text'):
+            if text.get('version') == 'base':
+                texts[eids[text.get('fragment')]] = ''.join(text.itertext()).strip()
+        items = [eid for eid in eids.values() if re.fullmatch(r'sch_1\.par_\d+', eid)]
+        self.assertEqual(len(items), 35)
+        self.assertTrue(texts['sch_1.par_2'].startswith('Γραπτή Ένορκη Κατάθεση'))
+        self.assertEqual(texts['sch_1.par_2.sub_1'], 'Τέσσερα ευρώ')
+        self.assertTrue(
+            texts['sch_1.par_28.sub_1.sub_1.sub_1'].startswith('Ένα ευρώ για κάθε €200')
+        )

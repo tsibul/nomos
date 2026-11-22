@@ -179,6 +179,16 @@ def apply_remarks(versions, remarks, base_ref, report):
                     node_versions.append(expired_version(day, base_ref))
 
 
+def apply_repeal(versions, repeal):
+    """Закон отменён целиком: у каждого фрагмента последняя редакция — «утратил силу»."""
+    if repeal is None:
+        return
+    for node_versions in versions.values():
+        version = expired_version(repeal.valid_from, repeal.amendment)
+        version.known_from = repeal.known_from
+        node_versions.append(version)
+
+
 def known_from_publication(versions, published_on, base_ref):
     """Акт, опубликованный после 01.01.2024 (приказ ΚΔΠ 378/2025), известен с публикации."""
     if published_on is None or published_on <= history.BASE_KNOWN_FROM:
@@ -333,6 +343,7 @@ class Command(BaseCommand):
         # текст известен только с даты сводки
         consolidated_on = history.parse_date(manifest.get('consolidated'))
         known_from_publication(versions, consolidated_on, base_ref)
+        apply_repeal(versions, history.read_repeal(folder / 'collect.xml'))
         index = acts_index.Index.read(root_dir)
         marker = refs.Marker(
             refs.Targets(node.eid for node in versions), refs.EL,
