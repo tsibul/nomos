@@ -1944,6 +1944,18 @@ class FundAccountsRegulationsTests(TestCase):
         self.assertLessEqual(expected, eids)
         self.assertNotIn('art_7', eids)
 
+    def test_amended_by_390_2019_and_172_2024(self):
+        for amending in ('cy/kdp/2019/390', 'cy/kdp/2024/172'):
+            self.assertTrue(ActRelation.objects.filter(
+                from_act__uid=amending, to_act__uid=FUND_ACCOUNTS, kind='amends',
+            ).exists())
+
+    def test_rates_2024_version(self):
+        text = (self.copy / FUND_ACCOUNTS / 'el.xml').read_text(encoding='utf-8')
+        self.assertIn('version="2024-05-10"', text)
+        self.assertIn('ποσοστό 12,65%', text)
+        self.assertIn('ποσοστό 7,2%', text)
+        self.assertIn('ποσοστό 7,85%', text)
 
 BENEFITS = 'cy/kdp/2010/288'
 
