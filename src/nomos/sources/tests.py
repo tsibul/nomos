@@ -2864,3 +2864,64 @@ class DefenceContributionLawTests(TestCase):
         eid = 'art_4.par_2.sub_1'
         self.assertIn('ή τα ενοίκια', self.text(eid, datetime.date(2025, 12, 31)))
         self.assertNotIn('ή τα ενοίκια', self.text(eid, datetime.date(2026, 1, 1)))
+
+
+COLLECTION_LAW = 'cy/law/1962/31'
+
+
+@skipUnless(
+    (TEXTS_DIR / COLLECTION_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 31/1962',
+)
+class TaxRecoveryLawTests(TestCase):
+    """Сборка и загрузка закона о взыскании налогов 31/1962."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', COLLECTION_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=COLLECTION_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        for uid in (COLLECTION_LAW, 'cy/law/2025/241_I'):
+            folder = self.copy / uid
+            changed = [
+                path.name
+                for path in folder.iterdir()
+                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
+            ]
+            self.assertEqual(changed, [], uid)
+
+    def test_all_ops_applied(self):
+        problems = [
+            line.strip()
+            for line in self.report.splitlines()
+            if '→' in line or 'не найдена' in line or 'положения нет' in line
+        ]
+        self.assertEqual(problems, [])
+
+    def test_restructuring_term_by_laws_163_2024_and_217_2025(self):
+        eid = 'art_2.def_anadiarthrwsh'
+        self.assertIn('εννέα (9)', self.text(eid, datetime.date(2024, 12, 30)))
+        self.assertIn('δέκα (10)', self.text(eid, datetime.date(2024, 12, 31)))
+        self.assertIn('έντεκα (11)', self.text(eid, datetime.date(2025, 12, 12)))
+
+    def test_share_freeze_by_law_241_2025(self):
+        self.assertIsNone(self.version('art_9ST', datetime.date(2025, 12, 31)))
+        self.assertEqual(self.version('art_9ST', datetime.date(2026, 1, 1)).state, 'active')
+        self.assertIsNone(self.version('art_9D.par_1.sub_2', datetime.date(2024, 7, 25)))
