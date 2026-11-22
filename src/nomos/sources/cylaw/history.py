@@ -147,12 +147,15 @@ def read_splits(path):
 
 @dataclass
 class SourceFix:
-    """Ошибка сводного текста источника: `<source-fix target="…" num="…">` с `<p for="…">`.
+    """Ошибка сводного текста источника:
+    `<source-fix target="…" num="…" heading="…">` с `<p for="…">`.
 
-    Текст фрагментов (eid по разбору) заменяется приведённым, num — номер статьи."""
+    Текст фрагментов (eid по разбору) заменяется приведённым, num — номер статьи,
+    heading — заголовок цели."""
 
     target: str
     num: str = ''
+    heading: str = ''
     note: str = ''
     texts: dict = field(default_factory=dict)
 
@@ -164,6 +167,7 @@ def read_source_fixes(path):
         fixes.append(SourceFix(
             target=item.get('target'),
             num=item.get('num', ''),
+            heading=' '.join((item.get('heading') or '').split()),
             note=' '.join((item.get('note') or '').split()),
             texts=op_texts(item),
         ))
@@ -184,6 +188,8 @@ def apply_source_fixes(root, fixes, report):
                 report.append('правка источника: фрагмента %s нет в разборе' % eid)
                 continue
             node.paragraphs = list(paragraphs)
+        if fix.heading:
+            target.heading = fix.heading
         if fix.num:
             target.num = fix.num
             target.token = ''
