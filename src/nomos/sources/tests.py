@@ -18,7 +18,8 @@ from nomos.acts.models import (
 from nomos.translate.models import Note
 
 from .cylaw import (
-    acts, consolidated, gazette, history, layout, leginet, numbering, refs, texts_xml,
+    acts, columns, consolidated, gazette, history, layout, leginet, numbering, refs,
+    texts_xml,
 )
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
@@ -544,6 +545,88 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertTrue(parser.is_part(block))
 
 
+def column_lines(*rows):
+    """Строки pdftotext -layout: каждая — [(позиция, текст), …]."""
+    lines = []
+    for row in rows:
+        line = ''
+        for position, text in row:
+            line = line.ljust(position) + text
+        lines.append(line)
+    return lines
+
+
+def table_stops(text):
+    return text.startswith('ΜΕΡΟΣ')
+
+
+class ColumnsTests(SimpleTestCase):
+    """Таблицы в столбцах приложений 59(Ι)/2010: столбцы по координате x."""
+
+    def extract(self, lines):
+        return columns.extract(lines, 0, lambda line: False, table_stops)
+
+    def test_two_columns(self):
+        lines = column_lines(
+            [(40, 'Ύψος παροχής')],
+            [(20, 'Βασικό'), (56, 'Συμπληρωματικό')],
+            [],
+            [(20, '60% του ποσού των'), (57, '50% της σύνταξης')],
+            [(20, 'βασικών αποδοχών:'), (57, 'χηρείας.')],
+            [(20, '(α) για τον ένα.')],
+            [],
+            [(20, 'ΜΕΡΟΣ ΙΙ')],
+        )
+        result, tables = self.extract(lines)
+        self.assertEqual(len(tables), 1)
+        table = tables[0]
+        self.assertEqual(table.caption, 'Ύψος παροχής')
+        cells = {cell.token: cell for cell in table.cells}
+        self.assertEqual(list(cells), ['cel_h1_1', 'cel_h1_2', 'cel_1_1', 'cel_1_2'])
+        self.assertEqual(cells['cel_h1_2'].text, 'Συμπληρωματικό')
+        self.assertEqual(
+            [block.text for block in cells['cel_1_1'].blocks],
+            ['60% του ποσού των βασικών αποδοχών:', '(α) για τον ένα.'],
+        )
+        self.assertEqual(
+            [block.text for block in cells['cel_1_2'].blocks], ['50% της σύνταξης χηρείας.'],
+        )
+        marks = [line.strip() for line in result if line.strip()]
+        self.assertEqual(marks, [columns.MARK + '1', 'ΜΕΡΟΣ ΙΙ'])
+
+    def test_two_level_header(self):
+        """Название слева — на оба ряда шапки, верхнее над двумя столбцами — на оба."""
+        lines = column_lines(
+            [(20, 'Περίπτωση'), (59, 'Ύψος')],
+            [(45, 'Βασικό'), (66, 'Συμπληρωματικό')],
+            [],
+            [(20, '(α) Μισθωτός'), (45, '60%'), (66, '40%')],
+            [],
+            [],
+            [(20, '(β) Άλλος'), (45, '50%')],
+            [],
+            [(20, 'ΜΕΡΟΣ ΙΙ')],
+        )
+        _, tables = self.extract(lines)
+        tokens = [cell.token for cell in tables[0].cells]
+        self.assertEqual(tokens, [
+            'cel_h1-2_1', 'cel_h1_2-3', 'cel_h2_2', 'cel_h2_3',
+            'cel_1_1', 'cel_1_2', 'cel_1_3', 'cel_2_1', 'cel_2_2',
+        ])
+
+    def test_header_without_columns_below(self):
+        """Строка, похожая на шапку, без текста под её столбцами — не таблица."""
+        lines = column_lines(
+            [(20, 'Εισόδημα'), (56, 'Συντελεστής')],
+            [],
+            [(20, 'Για κάθε ευρώ.')],
+            [(20, 'ΜΕΡΟΣ ΙΙ')],
+        )
+        result, tables = self.extract(lines)
+        self.assertEqual(tables, [])
+        self.assertEqual(result, lines)
+
+
 class SplitNotesTests(SimpleTestCase):
     def test_note_goes_to_act_by_number(self):
         act = make_act('cy/law/2025/104_I', datetime.date(2025, 6, 25))
@@ -818,6 +901,50 @@ class RefsTests(SimpleTestCase):
         for text, language, expected in cases:
             with self.subTest(text=text):
                 self.assertEqual(self.marked(text, language, 'art_5')[1], expected)
+
+    def test_inner_schedule_items(self):
+        """Пункты своей части приложения без её названия (95(Ι), Πρώτο Παράρτημα)."""
+        eids = [
+            'sch_1', 'sch_1.prt_I', 'sch_1.prt_I.sct_1', 'sch_1.prt_I.sct_1.par_1',
+            'sch_1.prt_I.sct_1.par_1.sub_1', 'sch_1.prt_I.sct_1.par_1.sub_1.pnt_a',
+            'sch_1.prt_I.sct_1.par_1.sub_1.pnt_b', 'sch_1.prt_I.sct_1.par_1.sub_2',
+            'sch_1.prt_I.sct_1.par_1.sub_2.pnt_a', 'sch_1.prt_I.sct_1.par_1.sub_2.pnt_b',
+            'sch_1.prt_I.sct_1.par_3', 'sch_1.prt_I.sct_1.par_5',
+            'sch_1.prt_I.sct_1.par_5.sub_2', 'sch_1.prt_I.sct_1.par_5.sub_2.pnt_a',
+            'sch_1.prt_I.sct_1.par_5.sub_2.pnt_e',
+        ]
+        own = 'sch_1.prt_I.sct_1.par_3'
+        cases = [
+            (
+                'στις παραγράφους 1(1)(α) και (β) και (2)(α) και (β) πιο πάνω.',
+                [
+                    'sch_1.prt_I.sct_1.par_1.sub_1.pnt_a',
+                    'sch_1.prt_I.sct_1.par_1.sub_1.pnt_b',
+                    'sch_1.prt_I.sct_1.par_1.sub_2.pnt_a',
+                    'sch_1.prt_I.sct_1.par_1.sub_2.pnt_b',
+                ],
+            ),
+            (
+                'στις υποπαραγράφους (α) έως (ε) της παραγράφου (2) του σημείου 5, εκτός',
+                [
+                    'sch_1.prt_I.sct_1.par_5.sub_2.pnt_a',
+                    'sch_1.prt_I.sct_1.par_5.sub_2.pnt_e',
+                    'sch_1.prt_I.sct_1.par_5.sub_2',
+                ],
+            ),
+            # пункта нет — к предку не сводится
+            ('της υποπαραγράφου (γ) της παραγράφου (2) του σημείου 5,', [
+                'sch_1.prt_I.sct_1.par_5.sub_2',
+            ]),
+            # без «πιο πάνω» и вне приложения — не размечается
+            ('της παραγράφου 1(1)(α) του Νόμου', []),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                marker = refs.Marker(refs.Targets(eids), refs.EL)
+                self.assertEqual(marker.mark_text([text], own)[1], expected)
+        marker = refs.Marker(refs.Targets(eids), refs.EL)
+        self.assertEqual(marker.mark_text([cases[0][0]], 'art_5')[1], [])
 
     def test_bare_paragraph_not_marked(self):
         cases = [
@@ -1494,6 +1621,19 @@ class SocialInsuranceLawTests(TestCase):
         eids = set(Fragment.objects.filter(act__uid=SOCIAL_LAW).values_list('eid', flat=True))
         self.assertLessEqual({'sch_1', 'sch_7', 'sch_3.par_8'}, eids)
 
+
+    def test_schedule_tables_in_cells(self):
+        """Πίνακες 4, 5: столбцы — ячейки `cel` таблицы `tbl`, пункты ячейки — её дети."""
+        fragments = Fragment.objects.filter(act__uid=SOCIAL_LAW)
+        self.assertEqual(fragments.filter(kind='tbl', eid__startswith='sch_').count(), 9)
+        cell = fragments.get(eid='sch_5.prt_II.tbl_1.cel_h1-2_1')
+        self.assertEqual(cell.kind, 'cel')
+        self.assertEqual(cell.parent.eid, 'sch_5.prt_II.tbl_1')
+        self.assertIn(
+            'Συμπληρωματικό',
+            self.text('sch_4.prt_VI.pnt_a.tbl_1.cel_h1_2', datetime.date(2024, 1, 1)),
+        )
+        self.assertTrue(fragments.filter(eid='sch_4.prt_IV.tbl_1.cel_1_2.pnt_b.pnt_ii').exists())
 
 CONTRIBUTIONS = 'cy/kdp/2010/289'
 
