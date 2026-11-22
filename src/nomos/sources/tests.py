@@ -18,7 +18,7 @@ from nomos.acts.models import (
 from nomos.translate.models import Note
 
 from .cylaw import (
-    acts, columns, consolidated, gazette, history, layout, leginet, numbering, refs,
+    acts, columns, consolidated, customs, gazette, history, layout, leginet, numbering, refs,
     texts_xml,
 )
 from .management.commands import collect_cylaw
@@ -2039,6 +2039,123 @@ class LeginetTests(SimpleTestCase):
         """Единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» по центру — sch_1."""
         block = layout.Block(0, 40, 'ΠΙΝΑΚΑΣ (Αρθρο 3(2))')
         self.assertEqual(consolidated.roman_schedule(block), 1)
+
+
+
+class CustomsLayoutTests(SimpleTestCase):
+    """Сводка Τμήμα Τελωνείων: раскладка как у Leginet, колонки свои (94(Ι)/2004)."""
+
+    BREAK = leginet.PAGE_BREAK
+
+    def test_columns_from_article_numbers(self):
+        """Край текста — по номеру статьи с заголовком на поле слева; номер в оглавлении
+        (без слова левее) не считается. Просвет — по самому частому шагу строк."""
+        pages = [[
+            (56, 100, 70, '1.'),
+            (80, 100, 150, 'Συνοπτικός'),
+            (40, 200, 90, 'Ερμηνεία.'),
+            (121, 201, 130, '2.'),
+            (40, 300, 90, 'Πεδίο.'),
+            (121, 300, 130, '3.'),
+            (130, 319, 300, 'κείμενο'),
+            (130, 338, 300, 'κείμενο'),
+            (130, 357, 300, 'κείμενο'),
+        ]]
+        found = customs.columns_of(pages)
+        self.assertEqual(found.text_left, 120)
+        self.assertEqual(found.margin_right, 118)
+        self.assertEqual(found.gap, 19 * customs.GAP_RATIO)
+
+    def test_article_shifted_by_space(self):
+        """«86.- (1)» с лишним пробелом — отступ текста и начало абзаца."""
+        rows = [('', '86.- (1) Ο Διευθυντής', 13, None)]
+        self.assertEqual(customs.mark_articles(rows), [('', '86.- (1) Ο Διευθυντής', 12, '')])
+
+    def test_part_after_page_break(self):
+        """Μέρος сразу за разрывом страницы не продолжает абзац; название — в той же строке."""
+        lines = [
+            ' ' * 12 + '9. Ο Διευθυντής δύναται.',
+            self.BREAK,
+            ' ' * 40 + 'ΜΕΡΟΣ V',
+            '',
+            ' ' * 14 + 'ΕΞΟΥΣΙΕΣ ΛΕΙΤΟΥΡΓΩΝ',
+            '',
+            ' ' * 6 + 'Ερμηνεία.',
+        ]
+        self.assertEqual(customs.close_before_centered(customs.join_parts(lines)), [
+            ' ' * 12 + '9. Ο Διευθυντής δύναται.',
+            '',
+            self.BREAK,
+            ' ' * 40 + 'ΜΕΡΟΣ V ΕΞΟΥΣΙΕΣ ΛΕΙΤΟΥΡΓΩΝ',
+            '',
+            '',
+            ' ' * 6 + 'Ερμηνεία.',
+        ])
+
+    def test_schedule_heading_left_of_center(self):
+        """Первая строка заголовка пункта Παράρτημα левее центра — тоже по центру."""
+        lines = [
+            '',
+            ' ' * 17 + 'Εξουσία για διενέργεια πράξεων',
+            '',
+            ' ' * 28 + 'που κατασχέθηκε',
+            '',
+            ' ' * 12 + '13. Σε περίπτωση',
+        ]
+        self.assertEqual(
+            customs.center_headings(lines)[1],
+            ' ' * 25 + 'Εξουσία για διενέργεια πράξεων',
+        )
+        items = ['', ' ' * 15 + '(α) Του προσώπου', '', ' ' * 28 + 'του κατόχου', '', 'x']
+        self.assertEqual(customs.center_headings(items), items)
+
+    def test_split_schedule(self):
+        """Страница с «ΠΑΡΑΡΤΗΜΑ» по центру делится: выше — статьи, с него — приложение."""
+        columns = leginet.Columns(118, 120, 210, customs.FURNITURE_RE, customs.HEADING_SHIFT)
+        page = [(121, 100, 300, '127.'), (250, 200, 330, 'ΠΑΡΑΡΤΗΜΑ'), (70, 300, 90, '1.')]
+        body, schedule = customs.split_schedule([[(121, 50, 130, '1.')], page], columns)
+        self.assertEqual(body, [[(121, 50, 130, '1.')], [(121, 100, 300, '127.')]])
+        self.assertEqual(schedule, [[(250, 200, 330, 'ΠΑΡΑΡΤΗΜΑ'), (70, 300, 90, '1.')]])
+
+    def test_lone_schedule(self):
+        """Единственное «ΠΑΡΑΡΤΗΜΑ» по центру — sch_1 только у сводок Τμήμα Τελωνείων."""
+        block = layout.Block(0, 40, 'ΠΑΡΑΡΤΗΜΑ')
+        self.assertTrue(consolidated.Parser('x', lone_schedule=True).is_lone_schedule(block))
+        self.assertFalse(consolidated.Parser('x').is_lone_schedule(block))
+
+
+CUSTOMS_CODE = 'cy/law/2004/94_I'
+
+
+@skipUnless((TEXTS_DIR / CUSTOMS_CODE / 'collect.xml').exists(), 'нет Nomos-texts с 94(Ι)/2004')
+class CustomsCodeTests(SimpleTestCase):
+    """Таможенный кодекс 94(Ι)/2004 по сводке Τμήμα Τελωνείων."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        path = TEXTS_DIR / 'sources' / CUSTOMS_CODE / 'consolidated-customs.pdf'
+        cls.root, _, _ = consolidated.parse(path, CUSTOMS_CODE, 'cy-customs')
+
+    def test_structure(self):
+        """23 Μέρη, 131 статья по оглавлению, одно приложение из 14 пунктов."""
+        parts = [node for node in self.root.children if node.kind == 'prt']
+        self.assertEqual(len(parts), 23)
+        articles = [node for node in self.root.walk() if node.kind == 'art']
+        self.assertEqual(len(articles), 131)
+        schedule = self.root.children[-1]
+        self.assertEqual(schedule.eid, 'sch_1')
+        self.assertEqual(len(schedule.children), 14)
+        self.assertEqual(
+            schedule.children[12].heading,
+            'Εξουσία για διενέργεια ορισμένων πράξεων αναφορικά με το εμπόρευμα που '
+            'κατασχέθηκε πριν την κήρυξη του εις δήμευση',
+        )
+
+    def test_part_after_page_break(self):
+        part = next(node for node in self.root.children if node.eid == 'prt_III')
+        self.assertEqual(part.heading, 'ΜΕΡΟΣ ΙΙΙ ΛΙΜΕΝΕΣ ΚΑΙ ΑΕΡΟΛΙΜΕΝΕΣ')
+        self.assertEqual(part.children[0].eid, 'art_10')
 
 
 HRDA_LAW = 'cy/law/1999/125_I'

@@ -9,7 +9,7 @@
 
 import re
 
-from . import columns, layout, leginet, numbering
+from . import columns, customs, layout, leginet, numbering
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
@@ -70,6 +70,7 @@ SCHEDULE_RE = re.compile(
 # «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже;
 # единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера
 ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?$')
+LONE_SCHEDULE = 'ΠΑΡΑΡΤΗΜΑ'
 PART_RE = re.compile(r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$')
 SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
@@ -347,9 +348,12 @@ def split_blocks(blocks, splits):
 
 
 class Parser:
-    def __init__(self, act_uid, splits=()):
+    def __init__(self, act_uid, splits=(), lone_schedule=False):
+        """`lone_schedule` — единственное приложение озаглавлено просто «ΠΑΡΑΡΤΗΜΑ» по центру
+        (сводки Τμήμα Τελωνείων)."""
         self.act_uid = act_uid
         self.splits = list(splits)
+        self.lone_schedule = lone_schedule
         self.earlier = act_uid in BEFORE_118_ACTS
         self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
         self.root = Node('act', token=act_uid)
@@ -438,7 +442,7 @@ class Parser:
         if text == 'ΠΑΡΑΡΤΗΜΑΤΑ':
             self.in_schedules = True
             return
-        if roman_schedule(block):
+        if roman_schedule(block) or self.is_lone_schedule(block):
             self.in_schedules = True
         if self.in_schedules and self.feed_schedule_heading(text, block):
             return
@@ -473,7 +477,7 @@ class Parser:
 
     def feed_schedule_heading(self, text, block):
         schedule = SCHEDULE_RE.match(text)
-        number = roman_schedule(block)
+        number = roman_schedule(block) or (1 if self.is_lone_schedule(block) else None)
         if schedule and schedule.group('ord') in SCHEDULE_ORDINALS:
             number = SCHEDULE_ORDINALS.index(schedule.group('ord')) + 1
         if number:
@@ -533,6 +537,9 @@ class Parser:
         self.container = node
         self.stack = [node]
         self.pending_heading = []
+
+    def is_lone_schedule(self, block):
+        return self.lone_schedule and block.text == LONE_SCHEDULE and block.indent >= 25
 
     def is_part(self, block):
         """«ΜΕΡΟΣ IX …» по центру; длинное заглавное название, перенесённое на несколько
@@ -905,11 +912,17 @@ def mark_definitions(article):
 
 
 def parse(path, act_uid, source='cylaw', splits=()):
-    """`source` — откуда сводка: 'cylaw' или 'leginet' (у них разная раскладка PDF).
+    """`source` — откуда сводка: 'cylaw', 'leginet' или 'cy-customs' (Τμήμα Τελωνείων);
+    у них разная раскладка PDF.
 
     `splits` — правки манифеста `<split before="…">` (см. split_blocks)."""
-    parser = Parser(act_uid, splits)
-    lines = leginet.pdf_lines(path) if source == 'leginet' else layout.pdf_lines(path)
+    parser = Parser(act_uid, splits, lone_schedule=source == 'cy-customs')
+    if source == 'leginet':
+        lines = leginet.pdf_lines(path)
+    elif source == 'cy-customs':
+        lines = customs.pdf_lines(path)
+    else:
+        lines = layout.pdf_lines(path)
     root = parser.parse(lines)
     article = next(node for node in root.walk() if node.eid == 'art_2')
     mark_definitions(article)

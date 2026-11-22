@@ -9,6 +9,7 @@
 import html
 import re
 import subprocess
+from dataclasses import dataclass
 
 from .layout import fix_lookalikes
 
@@ -71,53 +72,71 @@ def pdf_words(path):
     return pages
 
 
-def page_lines(words):
+def page_lines(words, tolerance=LINE_TOLERANCE):
     """Слова страницы → строки: [(y, [(x0, x1, текст), …]), …] сверху вниз."""
     lines = []
     for x0, y, x1, text in sorted(words, key=lambda word: (word[1], word[0])):
-        if lines and abs(lines[-1][0] - y) <= LINE_TOLERANCE:
+        if lines and abs(lines[-1][0] - y) <= tolerance:
             lines[-1][1].append((x0, x1, text))
         else:
             lines.append((y, [(x0, x1, text)]))
     return [(y, sorted(parts)) for y, parts in lines]
 
 
-def split(parts):
+@dataclass(frozen=True)
+class Columns:
+    """Раскладка страницы, pt: правый край поля, левый край текста, начало строк по центру;
+    `furniture` — колонтитулы, `line_tolerance` — разброс нижнего края слов одной строки,
+    `gap` — просвет, больше которого между строками пустая строка."""
+
+    margin_right: float
+    text_left: float
+    center_left: float
+    furniture: re.Pattern
+    line_tolerance: float = LINE_TOLERANCE
+    gap: float = GAP
+
+
+LEGINET = Columns(MARGIN_RIGHT, TEXT_LEFT, CENTER_LEFT, FURNITURE_RE)
+
+
+def split(parts, columns=LEGINET):
     """Слова строки → (поле, текст, левый край текста)."""
-    margin = ' '.join(text for x0, x1, text in parts if x1 <= MARGIN_RIGHT)
-    body = [(x0, text) for x0, x1, text in parts if x1 > MARGIN_RIGHT]
+    margin = ' '.join(text for x0, x1, text in parts if x1 <= columns.margin_right)
+    body = [(x0, text) for x0, x1, text in parts if x1 > columns.margin_right]
     left = body[0][0] if body else None
     return margin, ' '.join(text for _, text in body), left
 
 
-def indent_of(left):
-    if left >= CENTER_LEFT:
+def indent_of(left, columns=LEGINET):
+    if left >= columns.center_left:
         return 40
-    return 12 + max(0, round((left - TEXT_LEFT) / CHAR_WIDTH))
+    return 12 + max(0, round((left - columns.text_left) / CHAR_WIDTH))
 
 
-def rows(path):
+def rows(path, columns=LEGINET, pages=None):
     """Строки без колонтитулов: (поле, текст, отступ, разрыв перед строкой).
 
     Разрыв — `PAGE_BREAK` на границе страниц или '' для пустой строки (просвет больше
     `GAP`)."""
     result = []
-    for words in pdf_words(path):
+    for words in pages if pages is not None else pdf_words(path):
         previous = None
-        for y, parts in page_lines(words):
+        for y, parts in page_lines(words, columns.line_tolerance):
             line = ' '.join(text for _, _, text in parts)
-            if FURNITURE_RE.match(line) or line.startswith('Page '):
+            if columns.furniture.match(line) or line.startswith('Page '):
                 continue
-            margin, body, left = split(parts)
+            margin, body, left = split(parts, columns)
             gap = None
             if previous is None:
                 gap = PAGE_BREAK
-            elif body and y - previous > GAP:
+            elif body and y - previous > columns.gap:
                 gap = ''
             if body or previous is None:
                 # просвет считается между строками текста: строки поля мельче и чаще
                 previous = y
-            result.append((margin, body, indent_of(left) if left is not None else 0, gap))
+            indent = indent_of(left, columns) if left is not None else 0
+            result.append((margin, body, indent, gap))
     return result
 
 
@@ -134,18 +153,20 @@ def amended_by(path, year_from):
     return found
 
 
-def margin_notes(all_rows):
+def margin_notes(all_rows, across_gaps=False):
     """Тексты поля, собранные из строк: [(номер первой строки, текст), …].
 
     Запись поля переносится на несколько строк, между ними бывают строки без поля. Запись
-    кончается точкой; новая начинается и после пустой строки или разрыва страницы."""
+    кончается точкой; новая начинается и после пустой строки или разрыва страницы — кроме
+    `across_gaps`: тогда через пустую строку переносится запись, кроме ссылки на закон."""
     notes = []
     parts = []
     first = 0
     for index, (margin, _, _, gap) in enumerate(all_rows):
         if not margin:
             continue
-        if parts and gap is not None:
+        breaks = not across_gaps or LAW_REF_RE.match(' '.join(parts))
+        if parts and gap is not None and breaks:
             notes.append((first, ' '.join(parts)))
             parts = []
         if not parts:
@@ -159,7 +180,7 @@ def margin_notes(all_rows):
     return notes
 
 
-def article_headings(all_rows, toc=None):
+def article_headings(all_rows, toc=None, across_gaps=False):
     """Заголовки статей с поля: {номер строки, где начинается статья: заголовок}.
 
     Заголовок начинается в строке статьи или ниже, если над ним на поле ссылка на закон.
@@ -172,7 +193,7 @@ def article_headings(all_rows, toc=None):
             start = index
         starts.append(start)
     headings = {}
-    for index, text in margin_notes(all_rows):
+    for index, text in margin_notes(all_rows, across_gaps):
         start = starts[index]
         if LAW_REF_RE.match(text) or not ARTICLE_RE.match(all_rows[start][1]):
             continue
@@ -203,9 +224,14 @@ def pdf_lines(path):
         index for index, (_, body, _, _) in enumerate(all_rows) if PREAMBLE_RE.match(body)
     )
     toc = toc_headings(all_rows[:start])
-    all_rows = all_rows[start:]
-    headings = article_headings(all_rows, toc)
-    lines = ['Προοίμιο', '']
+    return ['Προοίμιο', ''] + body_lines(all_rows[start:], toc)
+
+
+def body_lines(all_rows, toc, across_gaps=False):
+    """Строки текста после оглавления → строки в раскладке сводки CyLaw; `across_gaps` —
+    как в margin_notes."""
+    headings = article_headings(all_rows, toc, across_gaps)
+    lines = []
     skipping = False
     for index, (_, body, indent, gap) in enumerate(all_rows):
         if body and AMENDING_PROVISION_RE.match(body):
