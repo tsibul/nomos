@@ -192,6 +192,7 @@ def apply_source_fixes(root, fixes, report):
             fix.target, target.eid, fix.note or 'текст заменён'))
 
 
+@dataclass
 class Repeal:
     """Отмена закона целиком:
     `<repealed by="<uid>" provision="<eid>" from="…" published="…" />`; сводный текст
