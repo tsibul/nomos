@@ -701,6 +701,18 @@ class GazetteTests(SimpleTestCase):
         article = root.children[2]
         self.assertEqual([point.num for point in article.children], ['(α)', '(β)', '(γ)'])
 
+    def test_unclosed_quote_before_next_article(self):
+        """Кавычка не закрыта в газете (242(Ι)/2025): следующая статья с полем — всё же статья."""
+        root = self.parse(
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
+            ('τίτλος.', ''),
+            ('Τροποποίηση', '2. Το άρθρο 5 τροποποιείται με την αντικατάσταση της φράσης'),
+            ('του άρθρου 5.', '«τριακοσίων ευρώ» με τη φράση «τετρακοσίων ευρώ.'),
+            ('Τροποποίηση', '3. Το άρθρο 6 τροποποιείται με τη διαγραφή του εδαφίου (2).'),
+            ('του άρθρου 6.', ''),
+        )
+        self.assertEqual([node.num for node in root.children[1:]], ['1', '2', '3'])
+
     def test_law_number_in_margin_is_not_text(self):
         root = self.parse(
             ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.'),
@@ -1025,6 +1037,13 @@ class RefsTests(SimpleTestCase):
                     self.assertEqual(skipped[reason], 1)
         # «пункта (1)» внутри статьи 5, пункт 1 — ссылка на себя
         self.assertEqual(self.marked('του εδαφίου (1)', own='art_5.par_1')[1], [])
+
+    def test_bare_paragraph_without_own_text(self):
+        """Изменяющий акт без базового закона в базе: своих фрагментов нет."""
+        marker = refs.Marker(refs.Targets([]), refs.EL)
+        _, found = marker.mark_text(['του εδαφίου (2)'], 'art_3.pnt_a')
+        self.assertEqual(found, [])
+        self.assertEqual(marker.skipped['цели нет в законе'], 1)
 
     def test_russian_article_in_paragraph_word(self):
         """«пункта 9(4)» — статья 9, пункт 4; «пункта 2(α)» — не статья."""

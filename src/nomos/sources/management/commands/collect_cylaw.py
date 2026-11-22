@@ -312,6 +312,9 @@ class Command(BaseCommand):
         report = []
 
         info = law_info(manifest)
+        if manifest.get('layout') == 'amending':
+            self.collect_amending(root_dir, manifest['file'], folder, info, remarks, report)
+            return
         tree, _, notes = consolidated.parse(
             root_dir / manifest['file'],
             info.uid,
@@ -367,6 +370,36 @@ class Command(BaseCommand):
                 if op.provision not in provisions:
                     report.append('%s: положения нет в разборе акта' % op.ref)
 
+        self.write_report(remarks, report)
+
+    def collect_amending(self, root_dir, file, folder, info, remarks, report):
+        """Изменяющий акт, чьего базового закона в базе нет (layout="amending"):
+        PDF газеты разбирается как изменяющий акт, ссылки — только на акты из указателя."""
+        tree, title = gazette.parse(root_dir / file, info.uid)
+        if not info.title:
+            info.title = title
+        versions = {}
+        for node in tree.walk():
+            if node.kind == 'act':
+                continue
+            version = base_version(info)
+            version.valid_from = info.in_force_from
+            version.known_from = info.published_on
+            version.paragraphs = list(node.paragraphs)
+            versions[node] = [version]
+        base_ref = '%s#%s' % (info.uid, BASE_KEY)
+        apply_remarks(versions, remarks, base_ref, report)
+        index = acts_index.Index.read(root_dir)
+        marker = refs.Marker(
+            refs.Targets([]), refs.EL,
+            mentions=acts_index.Mentions(index, 'el', info.uid),
+        )
+        write(folder, info, versions, [], marker)
+        report.extend(mark_translation(folder, marker))
+        self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
+        self.write_report(remarks, report)
+
+    def write_report(self, remarks, report):
         for target, text, _ in remarks:
             report.append('%s: %s' % (target, text))
         self.stdout.write('Отчёт (%d):' % len(report))

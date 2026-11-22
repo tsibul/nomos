@@ -483,7 +483,10 @@ class Marker:
                         self.skipped['пункта нет, ссылка на статью или приложение'] += 1
                 elif reason is None:
                     eid, _ = self.targets.resolve(article, subs)
-                    if eid == article:
+                    if eid is None:
+                        # своего текста нет (изменяющий акт без базового закона в базе)
+                        item_reason = 'цели нет в законе'
+                    elif eid == article:
                         # первого пункта в своей статье нет — не размечается
                         eid = None
                         item_reason = 'пункта нет в своей статье'
