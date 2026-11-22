@@ -371,6 +371,35 @@ class RemarkTests(SimpleTestCase):
         self.assertEqual(report, ['sch_9: фрагмента нет в сводном тексте'])
 
 
+class SourceFixTests(SimpleTestCase):
+    """<source-fix>: ошибка сводного текста — текст и номер статьи по изменяющему акту."""
+
+    def test_text_and_number_replaced(self):
+        path = Path(tempfile.mkdtemp()) / 'collect.xml'
+        self.addCleanup(shutil.rmtree, path.parent)
+        path.write_text(
+            '<collect><source-fix target="art_64A" num="32" note="чужая\n  статья">'
+            '<p for="art_64A">Ανεξαρτήτως</p><p for="art_64A.pnt_a">οι διατάξεις</p>'
+            '<p for="art_9">άλλο</p></source-fix>'
+            '<source-fix target="art_7"><p for="art_7">κείμενο</p></source-fix></collect>',
+            encoding='utf-8',
+        )
+        root = Node(kind='act')
+        article = root.add(Node(kind='art', num='64Α', paragraphs=['Χαρτόσημα']))
+        point = article.add(Node(kind='pnt', num='(α)', paragraphs=['παλαιό']))
+        report = []
+        history.apply_source_fixes(root, history.read_source_fixes(path), report)
+        self.assertEqual((article.eid, point.eid), ('art_32', 'art_32.pnt_a'))
+        self.assertEqual(
+            (article.paragraphs, point.paragraphs), (['Ανεξαρτήτως'], ['οι διατάξεις']),
+        )
+        self.assertEqual(report, [
+            'правка источника: фрагмента art_9 нет в разборе',
+            'правка источника art_64A → art_32: чужая статья',
+            'правка источника: цели art_7 нет в разборе',
+        ])
+
+
 class BeforeTests(SimpleTestCase):
     """<before>: прежний текст целиком — по прежней сводной редакции."""
 
@@ -2705,3 +2734,60 @@ class DefenceContributionLawTests(TestCase):
         eid = 'art_4.par_2.sub_1'
         self.assertIn('ή τα ενοίκια', self.text(eid, datetime.date(2025, 12, 31)))
         self.assertNotIn('ή τα ενοίκια', self.text(eid, datetime.date(2026, 1, 1)))
+
+
+CAPITAL_GAINS_LAW = 'cy/law/1980/52'
+
+
+@skipUnless(
+    (TEXTS_DIR / CAPITAL_GAINS_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 52/1980',
+)
+class CapitalGainsLawTests(TestCase):
+    """Сборка и загрузка закона о налоге на прирост капитала 52/1980."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command(
+            'collect_cylaw', CAPITAL_GAINS_LAW, texts_dir=str(cls.copy), stdout=output,
+        )
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=CAPITAL_GAINS_LAW, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+    def test_rebuild_keeps_files(self):
+        for uid in (CAPITAL_GAINS_LAW, 'cy/law/2025/242_I'):
+            folder = self.copy / uid
+            changed = [
+                path.name
+                for path in folder.iterdir()
+                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
+            ]
+            self.assertEqual(changed, [], uid)
+
+    def test_article_32_fixed_from_law_169_2024(self):
+        self.assertIsNone(self.version('art_32', datetime.date(2024, 12, 30)))
+        self.assertIn('Κεφαλαιουχικών Κερδών', self.text('art_32', datetime.date(2025, 1, 1)))
+        self.assertIn('2025', self.text('art_32.pnt_a', datetime.date(2025, 1, 1)))
+        self.assertIn('правка источника art_64A → art_32', self.report)
+
+    def test_thresholds_by_law_242_2025(self):
+        eid = 'art_5.par_1'
+        self.assertIn('δέκα χιλιάδων λιρών', self.text(eid, datetime.date(2025, 12, 31)))
+        self.assertIn('(€30.000)', self.text(eid, datetime.date(2026, 1, 1)))
+        self.assertIsNone(self.version('art_5.par_3A', datetime.date(2025, 12, 31)))
+        self.assertIsNone(self.version('art_5B', datetime.date(2025, 4, 24)))

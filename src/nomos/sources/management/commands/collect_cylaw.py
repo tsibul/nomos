@@ -321,6 +321,9 @@ class Command(BaseCommand):
             manifest['source'],
             history.read_splits(folder / 'collect.xml'),
         )
+        history.apply_source_fixes(
+            tree, history.read_source_fixes(folder / 'collect.xml'), report,
+        )
         act_notes, other_notes = split_notes(notes, acts)
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)

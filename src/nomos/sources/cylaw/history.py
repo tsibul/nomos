@@ -145,6 +145,53 @@ def read_splits(path):
     return [item.get('before') for item in root.iter('split')]
 
 
+@dataclass
+class SourceFix:
+    """Ошибка сводного текста источника: `<source-fix target="…" num="…">` с `<p for="…">`.
+
+    Текст фрагментов (eid по разбору) заменяется приведённым, num — номер статьи."""
+
+    target: str
+    num: str = ''
+    note: str = ''
+    texts: dict = field(default_factory=dict)
+
+
+def read_source_fixes(path):
+    root = ET.parse(path).getroot()
+    fixes = []
+    for item in root.iter('source-fix'):
+        fixes.append(SourceFix(
+            target=item.get('target'),
+            num=item.get('num', ''),
+            note=' '.join((item.get('note') or '').split()),
+            texts=op_texts(item),
+        ))
+    return fixes
+
+
+def apply_source_fixes(root, fixes, report):
+    """Правит дерево сводного текста до снятия изменений; отчёт — по каждой правке."""
+    nodes = {node.eid: node for node in root.walk() if node.kind != 'act'}
+    for fix in fixes:
+        target = nodes.get(fix.target)
+        if target is None:
+            report.append('правка источника: цели %s нет в разборе' % fix.target)
+            continue
+        for eid, paragraphs in fix.texts.items():
+            node = nodes.get(eid)
+            if node is None:
+                report.append('правка источника: фрагмента %s нет в разборе' % eid)
+                continue
+            node.paragraphs = list(paragraphs)
+        if fix.num:
+            target.num = fix.num
+            target.token = ''
+            target.token = target.parent.free_token(target)
+        report.append('правка источника %s → %s: %s' % (
+            fix.target, target.eid, fix.note or 'текст заменён'))
+
+
 def read_manifest(path):
     """Манифест → (атрибуты закона, список изменяющих актов с изменениями)."""
     root = ET.parse(path).getroot()
