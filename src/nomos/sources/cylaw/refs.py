@@ -79,6 +79,12 @@ class Language:
     # пункты своей части приложения без её названия (Marker.inner_spans)
     inner_paragraphs: str = r'(?!)'
     inner_points: str = r'(?!)'
+    # изменяющий акт: «μετά το άρθρο 33Β» без акта — место вставки в базовом законе
+    insert_before: str = r'(?!)'
+    # изменяющий акт: «εδάφιο (3) αυτού» — пункт изменяемой статьи
+    amended_own: str = r'(?!)'
+    # изменяющий акт: «в её пункте (2)» — пункт изменяемой статьи
+    amended_before: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -98,6 +104,9 @@ class Language:
         self.bare_law_re = re.compile(self.bare_law)
         self.inner_paragraphs_re = re.compile(self.inner_paragraphs)
         self.inner_points_re = re.compile(self.inner_points)
+        self.insert_before_re = re.compile(self.insert_before)
+        self.amended_own_re = re.compile(self.amended_own)
+        self.amended_before_re = re.compile(self.amended_before)
 
 
 # пункт в перечислении внутри приложения: «1(1)(α)», «(β)», «(2)(α)»
@@ -139,6 +148,18 @@ EL = Language(
         r'(?!\s*\(Τροποποιητικ))'
     ),
     this_act=r'^\s+(?:(?:του|της)\s+)?παρόντος',
+    insert_before=(
+        r'(?<![\wά-ώ])(?:αμέσως\s+)?(?:μετά|πριν)(?:\s+από)?\s+(?:το|τα|τον|την)\s+$'
+    ),
+    # «εδαφίου (2) της λέξης «συντάσσει»» — что меняется, не другая статья
+    amended_own=(
+        r'^\s+(?:αυτού|αυτής|(?:της|των)\s+(?:φράσ|λέξ|αριθμ|επιφύλαξ|ακόλουθ'
+        r'|πρώτ|δεύτερ|τρίτ|τελευταί)'
+        # «μετά το εδάφιο (4) του ακόλουθου νέου εδαφίου», «του εδαφίου (12) του ποσού»
+        r'|(?:του|των)\s+(?:ακόλουθ|ποσ)'
+        # «εδαφίου (11) του σημείου της άνω τελείας» — знак препинания
+        r'|του\s+σημείου\s+(?:της|του)\s)'
+    ),
     enabling_before=r'(?<![\wά-ώ])Κανονισμοί\s+δυνάμει\s+(?:των|του)\s+$',
     # «παραγράφους 1(1)(α) και (β) και (2)(α) και (β) πιο πάνω» (95(Ι), Πρώτο Παράρτημα)
     inner_paragraphs=(
@@ -188,7 +209,9 @@ RU = Language(
     # организации из 2+ букв («HIO», «NPE»)
     bare_qualified=(
         r'^\s*(?:(?:,\s*)?стат(?:ьи|ей|ье|ья)(?![\wё])|(?![A-Z]{2,}(?![\wё]))[A-ZΑ-Ω]'
-        r'|(?:Закона|Законов|Директивы|Регламента|Кодекса|Правил|Постановления|Указа'
+        r'|(?:Закона|Законов|Директивы|Регламента|Кодекса|Правил'
+        # «пунктом (1) Правила 3 …» — другой акт; «пункта (7) Правила могут» — нет
+        r'|Правил(?:а|у|ом|е)(?=\s+\d)|Постановления|Указа'
         r'|Конвенции|закона|кодекса|директивы|регламента|указа|постановления'
         r'|упомянутого|указанного|этого|данного|его|её|их|той\s+же|того\s+же)(?![\wё]))'
     ),
@@ -199,6 +222,11 @@ RU = Language(
         r'(?!\s*\(изменя))'
     ),
     this_act=r'^\s+настоящ\w+',
+    insert_before=(
+        r'(?<![\wё])(?:сразу\s+|непосредственно\s+)?(?:после|перед)\s+(?:его\s+|её\s+)?$'
+    ),
+    amended_own=r'^\s+(?:его|её)(?![\wё])',
+    amended_before=r'(?<![\wё])(?:его|её)\s+$',
     # «статьи 5 Части…» — другое; «статьи 33 Генеральный директор» — свой закон
     capital=r'^\s+[А-ЯЁ]',
     bare_law=r'^\s+[Зз]акона(?=\s*[,;:.)]|\s+(?:как|в\s+редакции)(?![\wё]))',
@@ -289,18 +317,41 @@ class Marker:
         self.mentions = mentions
         if mentions is not None:
             mentions.skipped = self.skipped
+        # изменяющий акт: {eid фрагмента: изменяемая статья закона или None — их несколько};
+        # тексты идут по порядку, предок раньше потомков
+        self.context = {}
+        # статьи закона, упомянутые в текущем тексте (кроме места вставки)
+        self.articles = set()
 
     def mark_text(self, paragraphs, own):
         """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
         found = []
         marked = []
         self.depth = 0
+        self.articles = set()
         for paragraph in paragraphs:
             plain = OWN_REF_RE.sub(r'\1', paragraph)
             spans = self.spans(plain, own)
             marked.append(self.insert(plain, spans, found))
             self.depth = max(0, self.depth + plain.count('«') - plain.count('»'))
+        if self.act and own and self.articles:
+            self.context[own] = (
+                next(iter(self.articles)) if len(self.articles) == 1 else None
+            )
         return marked, found
+
+    def amended_article(self, own):
+        """Изменяемая статья закона для пунктов без статьи в изменяющем акте, или None.
+
+        Своя статья текста, если она одна; нет своей — ближайшего предка."""
+        if self.articles:
+            return next(iter(self.articles)) if len(self.articles) == 1 else None
+        parts = own.split('.') if own else []
+        for size in range(len(parts) - 1, 0, -1):
+            key = '.'.join(parts[:size])
+            if key in self.context:
+                return self.context[key]
+        return None
 
     def quoted(self, text, position):
         return self.depth + text.count('«', 0, position) - text.count('»', 0, position) > 0
@@ -331,6 +382,15 @@ class Marker:
         for start, end, eid in candidates:
             if not self.overlaps(taken, start, end):
                 self.take(taken, start, end, eid, own)
+        if self.act:
+            for start, _, eid in taken:
+                # в кавычках — новый текст закона, не указание изменения
+                if (
+                    eid is not None and eid.startswith('art_')
+                    and not self.quoted(text, start)
+                    and not self.language.insert_before_re.search(text[:start])
+                ):
+                    self.articles.add(eid.split('.')[0])
         # пункты без статьи — после всего остального: «εδάφιο (2) του άρθρου 6» уже взято
         for start, end, eid, reason in self.bare_spans(text, own):
             if self.overlaps(taken, start, end):
@@ -365,6 +425,11 @@ class Marker:
         quoted = self.quoted(text, start)
         if self.language.this_act_re.match(tail):
             return None if quoted else 'ссылка на сам изменяющий акт'
+        # «αμέσως μετά το άρθρο 32 του ακόλουθου νέου άρθρου» — место вставки в законе
+        if self.language.insert_before_re.search(text[:start]) and (
+            self.language.amended_own_re.match(tail) or not self.external(text, end)
+        ):
+            return None
         reason = self.external(text, end, start)
         if reason:
             return reason
@@ -397,16 +462,26 @@ class Marker:
                 continue
             end = items[-1][1]
             reason = None
-            if self.act or not article.startswith('art_'):
+            if self.act:
+                article = self.amended_article(own) or ''
+            qualified = language.bare_qualified_re.match(text[end:]) and not (
+                self.act and language.amended_own_re.match(text[end:])
+            )
+            if not article.startswith('art_'):
                 reason = 'пункт без номера статьи'
-            elif language.bare_qualified_re.match(text[end:]) or (
-                language.external_before_re.search(text[:word.start()])
+            elif qualified or language.external_before_re.search(text[:word.start()]) and not (
+                self.act and language.amended_before_re.search(text[:word.start()])
             ):
                 reason = 'пункт с уточнением (другая статья или акт)'
             for item_start, item_end, subs in items:
                 eid = None
                 item_reason = reason
-                if reason is None:
+                if reason is None and self.act:
+                    # пункт изменяемой статьи; нового пункта в законе нет — статья
+                    eid, partial = self.targets.resolve(article, subs)
+                    if partial:
+                        self.skipped['пункта нет, ссылка на статью или приложение'] += 1
+                elif reason is None:
                     eid, _ = self.targets.resolve(article, subs)
                     if eid == article:
                         # первого пункта в своей статье нет — не размечается
