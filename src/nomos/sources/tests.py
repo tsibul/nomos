@@ -1224,6 +1224,24 @@ class RefsTests(SimpleTestCase):
             refs.mark_translation(path, refs.Targets(REF_EIDS), {'u1': 'art_1'}, {})
             self.assertEqual(path.read_text(encoding='utf-8'), result)
 
+    def test_translation_amending_ref_kept(self):
+        """164(Ι)/2024 (lmpnxa5twc): пересборка базового закона заново размечает перевод
+        изменяющего акта — ссылка «статье N основного/базового закона» остаётся."""
+        for word in ('основного', 'базового'):
+            with self.subTest(word=word), tempfile.TemporaryDirectory() as folder:
+                path = Path(folder) / 'ru.xml'
+                source = (
+                    '<texts>\n  <text fragment="u1" version="base">\n'
+                    '    <p>В <ref id="r1" to="%s#art_5">статье 5</ref> %s закона'
+                    ' фраза заменяется</p>\n  </text>\n</texts>\n' % (LAW, word)
+                )
+                path.write_text(source, encoding='utf-8')
+                _, differences, total = refs.mark_translation(
+                    path, refs.Targets(REF_EIDS), {'u1': 'art_1'},
+                    {('u1', 'base'): [LAW + '#art_5']}, LAW,
+                )
+                self.assertEqual(path.read_text(encoding='utf-8'), source)
+                self.assertEqual((total, differences), (1, []))
 
     def test_translation_heading_only_record_not_text_start(self):
         """95(Ι)/2000: «<text … heading="…" />» перед записью — тело размечается по своему ключу."""
