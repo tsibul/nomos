@@ -34,6 +34,9 @@ END = r'(?=[\s(,.;:·˙∙\u0387\u037e)»"\-—–]|$)'
 # Б — передача греческой Β по звучанию («статья 13Б»)
 CYRILLIC_TO_GREEK = str.maketrans('АБВГДЕЗКМНОРТХ', 'ΑΒΒΓΔΕΖΚΜΗΟΡΤΧ')
 CYRILLIC_LETTER_RE = re.compile(r'[а-яё]')
+# буквы подпунктов русского перевода по порядку (без ё, й, ъ, ы, ь): n-я буква —
+# n-й подпункт оригинала, (в) — (γ), (е) — (στ), (к) — (ι)
+RU_POINT_LETTERS = 'абвгдежзиклмнопрстуфхцчшщэюя'
 
 EL_ORDINALS = [
     ('Ενδέκατ', 11), ('Δωδέκατ', 12), ('Πρώτ', 1), ('Δεύτερ', 2), ('Τρίτ', 3),
@@ -206,10 +209,20 @@ def number_token(raw):
     """«11Α», «13СТ», «(1Α)», «(α)» → часть eid; None — не разбирается однозначно."""
     raw = raw.strip('()')
     if CYRILLIC_LETTER_RE.search(raw):
-        # строчные кириллические буквы в скобках — переложение (α), (β)…: не угадываем
-        return None
+        return cyrillic_point_token(raw)
     raw = raw.replace('СТ', 'ΣΤ').translate(CYRILLIC_TO_GREEK)
     return numbering.eid_token(numbering.normalize_number(raw))
+
+
+def cyrillic_point_token(raw):
+    """«в» → «g» (γ), «бб» → «bb» (ββ): буква подпункта перевода по её месту в алфавите;
+    None — не одна буква и не удвоенная из первых девяти."""
+    if raw[0] not in RU_POINT_LETTERS or raw != raw[0] * len(raw):
+        return None
+    value = RU_POINT_LETTERS.index(raw[0]) + 1
+    if len(raw) > 2 or (len(raw) == 2 and value > 9):
+        return None
+    return numbering.eid_token(numbering.greek_numeral(value) * len(raw))
 
 
 def ordinal_value(text, ordinals):
