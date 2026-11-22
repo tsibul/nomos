@@ -1928,6 +1928,56 @@ class ContributionRegulationsTests(TestCase):
         self.assertLessEqual(expected, eids)
 
 
+FUND_ACCOUNTS = 'cy/kdp/2010/290'
+
+
+@skipUnless(
+    (TEXTS_DIR / FUND_ACCOUNTS / 'collect.xml').exists(),
+    'нет Nomos-texts с регламентом ΚΔΠ 290/2010',
+)
+class FundAccountsRegulationsTests(TestCase):
+    """Регламент о счетах фонда ΚΔΠ 290/2010: расшифровка скана, проценты взносов по счетам."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', FUND_ACCOUNTS, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        changed = [
+            path.name
+            for path in (self.copy / FUND_ACCOUNTS).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / FUND_ACCOUNTS / path.name, shallow=False)
+        ]
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        self.assertTrue(ActRelation.objects.filter(
+            from_act__uid=FUND_ACCOUNTS, to_act__uid=SOCIAL_LAW, kind='based_on',
+        ).exists())
+
+    def test_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=FUND_ACCOUNTS).values_list('eid', flat=True))
+        expected = {
+            'art_2.par_1.def_nomos',
+            'art_3.par_3.pnt_g.sub_1',
+            'art_3.par_4.pnt_b',
+            'art_3.par_5',
+            'art_6',
+        }
+        self.assertLessEqual(expected, eids)
+        self.assertNotIn('art_7', eids)
+
+
 
 ORDERS = ('cy/kdp/2024/392', 'cy/kdp/2025/378')
 
