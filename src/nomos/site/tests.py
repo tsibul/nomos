@@ -233,6 +233,83 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Νέο κείμενο')
         self.assertNotContains(response, 'Παλαιό κείμενο')
 
+    def add_repealed_article(self):
+        article = Fragment.objects.get(eid='art_1')
+        repealed = Fragment.objects.create(
+            uid='lw00000005',
+            act=self.law,
+            kind='art',
+            eid='art_2',
+            parent=article.parent,
+            order_key='0002',
+        )
+        base = Amendment.objects.get(amending_act=self.law, kind='base')
+        self.add_version(repealed, 'base', base, '2', self.el, 'Καταργούμενο', heading='Τέλη')
+        delete = Amendment.objects.create(
+            amending_act=self.amending,
+            amending_fragment=Fragment.objects.get(uid='am00000001'),
+            kind='delete',
+            key='art_2:delete',
+            marker='art_2:delete',
+            published_on=datetime.date(2025, 2, 1),
+            in_force_from=datetime.date(2025, 3, 1),
+        )
+        self.add_version(
+            repealed,
+            '2025-03-01',
+            delete,
+            '2',
+            None,
+            '',
+            state='repealed',
+            valid_from=datetime.date(2025, 3, 1),
+            known_from=datetime.date(2025, 2, 1),
+        )
+        later = Fragment.objects.create(
+            uid='lw00000006',
+            act=self.law,
+            kind='art',
+            eid='art_3',
+            parent=article.parent,
+            order_key='0003',
+        )
+        self.add_version(
+            later,
+            '2025-03-01',
+            delete,
+            '3',
+            self.el,
+            'Νέο άρθρο',
+            valid_from=datetime.date(2025, 3, 1),
+            known_from=datetime.date(2025, 2, 1),
+        )
+
+    def test_repealed_article_page(self):
+        self.add_repealed_article()
+        response = self.client.get(ACT_URL + '@2025-06-01/art_2/')
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'site/repealed.html')
+        self.assertContains(response, 'Άρθρο 2. Τέλη')
+        self.assertContains(response, 'Η διάταξη έπαψε να ισχύει από 01.03.2025.')
+        self.assertContains(response, 'href="/cy/law/2024/2_I/art_2/"')
+        self.assertContains(response, f'href="{ACT_URL}@2025-02-28/art_2/"')
+        self.assertContains(response, '(στις 28.02.2025)')
+        self.assertContains(response, f'href="{ACT_URL}art_2/history/"')
+        self.assertNotContains(response, 'Καταργούμενο')
+
+    def test_repealed_article_before_repeal_shows_text(self):
+        self.add_repealed_article()
+        response = self.client.get(ACT_URL + '@2025-02-28/art_2/')
+        self.assertTemplateNotUsed(response, 'site/repealed.html')
+        self.assertContains(response, 'Καταργούμενο')
+
+    def test_not_yet_existing_article_is_404(self):
+        self.add_repealed_article()
+        response = self.client.get(ACT_URL + '@2025-02-28/art_3/')
+        self.assertEqual(response.status_code, 404)
+        response = self.client.get(ACT_URL + '@2025-06-01/art_3/')
+        self.assertContains(response, 'Νέο άρθρο')
+
     def test_amended_version_links_to_provision(self):
         response = self.client.get(ACT_URL + '@2025-02-01/art_1/')
         self.assertContains(response, 'href="/cy/law/2024/2_I/art_2/"')

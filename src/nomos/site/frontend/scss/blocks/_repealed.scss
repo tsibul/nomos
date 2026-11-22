@@ -1,0 +1,25 @@
+// Исключённое на дату положение: состояние, исключающий акт, ссылки на прежние редакции
+.repealed {
+  margin: 0 0 1.5rem;
+}
+
+.repealed__state {
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.repealed__by {
+  margin: 0 0 0.75rem;
+  color: var(--color-neutral-500);
+}
+
+.repealed__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.repealed__link {
+  font-weight: 600;
+}

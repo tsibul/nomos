@@ -53,20 +53,38 @@ class Fragment(models.Model):
         Правило — раздел 4 docs/design/data-model.md. Возвращает None, если
         подходящей редакции нет или она исключена.
         """
+        chain = self.versions_until(date, axis, known)
+        if not chain or chain[-1].state == chain[-1].State.REPEALED:
+            return None
+        return chain[-1]
+
+    def repeal_on(self, date, axis=Axis.APPLIES, known=None):
+        """Исключение на дату: (исключающая редакция, последняя действовавшая или None).
+
+        Если на дату фрагмент не исключён (действует или ещё не введён) — None.
+        """
+        chain = self.versions_until(date, axis, known)
+        if not chain or chain[-1].state != chain[-1].State.REPEALED:
+            return None
+        earlier = [
+            version for version in chain[:-1] if version.state != version.State.REPEALED
+        ]
+        return chain[-1], earlier[-1] if earlier else None
+
+    def versions_until(self, date, axis=Axis.APPLIES, known=None):
+        """Редакции, начавшиеся к дате `date`, по порядку; последняя — действующая на дату."""
         known = known or datetime.date.today()
-        best = None
-        best_key = None
-        for version in self.versions.filter(known_from__lte=known):
+        chain = []
+        for position, version in enumerate(self.versions.filter(known_from__lte=known)):
             start = version.start(axis)
             if start is not None and start > date:
                 continue
-            # null — до 01.01.2024, не прослеживается: раньше любой даты
-            key = (start or datetime.date.min, version.known_from)
-            if best_key is None or key > best_key:
-                best, best_key = version, key
-        if best is None or best.state == best.State.REPEALED:
-            return None
-        return best
+            # null — до 01.01.2024, не прослеживается: раньше любой даты;
+            # при равных датах действует первая по порядку загрузки — она встаёт последней
+            key = (start or datetime.date.min, version.known_from, -position)
+            chain.append((key, version))
+        chain.sort(key=lambda pair: pair[0])
+        return [version for _key, version in chain]
 
     def future_version(self, axis=Axis.APPLIES, today=None):
         """Принятая редакция, начало которой после сегодняшнего дня (самая ранняя)."""

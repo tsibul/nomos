@@ -1,0 +1,95 @@
+{% extends 'site/base.html' %}
+
+{% load i18n %}
+
+{% comment %}
+  Положение, исключённое на дату: с какой даты, каким актом, ссылка на прежнюю редакцию.
+{% endcomment %}
+
+{% block title %}{{ unit_label }} — {{ label }} — Nomos{% endblock %}
+
+{% block header %}
+  {% include 'site/parts/act_header.html' %}
+{% endblock %}
+
+{% block aside %}
+  {% include 'site/parts/sidenav.html' %}
+{% endblock %}
+
+{% block main %}
+  {% include 'site/parts/back_ref.html' %}
+
+  {% include 'site/parts/toolbar.html' %}
+
+  <nav
+    class="crumbs"
+    aria-label="{% translate 'Положение в акте' %}"
+  >
+    <a
+      class="crumbs__link"
+      href="{{ act_url }}"
+    >
+      {% translate 'Оглавление' %}
+    </a>
+  </nav>
+
+  <h1
+    class="page__title"
+    lang="{{ unit_label.lang }}"
+  >
+    {{ unit_label }}
+  </h1>
+
+  <div
+    class="repealed"
+    data-repealed
+  >
+    <p class="repealed__state">
+      {% if since %}
+        {% blocktranslate trimmed with date=since|date:'d.m.Y' %}
+          Положение утратило силу с {{ date }}.
+        {% endblocktranslate %}
+      {% else %}
+        {% translate 'Положение утратило силу.' %}
+      {% endif %}
+    </p>
+
+    {% if repealed_by %}
+      <p class="repealed__by">
+        {% translate 'Исключено:' %}
+        {% if repealed_by.url %}
+          <a
+            class="repealed__link"
+            href="{{ repealed_by.url }}"
+          >
+            {{ repealed_by.label }}
+          </a>
+        {% else %}
+          {{ repealed_by.label }}
+        {% endif %}
+        {% if repealed_by.note %}
+          — {{ repealed_by.note }}
+        {% endif %}
+      </p>
+    {% endif %}
+
+    <p class="repealed__links">
+      {% if last_url %}
+        <a
+          class="repealed__link"
+          href="{{ last_url }}"
+        >
+          {% blocktranslate trimmed with date=last_until|date:'d.m.Y' %}
+            Последняя действовавшая редакция (на {{ date }})
+          {% endblocktranslate %}
+        </a>
+      {% endif %}
+      <a
+        class="repealed__link"
+        href="{{ history_url }}"
+      >
+        {% translate 'Все редакции' %}
+      </a>
+    </p>
+  </div>
+{% endblock %}

@@ -73,3 +73,25 @@ msgstr ""
 "This site does not provide legal or tax advice. All materials are "
 "provided \"as is\", without warranty of any kind; the author accepts no "
 "liability for any use of them."
+
+#: nomos/site/templates/site/repealed.html
+#, python-format
+msgid "Положение утратило силу с %(date)s."
+msgstr "This provision ceased to have effect on %(date)s."
+
+#: nomos/site/templates/site/repealed.html
+msgid "Положение утратило силу."
+msgstr "This provision has ceased to have effect."
+
+#: nomos/site/templates/site/repealed.html
+msgid "Исключено:"
+msgstr "Repealed by:"
+
+#: nomos/site/templates/site/repealed.html
+#, python-format
+msgid "Последняя действовавшая редакция (на %(date)s)"
+msgstr "Last version in force (as at %(date)s)"
+
+#: nomos/site/templates/site/repealed.html
+msgid "Все редакции"
+msgstr "All versions"
