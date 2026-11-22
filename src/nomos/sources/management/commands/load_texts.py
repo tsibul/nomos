@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
@@ -21,6 +22,7 @@ from nomos.acts.models import (
 )
 from nomos.sources.cylaw import history, texts_xml
 from nomos.sources.models import Source
+from nomos.sources.translation_check import missing
 from nomos.translate.models import Note
 
 # код → поля Source
@@ -110,9 +112,12 @@ def text_hash(body):
 
 
 class Loader:
-    def __init__(self, root_dir, stdout):
+    def __init__(self, root_dir, stdout, skip_incomplete=False):
         self.root_dir = root_dir
         self.stdout = stdout
+        # загружать только акты с полным ru (NOMOS_PUBLIC_ONLY); uid пропущенных
+        self.skip_incomplete = skip_incomplete
+        self.skipped = set()
         self.acts = {}
         self.fragments = {}
         self.amendments = {}
@@ -121,10 +126,9 @@ class Loader:
         self.references = []
 
     def run(self):
-        paths = sorted(
-            path for path in self.root_dir.rglob('act.xml')
-            if 'sources' not in path.relative_to(self.root_dir).parts
-        )
+        paths = texts_xml.act_paths(self.root_dir)
+        if self.skip_incomplete:
+            paths = self.complete_paths(paths)
         sources = {
             code: Source.objects.update_or_create(code=code, defaults=fields)[0]
             for code, fields in SOURCES.items()
@@ -148,6 +152,18 @@ class Loader:
                 Reference.objects.count(),
             )
         )
+
+    def complete_paths(self, paths):
+        """act.xml актов с полным ru; пропущенные — в self.skipped, их число — в вывод."""
+        found = []
+        for path in paths:
+            element = texts_xml.read_act(path)
+            if missing(element, path.parent) == []:
+                found.append(path)
+            else:
+                self.skipped.add(element.get('uid'))
+        self.stdout.write('не загружено актов без полного ru: %d' % len(self.skipped))
+        return found
 
     def load_act(self, path, sources):
         element = texts_xml.read_act(path)
@@ -212,6 +228,8 @@ class Loader:
         act = self.acts[element.get('uid')]
         for item in element.iter('relation'):
             target = self.acts.get(item.get('to'))
+            if target is None and item.get('to') in self.skipped:
+                continue
             if target is None:
                 raise CommandError('%s: нет акта %s' % (act.uid, item.get('to')))
             ActRelation.objects.create(from_act=act, to_act=target, kind=item.get('kind'))
@@ -288,22 +306,33 @@ class Loader:
             )
 
 
+def add_texts_dir(parser):
+    """Параметр --texts-dir команды: папка Nomos-texts, по умолчанию NOMOS_TEXTS_DIR."""
+    parser.add_argument(
+        '--texts-dir',
+        default=os.environ.get('NOMOS_TEXTS_DIR', ''),
+        help='папка Nomos-texts (по умолчанию NOMOS_TEXTS_DIR)',
+    )
+
+
+def texts_root(texts_dir):
+    """Папка текстов из параметра --texts-dir; не задана — ошибка команды."""
+    if not texts_dir:
+        raise CommandError('не задана папка текстов: --texts-dir или NOMOS_TEXTS_DIR')
+    return Path(texts_dir)
+
+
 class Command(BaseCommand):
     help = 'Пересобрать БД из XML Nomos-texts'
 
     def add_arguments(self, parser):
-        parser.add_argument(
-            '--texts-dir',
-            default=os.environ.get('NOMOS_TEXTS_DIR', ''),
-            help='папка Nomos-texts (по умолчанию NOMOS_TEXTS_DIR)',
-        )
+        add_texts_dir(parser)
 
     def handle(self, texts_dir, **options):
-        if not texts_dir:
-            raise CommandError('не задана папка текстов: --texts-dir или NOMOS_TEXTS_DIR')
+        root = texts_root(texts_dir)
         with transaction.atomic():
             # редакции защищают изменения от удаления: сначала они
             FragmentVersion.objects.all().delete()
             Amendment.objects.all().delete()
             Act.objects.all().delete()
-            Loader(Path(texts_dir), self.stdout).run()
+            Loader(root, self.stdout, settings.NOMOS_PUBLIC_ONLY).run()

@@ -533,6 +533,14 @@ def escape(text):
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 
+def act_paths(root):
+    """Все act.xml папки текстов по порядку, кроме копий источников (папки sources)."""
+    return sorted(
+        path for path in root.rglob('act.xml')
+        if 'sources' not in path.relative_to(root).parts
+    )
+
+
 def read_act(path):
     return ET.parse(path).getroot()
 
