@@ -1013,6 +1013,60 @@ class PublicAttributeTests(TestCase):
 
 
 
+def write_simple_act(root, uid, kind, text, fragment):
+    """Акт из одного фрагмента: act.xml и el.xml."""
+    folder = root / uid
+    folder.mkdir(parents=True)
+    (folder / 'act.xml').write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<act uid="%s" jurisdiction="cy" kind="%s" structure-lang="el">\n'
+        '  <expression lang="el" status="official_text" source="cy-tax" file="el.xml" />\n'
+        '  <amendment key="base" kind="base" published-on="2024-08-06"></amendment>\n'
+        '  <fragment uid="%s" kind="sub" eid="sub_1" order-key="0001">\n'
+        '    <version key="base" amendment="%s#base" valid-from="2024-08-06"'
+        ' known-from="2024-08-06" />\n'
+        '  </fragment>\n'
+        '</act>\n' % (uid, kind, fragment, uid),
+        encoding='utf-8',
+    )
+    (folder / 'el.xml').write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<texts act="%s" lang="el">\n'
+        '  <text fragment="%s" version="base">\n'
+        '    <p>%s</p>\n'
+        '  </text>\n'
+        '</texts>\n' % (uid, fragment, text),
+        encoding='utf-8',
+    )
+
+
+class FormKindTests(TestCase):
+    """Бланки налоговой — акты вида form/leaflet; ссылки на них разрешаются."""
+
+    def test_form_reference_resolved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_simple_act(root, 'cy/form/vat/4B', 'form', 'Αίτηση επιστροφής', 'formfrag01')
+            write_simple_act(
+                root, 'cy/instr/2024/guide', 'instr',
+                'Βλέπε <ref id="r1" to="cy/form/vat/4B">έντυπο 4Β</ref> και'
+                ' <ref id="r2" to="cy/leaflet/vat/3A">Ενημερωτικό Έντυπο 3Α</ref>.',
+                'guidefrag1',
+            )
+            call_command('load_texts', texts_dir=folder, stdout=StringIO())
+        references = {
+            reference.anchor: reference
+            for reference in Reference.objects.filter(from_text__expression__lang='el')
+        }
+        form = references['r1']
+        self.assertTrue(form.resolved)
+        self.assertEqual((form.to_act.uid, form.to_act.kind), ('cy/form/vat/4B', 'form'))
+        # информационного бланка 3A в текстах нет: ссылка остаётся неразрешённой
+        leaflet = references['r2']
+        self.assertFalse(leaflet.resolved)
+        self.assertIsNone(leaflet.to_act)
+
+
 class LostUidsTests(SimpleTestCase):
     """Пересборка не убирает фрагменты, у которых есть перевод."""
 
