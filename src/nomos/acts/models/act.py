@@ -18,6 +18,10 @@ class Act(models.Model):
         INSTRUCTION = 'instr', 'Инструкция'
         CIRCULAR = 'circ', 'Циркуляр'
         DECISION = 'dec', 'Решение'
+        # бланк и информационный бланк налоговой: uid cy/form/vat/4B, cy/leaflet/vat/3A —
+        # серия (налог) на месте года, номер бланка; редакции — версиями фрагментов
+        FORM = 'form', 'Бланк'
+        LEAFLET = 'leaflet', 'Информационный бланк'
 
     uid = models.CharField(max_length=100, unique=True)
     jurisdiction = models.CharField(max_length=10, choices=Jurisdiction)
