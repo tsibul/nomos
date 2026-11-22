@@ -2123,6 +2123,93 @@ class CustomsLayoutTests(SimpleTestCase):
         self.assertTrue(consolidated.Parser('x', lone_schedule=True).is_lone_schedule(block))
         self.assertFalse(consolidated.Parser('x').is_lone_schedule(block))
 
+    def test_ordinal_schedule(self):
+        """«ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» по центру — приложение у сводок Τμήμα Τελωνείων (91(Ι)/2004)."""
+        block = layout.Block(0, 40, 'ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ')
+        self.assertTrue(consolidated.Parser('x', lone_schedule=True).is_lone_schedule(block))
+
+
+class ExciseLayoutTests(SimpleTestCase):
+    """Сводка акцизов 91(Ι)/2004: заголовки статей по оглавлению, пять приложений, таблицы
+    ставок."""
+
+    BREAK = leginet.PAGE_BREAK
+
+    def test_toc_wrapped_heading(self):
+        """Перенесённый заголовок оглавления продолжается; «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» кончает статьи."""
+        rows = [
+            ('', 'ΜΕΡΟΣ I', 40, ''),
+            ('', '1. Συνοπτικός τίτλος.', 12, ''),
+            ('', '2. Ερμηνεία όρων και', 12, ''),
+            ('', 'πεδίο εφαρμογής.', 14, None),
+            ('', 'ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ', 40, ''),
+            ('', '3. Προϊόντα', 12, ''),
+        ]
+        self.assertEqual(customs.toc_headings(rows), {
+            '1': 'Συνοπτικός τίτλος.',
+            '2': 'Ερμηνεία όρων και πεδίο εφαρμογής.',
+        })
+
+    def test_articles_by_toc(self):
+        """С оглавлением статья — номер из него после предыдущего (сдвиг до трёх знаков) или
+        номер с буквой после статьи с теми же цифрами; код «8703.» — не статья."""
+        toc = {'18': '', '80': '', '81': ''}
+        rows = [
+            ('', '18.(1) Ο Διευθυντής', 15, None),
+            ('', '8703. Αυτοκίνητα', 12, None),
+            ('', '80. Κείμενο', 14, ''),
+            ('', '80Α. Κείμενο', 14, ''),
+            ('', '18. Κείμενο', 12, ''),
+        ]
+        self.assertEqual([indent for _, _, indent, _ in customs.mark_articles(rows, toc)], [
+            12, customs.NOT_ARTICLE_INDENT, 12, 12, customs.NOT_ARTICLE_INDENT,
+        ])
+        self.assertEqual(customs.mark_articles(rows, toc)[0][3], '')
+
+    def test_chapter_heading(self):
+        """«ΚΕΦΑΛΑΙΟ Β» с названием через разрыв страницы — одна строка; Μέρος кончается
+        перед Κεφάλαιο."""
+        lines = [
+            ' ' * 40 + 'ΜΕΡΟΣ Χ',
+            '',
+            ' ' * 30 + 'ΑΛΚΟΟΛΗ',
+            '',
+            ' ' * 40 + 'ΚΕΦΑΛΑΙΟ Β',
+            self.BREAK,
+            ' ' * 30 + 'ΠΟΙΚΙΛΕΣ ΔΙΑΤΑΞΕΙΣ',
+        ]
+        joined = [line for line in customs.join_parts(lines) if line.strip()]
+        self.assertEqual(joined, [
+            ' ' * 40 + 'ΜΕΡΟΣ Χ ΑΛΚΟΟΛΗ',
+            ' ' * 40 + 'ΚΕΦΑΛΑΙΟ Β ΠΟΙΚΙΛΕΣ ΔΙΑΤΑΞΕΙΣ',
+        ])
+
+    def test_uncenter_text(self):
+        """Строка правее центра не с заглавной — текст, не заголовок группы."""
+        lines = [' ' * 40 + '– τσιγάρα 800 τεμάχια·', ' ' * 40 + 'Ελεύθερες Ζώνες']
+        self.assertEqual(customs.uncenter_text(lines), [
+            ' ' * (customs.CENTERED_INDENT - 1) + '– τσιγάρα 800 τεμάχια·',
+            ' ' * 40 + 'Ελεύθερες Ζώνες',
+        ])
+
+    def test_split_rate(self):
+        """Ставка — с первого слова у столбца ставок или после просвета чуть левее его."""
+        parts = [(200, 240, 'Μπύρα'), (250, 280, 'ανά'), (410, 450, '€6,00')]
+        self.assertEqual(customs.split_rate(parts, 408), (parts[:2], parts[2:]))
+        short = [(200, 240, 'Καύσιμα'), (390, 420, 'Ατελώς.')]
+        self.assertEqual(customs.split_rate(short, 408), (short[:1], short[1:]))
+        heading = [(250, 300, 'ΜΕΡΟΣ'), (305, 320, 'Α')]
+        self.assertEqual(customs.split_rate(heading, 280), (heading, []))
+
+    def test_split_schedules(self):
+        """Каждое «… ΠΑΡΑΡΤΗΜΑ» начинает своё приложение; страница без него — продолжение."""
+        columns = leginet.Columns(193, 195, 285, customs.FURNITURE_RE, customs.HEADING_SHIFT)
+        first = [(290, 100, 330, 'ΠΡΩΤΟ'), (335, 100, 400, 'ΠΑΡΑΡΤΗΜΑ')]
+        more = [(200, 100, 300, 'Προϊόντα')]
+        second = [(290, 100, 330, 'ΔΕΥΤΕΡΟ'), (335, 100, 400, 'ΠΑΡΑΡΤΗΜΑ')]
+        groups = customs.split_schedules([first, more, second], columns)
+        self.assertEqual(groups, [[first, more], [second]])
+
 
 CUSTOMS_CODE = 'cy/law/2004/94_I'
 
@@ -2156,6 +2243,39 @@ class CustomsCodeTests(SimpleTestCase):
         part = next(node for node in self.root.children if node.eid == 'prt_III')
         self.assertEqual(part.heading, 'ΜΕΡΟΣ ΙΙΙ ΛΙΜΕΝΕΣ ΚΑΙ ΑΕΡΟΛΙΜΕΝΕΣ')
         self.assertEqual(part.children[0].eid, 'art_10')
+
+
+EXCISE_LAW = 'cy/law/2004/91_I'
+
+
+@skipUnless((TEXTS_DIR / EXCISE_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 91(Ι)/2004')
+class ExciseLawTests(SimpleTestCase):
+    """Закон об акцизах 91(Ι)/2004 по сводке Τμήμα Τελωνείων на октябрь 2026."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        path = TEXTS_DIR / 'sources' / EXCISE_LAW / 'consolidated-customs.pdf'
+        cls.root, _, _ = consolidated.parse(path, EXCISE_LAW, 'cy-customs')
+
+    def test_structure(self):
+        """18 Μέρη (с V(Α)), 177 статей (176 по оглавлению и 80Α), пять приложений; наверху
+        только Μέρη и приложения."""
+        top = [node.eid for node in self.root.children]
+        self.assertEqual(len([eid for eid in top if eid.startswith('prt_')]), 18)
+        self.assertEqual(top[-5:], ['sch_1', 'sch_2', 'sch_3', 'sch_4', 'sch_5'])
+        self.assertTrue(all(eid.startswith(('prt_', 'sch_')) for eid in top))
+        articles = [node.eid for node in self.root.walk() if node.kind == 'art']
+        self.assertEqual(len(articles), 177)
+        self.assertIn('art_80A', articles)
+
+    def test_chapters(self):
+        """Κεφάλαια — группы внутри Μέρους, с длинным названием заглавными."""
+        part = next(node for node in self.root.children if node.eid == 'prt_X')
+        self.assertEqual(part.heading, 'ΜΕΡΟΣ Χ ΑΛΚΟΟΛΗ - ΑΛΚΟΟΛΟΥΧΑ ΠΟΤΑ')
+        chapters = [node.heading for node in part.children if node.kind == 'sct']
+        self.assertEqual(len(chapters), 3)
+        self.assertTrue(chapters[1].startswith('ΚΕΦΑΛΑΙΟ Β ΟΙΝΟΠΝΕΥΜΑΤΟΠΟΙΟΣ'))
 
 
 HRDA_LAW = 'cy/law/1999/125_I'

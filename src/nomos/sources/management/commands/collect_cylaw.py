@@ -326,6 +326,10 @@ class Command(BaseCommand):
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
         known_from_publication(versions, info.published_on, base_ref)
+        # сводка новее 01.01.2024 без изменяющих актов (91(Ι)/2004 на октябрь 2026): её
+        # текст известен только с даты сводки
+        consolidated_on = history.parse_date(manifest.get('consolidated'))
+        known_from_publication(versions, consolidated_on, base_ref)
         index = acts_index.Index.read(root_dir)
         marker = refs.Marker(
             refs.Targets(node.eid for node in versions), refs.EL,

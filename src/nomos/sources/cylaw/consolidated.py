@@ -179,8 +179,10 @@ def split_history(block):
 
 
 def is_group_heading(text):
-    """Заголовок группы статей по центру: короткий, без конечной пунктуации."""
-    if len(text) > HEADING_MAX or text[-1] in '.:;·∙˙,—-':
+    """Заголовок группы статей по центру: короткий, без конечной пунктуации; «ΚΕΦΑΛΑΙΟ Β …»
+    с названием заглавными бывает и длиннее (91(Ι)/2004)."""
+    long = len(text) > HEADING_MAX and not (text.startswith('ΚΕΦΑΛΑΙΟ ') and text.isupper())
+    if long or text[-1] in '.:;·∙˙,—-':
         return False
     return not TOP_RE.match(text) and not match_item(text)[0]
 
@@ -539,7 +541,15 @@ class Parser:
         self.pending_heading = []
 
     def is_lone_schedule(self, block):
-        return self.lone_schedule and block.text == LONE_SCHEDULE and block.indent >= 25
+        """«ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» по центру без общего «ΠΑΡΑΡΤΗΜΑΤΑ» (сводки
+        Τμήμα Τελωνείων)."""
+        schedule = SCHEDULE_RE.match(block.text)
+        ordinal = schedule is not None and schedule.group('ord') in SCHEDULE_ORDINALS
+        return (
+            self.lone_schedule
+            and (block.text == LONE_SCHEDULE or ordinal)
+            and block.indent >= 25
+        )
 
     def is_part(self, block):
         """«ΜΕΡΟΣ IX …» по центру; длинное заглавное название, перенесённое на несколько
