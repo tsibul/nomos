@@ -3144,3 +3144,54 @@ class StampDutyScheduleTests(SimpleTestCase):
         self.assertTrue(
             texts['sch_1.par_28.sub_1.sub_1.sub_1'].startswith('Ένα ευρώ για κάθε €200')
         )
+
+
+TRUSTS_LAW = 'cy/law/1992/69_I'
+
+
+@skipUnless((TEXTS_DIR / TRUSTS_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 69(Ι)/1992')
+class InternationalTrustsLawTests(TestCase):
+    """Закон о международных трастах 69(Ι)/1992: сводка CyLaw с 240(Ι)/2025."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        call_command('collect_cylaw', TRUSTS_LAW, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=TRUSTS_LAW, eid=eid).version_on(day)
+
+    def test_rebuild_keeps_files(self):
+        for uid in (TRUSTS_LAW, 'cy/law/2025/240_I'):
+            folder = self.copy / uid
+            changed = [
+                path.name
+                for path in folder.iterdir()
+                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
+            ]
+            self.assertEqual(changed, [], uid)
+
+    def test_parts_numbered_by_ordinal_words(self):
+        """«ΜΕΡΟΣ ΠΡΩΤΟ» … «ΜΕΡΟΣ ΤΕΤΑΡΤΟ»; третье — сразу после разрыва страницы."""
+        parts = Fragment.objects.filter(act__uid=TRUSTS_LAW, kind='prt')
+        self.assertEqual(sorted(parts.values_list('eid', flat=True)), [
+            'prt_1', 'prt_2', 'prt_3', 'prt_4',
+        ])
+        article = Fragment.objects.get(act__uid=TRUSTS_LAW, eid='art_12A')
+        self.assertEqual(article.parent.eid, 'prt_3')
+
+    def test_article_12_2_repealed_by_law_240_2025(self):
+        eid = 'art_12.par_2'
+        before = self.version(eid, datetime.date(2025, 12, 31))
+        self.assertEqual(before.state, FragmentVersion.State.ACTIVE)
+        self.assertIsNone(self.version(eid, datetime.date(2026, 1, 1)))

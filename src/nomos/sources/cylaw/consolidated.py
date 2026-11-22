@@ -71,7 +71,30 @@ SCHEDULE_RE = re.compile(
 # единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера
 ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?$')
 LONE_SCHEDULE = 'ΠΑΡΑΡΤΗΜΑ'
-PART_RE = re.compile(r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$')
+# «ΜΕΡΟΣ ΠΡΩΤΟ ΕΙΣΑΓΩΓΗ» (69(Ι)/1992): номер Μέρους словом — порядковое числительное
+PART_ORDINALS = {
+    'ΠΡΩΤΟ': '1',
+    'ΔΕΥΤΕΡΟ': '2',
+    'ΤΡΙΤΟ': '3',
+    'ΤΕΤΑΡΤΟ': '4',
+    'ΠΕΜΠΤΟ': '5',
+    'ΕΚΤΟ': '6',
+    'ΕΒΔΟΜΟ': '7',
+    'ΟΓΔΟΟ': '8',
+    'ΕΝΑΤΟ': '9',
+    'ΔΕΚΑΤΟ': '10',
+}
+PART_RE = re.compile(
+    r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>(?:%s)\b|[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$'
+    % '|'.join(PART_ORDINALS)
+)
+
+
+def part_number(match):
+    num = match.group('num')
+    return PART_ORDINALS.get(num, num)
+
+
 SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
@@ -512,7 +535,7 @@ class Parser:
             return False
         part = PART_RE.match(text)
         if part and block.indent >= 14:
-            node = Node('prt', num=part.group('num'), heading=text)
+            node = Node('prt', num=part_number(part), heading=text)
             self.open_container(node, self.schedule)
             return True
         section = SECTION_RE.match(text)
@@ -574,7 +597,7 @@ class Parser:
 
     def open_part(self, text):
         part = PART_RE.match(text)
-        node = Node('prt', num=part.group('num'), heading=text)
+        node = Node('prt', num=part_number(part), heading=text)
         self.root.add(node)
         self.container = node
         self.stack = [node]
