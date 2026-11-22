@@ -38,6 +38,7 @@ def menu(request):
     return {
         'menu_sections': sections,
         'menu_about_current': first_segment == 'about',
+        'menu_login_current': first_segment == 'login',
         'menu_home_url': settings.NOMOS_HOME_URL,
         'menu_home_label': settings.NOMOS_HOME_LABEL,
     }

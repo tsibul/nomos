@@ -489,6 +489,16 @@ class Structure:
             fragment = self.parent(fragment)
         return fragment
 
+    def first_unit(self, fragment):
+        """Первая страница внутри раздела (по порядку акта); у пустого раздела — None."""
+        for kid in self.kids(fragment):
+            if self.is_unit(kid):
+                return kid
+            unit = self.first_unit(kid)
+            if unit is not None:
+                return unit
+        return None
+
     def ancestors(self, fragment):
         chain = []
         parent = self.parent(fragment)

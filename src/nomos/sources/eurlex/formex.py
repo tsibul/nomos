@@ -119,7 +119,58 @@ def parse(path, lang):
     with open(path, 'rb') as stream:
         parser.feed(stream.read())
     tree = parser.close()
+    if lang in LATIN_SCRIPT_LANGS:
+        fix_tree_homoglyphs(tree)
     return Reader(tree, lang).read()
+
+
+# Кириллические двойники латинских букв: в Formex EUR-Lex они изредка набраны в латинском
+# тексте («points (а) to (f)» в 904/2010, «with а maximum» в 282/2011 — «а» кириллическая).
+# Правка в Nomos-texts пропала бы при пересборке, поэтому замена — здесь, при чтении.
+CYRILLIC_TO_LATIN = str.maketrans(
+    'аеорсухіјѕАВЕКМНОРСТХІЈЅ',
+    'aeopcyxijsABEKMHOPCTXIJS',
+)
+LATIN_SCRIPT_LANGS = {'en', 'el'}
+HOMOGLYPH_WORD_RE = re.compile(r'[^\W\d_]+')
+CYRILLIC_RE = re.compile(r'[\u0400-\u04ff]')
+LATIN_LETTER_RE = re.compile(r'[A-Za-z]')
+
+
+def fix_homoglyphs(text):
+    """Кириллица → латиница в словах из латиницы с кириллическими двойниками («Аrticle»)
+    и в словах из одних двойников, если рядом нет кириллических слов («(а)», «а maximum»).
+    Настоящий кириллический текст (цитата по-болгарски) не меняется."""
+    if not text or not CYRILLIC_RE.search(text):
+        return text
+    words = list(HOMOGLYPH_WORD_RE.finditer(text))
+    parts = []
+    last = 0
+    for index, match in enumerate(words):
+        word = match.group()
+        if CYRILLIC_RE.search(word) and is_homoglyph(word, words, index):
+            parts.append(text[last:match.start()])
+            parts.append(word.translate(CYRILLIC_TO_LATIN))
+            last = match.end()
+    parts.append(text[last:])
+    return ''.join(parts)
+
+
+def is_homoglyph(word, words, index):
+    cyrillic = [letter for letter in word if CYRILLIC_RE.match(letter)]
+    if any(letter.translate(CYRILLIC_TO_LATIN) == letter for letter in cyrillic):
+        return False
+    if LATIN_LETTER_RE.search(word):
+        return True
+    neighbours = words[max(index - 1, 0):index] + words[index + 1:index + 2]
+    return not any(CYRILLIC_RE.search(neighbour.group()) for neighbour in neighbours)
+
+
+def fix_tree_homoglyphs(tree):
+    for element in tree.iter():
+        if element.tag is not ET.ProcessingInstruction:
+            element.text = fix_homoglyphs(element.text)
+        element.tail = fix_homoglyphs(element.tail)
 
 
 def plain(element):

@@ -58,6 +58,14 @@ EN_PARAGRAPH = re.compile(
     r'\b(?P<word>paragraphs?) (?P<list>\d+[a-z]?(?:(?:, | and | or | to )\d+[a-z]?)*)\b'
 )
 EN_ANNEX = re.compile(r'\b(?P<word>Annex) (?P<list>[IVX]+)\b')
+# пункт приложения перед ним: «Point (1) of Annex II» → anx_II.pnt_1
+EN_ANNEX_POINT = re.compile(r'\b[Pp]oint \((?P<point>\d+)\) of $')
+# «Annex II to Council Implementing Regulation (EU) No 282/2011», «Annex IX, Part A, to
+# Directive (EU) 2018/2001» — приложение другого акта
+EN_ANNEX_OF = re.compile(
+    r'(?:, Part [A-Z],)? (?:to|of) (?:the )?(?P<of>(?:Council |Commission )?(?:Implementing )?'
+    r'(?:Directive|Regulation|Decision)(?: \((?:EU|EC|EEC)\))?(?: No)? \d+/\d+)'
+)
 
 EL_LETTERS = r'[α-ω]{1,4}'
 EL_NUM = (
@@ -83,7 +91,14 @@ EL_PARAGRAPH = re.compile(
     r'(?P<list>\d+(?:' + EL_LETTERS + r')?'
     r'(?:(?:, | και | ή | έως )\d+(?:' + EL_LETTERS + r')?)*)\b'
 )
-EL_ANNEX = re.compile(r'\b(?P<word>(?:Π|π)αράρτημ(?:α|ατος)) (?P<list>[IVXΙΧ]+)\b')
+# «παράρτημα», «παραρτήματος» (ударение в родительном — на третьем слоге)
+EL_ANNEX = re.compile(r'\b(?P<word>(?:Π|π)α(?:ράρτημα|ραρτήματος)) (?P<list>[IVXΙΧ]+)\b')
+# «Σημείο 1 του παραρτήματος II» → anx_II.pnt_1
+EL_ANNEX_POINT = re.compile(r'\b(?:Σ|σ)ημεί(?:ο|ου) (?P<point>\d+)\)? του $')
+EL_ANNEX_OF = re.compile(
+    r'(?: μέρος [Α-Ω])? (?P<of>(?:του|της) (?:εκτελεστικού )?(?:κανονισμού|οδηγίας|απόφασης)'
+    r'(?: \((?:ΕΕ|ΕΚ|ΕΟΚ)\))?(?: αριθ\.)? \d+/\d+)'
+)
 
 # уточнения и связки между номером статьи и «of …» или следующей статьёй перечня:
 # «Article 54(1), second subparagraph, of Directive», «Article 56(2) and Articles 58 and 59 of»
@@ -180,8 +195,12 @@ class Linker:
     def mark_text(self, text, own_eid, default_act, counter):
         if self.lang == 'el':
             article_re, paragraph_re, annex_re = EL_ARTICLE, EL_PARAGRAPH, EL_ANNEX
+            annex_of_re = EL_ANNEX_OF
+            annex_point_re = EL_ANNEX_POINT
         else:
             article_re, paragraph_re, annex_re = EN_ARTICLE, EN_PARAGRAPH, EN_ANNEX
+            annex_of_re = EN_ANNEX_OF
+            annex_point_re = EN_ANNEX_POINT
         spans = []
         for match, act in self.article_acts(text, article_re, default_act):
             if act is None:
@@ -206,7 +225,21 @@ class Linker:
             if overlaps(match.span(), taken):
                 continue
             token = match.group('list').translate(str.maketrans('ΙΧ', 'IX'))
-            spans.append((match.start(), match.end(), Target(default_act, 'anx_%s' % token)))
+            act = default_act
+            named = annex_of_re.match(text, match.end())
+            if named:
+                # акт вне базы — ссылки нет
+                act = self.article_act(named.group('of'), default_act)
+                if act is None:
+                    continue
+            start = match.start()
+            eid = 'anx_%s' % token
+            # пункта нет у цели — resolve оставит приложение
+            point = annex_point_re.search(text, 0, start)
+            if point and not overlaps(point.span(), taken):
+                start = point.start()
+                eid = '%s.pnt_%s' % (eid, point.group('point'))
+            spans.append((start, match.end(), Target(act, eid)))
         spans.sort(key=lambda span: span[0])
         result = []
         position = 0

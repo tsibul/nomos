@@ -4,6 +4,7 @@ import html
 import re
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass
@@ -16,24 +17,90 @@ class Block:
 
 
 def pdf_lines(path):
-    """Строки PDF с сохранённой раскладкой (poppler pdftotext)."""
+    """Строки PDF с сохранённой раскладкой (poppler pdftotext).
+
+    Скан без текстового слоя заменяется выверенной расшифровкой `.txt` в той же
+    раскладке: поля слева, текст с отступом. Первый блок расшифровки (до пустой строки) —
+    служебная пометка («Расшифровка скана …»), не текст акта: её строки пустые, номера
+    строк не сдвигаются.
+    """
+    if Path(path).suffix == '.txt':
+        return drop_header(Path(path).read_text(encoding='utf-8').split('\n'))
     result = subprocess.run(
         ['pdftotext', '-layout', str(path), '-'],
         check=True,
         capture_output=True,
         text=True,
     )
-    return [line.replace('\f', '') for line in result.stdout.split('\n')]
+    return [fix_lookalikes(line.replace('\f', '')) for line in result.stdout.split('\n')]
+
+
+def drop_header(lines):
+    """Строки служебной пометки в начале расшифровки → пустые."""
+    if not lines or not lines[0].startswith('Расшифровка'):
+        return lines
+    end = next((index for index, line in enumerate(lines) if not line.strip()), len(lines))
+    return [''] * end + lines[end:]
+
+
+# латинские буквы, набранные в греческом тексте вместо греческих (CyLaw: «αvαφέρovται»)
+LOOKALIKES = str.maketrans(
+    'ABEHIKMNOPTXYZoveiku',
+    'ΑΒΕΗΙΚΜΝΟΡΤΧΥΖονεικυ',
+)
+LOWER_LOOKALIKES = set('oveiku')
+WORD_RE = re.compile(r'[^\W\d_]+')
+GREEK_RE = re.compile(r'[\u0370-\u03ff\u1f00-\u1fff]')
+LATIN_RE = re.compile(r'[A-Za-z]')
+ROMAN_RE = re.compile(r'^([IVX]+|[ivx]+)$')
+
+
+def fix_lookalikes(line):
+    """Латинские двойники греческих букв → греческие: в словах из обоих алфавитов
+    («Iαvoυαρίoυ») и в латинских словах из одних двойников со строчной буквой рядом с
+    греческим словом («Ev τω», «o Διευθυντής»). Римские цифры и прочая латиница — как есть."""
+    words = list(WORD_RE.finditer(line))
+    if not words or not GREEK_RE.search(line):
+        return line
+    parts = []
+    last = 0
+    for index, match in enumerate(words):
+        word = match.group()
+        if LATIN_RE.search(word) and is_lookalike(word, words, index):
+            parts.append(line[last:match.start()])
+            parts.append(word.translate(LOOKALIKES))
+            last = match.end()
+    parts.append(line[last:])
+    return ''.join(parts)
+
+
+def is_lookalike(word, words, index):
+    latin = [letter for letter in word if LATIN_RE.match(letter)]
+    if any(letter.translate(LOOKALIKES) == letter for letter in latin):
+        return False
+    if ROMAN_RE.match(word.replace('ν', 'v')):
+        # «(νii)», «(iν)»: римская цифра с греческой ν — номер пункта, разбирает numbering
+        return False
+    if GREEK_RE.search(word):
+        return True
+    if not LOWER_LOOKALIKES.intersection(word):
+        return False
+    neighbours = words[max(index - 1, 0):index] + words[index + 1:index + 2]
+    return any(GREEK_RE.search(neighbour.group()) for neighbour in neighbours)
 
 
 ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,3}\s?\.\s)')
+# «39Α.-(1) …» — тире сразу за точкой (118(Ι)/2002)
+DASHED_START_RE = re.compile(r'^\s*\d+[^\W\d_]{0,3}\s?\.[-—–―]')
 
 
-def blocks(lines, skip=None):
+def blocks(lines, skip=None, dashed=True):
     """Блоки из строк; `skip(line)` — строки колонтитулов, которые выбрасываются.
 
     После колонтитула блок продолжается (абзац перенесён на страницу), если следующая
-    строка не начинает нумерованный пункт."""
+    строка не начинает нумерованный пункт. Пустая строка перед колонтитулом посреди фразы
+    («… ψηφισθέντος είτε προ» / «είτε κατόπιν …») блок не закрывает.
+    `dashed=False` — «39Α.-(1)» пункта не начинает (акты, собранные до 118(Ι)/2002)."""
     found = []
     current = []
     start = 0
@@ -42,14 +109,20 @@ def blocks(lines, skip=None):
         if skip and skip(line):
             after_skip = True
             continue
-        if after_skip and current and starts_block(line, current[-1]):
+        if after_skip and current and starts_block(line, current[-1], dashed):
             found.append(make_block(start, current))
             current = []
         after_skip = False
-        if current and ITEM_START_RE.match(line) and ends_sentence(current[-1]):
+        if current and starts_item(line, dashed) and ends_sentence(current[-1]):
             found.append(make_block(start, current))
             current = []
         if not line.strip():
+            if (
+                current
+                and skip
+                and continues_after_page(lines[number:], current[-1], skip)
+            ):
+                continue
             if current:
                 found.append(make_block(start, current))
                 current = []
@@ -62,13 +135,28 @@ def blocks(lines, skip=None):
     return found
 
 
+def continues_after_page(rest, previous, skip):
+    """За пустой строкой — колонтитул, а после него фраза продолжается со строчной буквы."""
+    if ends_sentence(previous):
+        return False
+    following = [line for line in rest if line.strip()]
+    if not following or not skip(following[0]):
+        return False
+    text = next((line.strip() for line in following if not skip(line)), '')
+    return text[:1].islower()
+
+
 TERM_START_RE = re.compile(r'^\s*("|\'\'|«|“)')
 
 
-def starts_block(line, previous):
+def starts_item(line, dashed=True):
+    return bool(ITEM_START_RE.match(line) or (dashed and DASHED_START_RE.match(line)))
+
+
+def starts_block(line, previous, dashed=True):
     """После колонтитула новый блок — нумерованный пункт или новое определение
     («"φόρος εκροών" …» после законченного «… άρθρο 19˙»)."""
-    if ITEM_START_RE.match(line):
+    if starts_item(line, dashed):
         return True
     return bool(TERM_START_RE.match(line)) and ends_sentence(previous)
 

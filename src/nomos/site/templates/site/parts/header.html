@@ -88,6 +88,16 @@
             </button>
           </form>
         </li>
+      {% elif public_only %}
+        <li class="menu__item">
+          <a
+            class="menu__link{% if menu_login_current %} menu__link--current{% endif %}"
+            href="{% url 'site:login' %}{{ lang_query }}"
+            {% if menu_login_current %}aria-current="page"{% endif %}
+          >
+            {% translate 'Войти' %}
+          </a>
+        </li>
       {% endif %}
     </ul>
   </nav>

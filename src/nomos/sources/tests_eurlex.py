@@ -24,6 +24,7 @@ from nomos.acts.models import (
 )
 
 from .eurlex import editions, formex, refs
+from .management.commands.collect_eurlex import fix_refs, read_manifest
 
 ACT = 'eu/reg/2010/904'
 AMENDING_CELEX = '32099R0001'
@@ -203,6 +204,21 @@ class FormexTests(SimpleTestCase):
         self.assertEqual(editions.marker_label(point.markers[0].id), 'M2')
 
 
+class HomoglyphTests(SimpleTestCase):
+    """Кириллические двойники в латинском тексте Formex → латиница."""
+
+    def test_single_letters(self):
+        self.assertEqual(formex.fix_homoglyphs('points (\u0430) to (f)'), 'points (a) to (f)')
+        self.assertEqual(formex.fix_homoglyphs('with \u0430 maximum'), 'with a maximum')
+
+    def test_mixed_word(self):
+        self.assertEqual(formex.fix_homoglyphs('\u0410rticle 5'), 'Article 5')
+
+    def test_cyrillic_text_kept(self):
+        text = '“събирателното а дружество”'
+        self.assertEqual(formex.fix_homoglyphs(text), text)
+
+
 class EditionsTests(SimpleTestCase):
     def history(self):
         found = []
@@ -297,6 +313,42 @@ class EditionsTests(SimpleTestCase):
         self.assertEqual(editions.loc_to_eid('AX:0;PT:9'), '')
 
 
+class ManifestTests(SimpleTestCase):
+    def test_root_note_is_base_note(self):
+        text = (
+            '<collect uid="eu/dir/2022/2523">'
+            '<note> Исправления  не внесены. </note>'
+            '<edition start="20221222" en="a" el="b" />'
+            '<amending uid="eu/dir/2025/1" celex="x" en="c" el="d"><note>Своя.</note></amending>'
+            '</collect>'
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(text, encoding='utf-8')
+            manifest = read_manifest(path)
+        self.assertEqual(manifest['note'], 'Исправления не внесены.')
+        self.assertEqual(manifest['amending'][0]['note'], 'Своя.')
+
+    def test_ref_fix(self):
+        """<ref-fix>: цель ссылки исправлена только в своём фрагменте и языке."""
+        fixes = [{
+            'lang': 'el', 'fragment': 'art_381', 'from': 'anx_IX', 'to': 'anx_X', 'reason': '',
+        }]
+        paragraphs = [
+            '<ref id="r1" to="anx_IX">παράρτημα ΙΧ</ref>, '
+            '<ref id="r2" to="anx_IX.pnt_1">σημείο 1</ref>, <ref id="r3" to="anx_IXa">x</ref>'
+        ]
+        applied = [0]
+        fixed = fix_refs(paragraphs, 'el', 'art_381', fixes, applied)
+        self.assertEqual(fixed, [
+            '<ref id="r1" to="anx_X">παράρτημα ΙΧ</ref>, '
+            '<ref id="r2" to="anx_X.pnt_1">σημείο 1</ref>, <ref id="r3" to="anx_IXa">x</ref>'
+        ])
+        self.assertEqual(applied, [2])
+        self.assertEqual(fix_refs(paragraphs, 'en', 'art_381', fixes, applied), paragraphs)
+        self.assertEqual(fix_refs(paragraphs, 'el', 'art_380', fixes, applied), paragraphs)
+
+
 class GreekNumberTests(SimpleTestCase):
     def test_tokens(self):
         self.assertEqual(refs.el_token('369ιζ'), '369q')
@@ -351,6 +403,47 @@ class LinkerTests(SimpleTestCase):
             self.mark('en', 'referred to in paragraph 1', own='art_1.par_2'),
         )
         self.assertIn('to="anx_I"', self.mark('el', 'στο παράρτημα I'))
+
+    def test_annex_of_other_act(self):
+        self.assertIn(
+            '<ref id="r1" to="eu/reg/2011/282#anx_II">Annex II</ref> to Council',
+            self.mark('en', 'set out in Annex II to Council Implementing Regulation (EU)'
+                      ' No 282/2011'),
+        )
+        self.assertIn(
+            'to="eu/reg/2011/282#anx_II">παράρτημα II</ref>',
+            self.mark('el', 'στο παράρτημα II του εκτελεστικού κανονισμού (ΕΕ) αριθ.'
+                      ' 282/2011 του Συμβουλίου'),
+        )
+        self.assertIn(
+            'to="eu/dir/2006/112#anx_III.pnt_12">point (12) of Annex III</ref>',
+            self.mark('en', 'point (12) of Annex III to Directive 2006/112/EC'),
+        )
+        self.assertIn('to="anx_I"', self.mark('en', 'Annex I to this Regulation'))
+        self.assertNotIn(
+            '<ref',
+            self.mark('en', 'listed in Annex IX, Part A, to Directive (EU) 2018/2001'),
+        )
+        self.assertNotIn(
+            '<ref',
+            self.mark('el', 'στο παράρτημα V του κανονισμού (ΕΕ) 2015/1189 της Επιτροπής'),
+        )
+
+    def test_point_of_annex(self):
+        self.assertIn(
+            '<ref id="r1" to="eu/dir/2006/112#anx_II.pnt_1">Σημείο 1 του παραρτήματος II</ref>',
+            self.mark('el', 'Σημείο 1 του παραρτήματος II της οδηγίας 2006/112/ΕΚ'),
+        )
+        self.assertIn(
+            '<ref id="r1" to="eu/dir/2006/112#anx_II.pnt_1">Point (1) of Annex II</ref>',
+            self.mark('en', 'Point (1) of Annex II to Directive 2006/112/EC'),
+        )
+        self.assertIn(
+            '<ref id="r1" to="anx_I">παραρτήματος I</ref>',
+            self.mark('el', 'του παραρτήματος I'),
+        )
+        # пункта нет у цели — ссылка на приложение
+        self.assertIn('to="anx_I"', self.mark('el', 'σημείο 9 του παραρτήματος I'))
 
     def test_self_reference(self):
         self.assertNotIn('<ref', self.mark('en', 'this Article 1', own='art_1.par_2'))

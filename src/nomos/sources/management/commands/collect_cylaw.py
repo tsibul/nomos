@@ -12,6 +12,7 @@ from pathlib import Path
 from django.core.management.base import BaseCommand, CommandError
 
 from nomos.sources.cylaw import consolidated, gazette, history, layout, refs, texts_xml
+from nomos.sources.cylaw import acts as acts_index
 
 BASE_KEY = history.BASE_KEY
 
@@ -65,6 +66,11 @@ def law_info(manifest):
         year=manifest['year'],
         source=manifest['source'],
         title=manifest['title'],
+        # регламент или приказ, собранный из газеты: дата публикации и закон-основание
+        published_on=history.parse_date(manifest.get('published')),
+        published_in=manifest.get('gazette', ''),
+        in_force_from=history.parse_date(manifest.get('in-force') or manifest.get('published')),
+        relations=[('based_on', manifest['based-on'])] if manifest.get('based-on') else [],
     )
     info.amendments.append(base_amendment(info))
     return info
@@ -94,12 +100,66 @@ def amending_info(act, law_uid, title):
             key=op.key,
             provision=op.provision,
             kind=op.kind if op.kind != 'add' else 'replace',
-            published_on=act.published_on,
+            published_on=op.known_from,
             in_force_from=op.valid_from,
             applies_from=op.applies_from,
             note=op.note,
         ))
+    for renumber in act.renumbered:
+        info.amendments.append(texts_xml.AmendmentInfo(
+            key=renumber.key,
+            provision=renumber.provision,
+            kind=history.CORRECT,
+            published_on=renumber.correction.published_on,
+            in_force_from=act.in_force_from,
+            note='%s: αναρίθμηση σε άρθρο %s.' % (
+                renumber.correction.published_in, renumber.num),
+        ))
     return info
+
+
+def corrected_version(amending, version, key, published_on):
+    """Редакция положения изменяющего акта по его исправлению (Διόρθωση)."""
+    return history.Version(
+        key=version.valid_from.isoformat() + history.CORRECTED_SUFFIX,
+        amendment='%s#%s' % (amending.uid, key),
+        valid_from=version.valid_from,
+        known_from=published_on,
+        paragraphs=list(version.paragraphs),
+    )
+
+
+def apply_corrections(amending, amending_versions, report):
+    """Исправления текста и номеров статей самого изменяющего акта."""
+    by_eid = {node.eid: (node, versions) for node, versions in amending_versions.items()}
+    for renumber in amending.renumbered:
+        if renumber.provision not in by_eid:
+            report.append('%s#%s: положения нет в разборе акта' % (amending.uid, renumber.key))
+            continue
+        node, versions = by_eid[renumber.provision]
+        version = corrected_version(
+            amending, versions[-1], renumber.key, renumber.correction.published_on,
+        )
+        version.num = renumber.num
+        versions.append(version)
+    for op in amending.ops:
+        if op.kind != history.CORRECT:
+            continue
+        found = [
+            (node, versions)
+            for eid, (node, versions) in by_eid.items()
+            if history.is_inside(eid, op.provision)
+            and '\n'.join(versions[-1].paragraphs).count(op.old) == 1
+        ]
+        if len(found) != 1:
+            report.append('%s: в тексте акта «%s» найдено в %d положениях' % (
+                op.ref, op.old, len(found)))
+            continue
+        node, versions = found[0]
+        version = corrected_version(amending, versions[-1], op.key, op.known_from)
+        version.paragraphs = history.split(
+            '\n'.join(version.paragraphs).replace(op.old, op.new))
+        versions.append(version)
 
 
 def apply_remarks(versions, remarks, base_ref, report):
@@ -119,6 +179,16 @@ def apply_remarks(versions, remarks, base_ref, report):
                     node_versions.append(expired_version(day, base_ref))
 
 
+def known_from_publication(versions, published_on, base_ref):
+    """Акт, опубликованный после 01.01.2024 (приказ ΚΔΠ 378/2025), известен с публикации."""
+    if published_on is None or published_on <= history.BASE_KNOWN_FROM:
+        return
+    for node_versions in versions.values():
+        for version in node_versions:
+            if version.amendment == base_ref:
+                version.known_from = max(version.known_from, published_on)
+
+
 def expired_version(day, base_ref):
     return history.Version(
         key=day.isoformat(),
@@ -130,12 +200,46 @@ def expired_version(day, base_ref):
     )
 
 
+def plain_texts(node_versions):
+    """{редакция: текст без разметки и примечаний}: для сверки с прежним el.xml."""
+    return {
+        version.key: ' '.join(
+            texts_xml.plain(layout.strip_notes(paragraph, []))
+            for paragraph in version.paragraphs
+        )
+        for version in node_versions
+        if version.paragraphs
+    }
+
+
 def write(folder, info, versions, notes=(), marker=None):
     """act.xml, el.xml и cylaw-notes.xml; примечания редакции CyLaw в загружаемое не идут.
 
     marker — разметка ссылок; его found: {(uid, редакция): [цели]}."""
     act_path = folder / 'act.xml'
     uids = texts_xml.assign_uids(info, versions.keys(), act_path)
+    previous = texts_xml.old_texts(folder / 'el.xml')
+    current = {node: plain_texts(node_versions) for node, node_versions in versions.items()}
+    nums = {node: node.num for node in versions}
+    eids = {uid: eid for eid, uid in texts_xml.existing_uids(act_path).items()}
+    uids = texts_xml.follow_texts(info, uids, current, previous, nums, eids)
+    lost = texts_xml.lost_uids(folder, uids)
+    merged = texts_xml.merged_uids(uids, current, previous, [uid for _, uid in lost])
+    joined = {uid for _, uid in merged}
+    lost = [(eid, uid) for eid, uid in lost if uid not in joined]
+    headings = {
+        node: {version.key: version.heading or node.heading for version in node_versions}
+        for node, node_versions in versions.items()
+    }
+    headed = texts_xml.headed_uids(uids, headings, previous, [uid for _, uid in lost])
+    moved = {uid for uid, _, _ in headed}
+    lost = [(eid, uid) for eid, uid in lost if uid not in moved]
+    if lost:
+        raise CommandError('%s: пересборка убирает фрагменты с переводом: %s' % (
+            info.uid, ', '.join('%s (%s)' % item for item in lost),
+        ))
+    texts_xml.merge_translations(folder, merged)
+    texts_xml.move_to_headings(folder, headed)
     texts_xml.write_act(act_path, info, versions, uids)
     inline = []
     for node, node_versions in versions.items():
@@ -171,8 +275,9 @@ def mark_translation(folder, marker, prefix=''):
     if not path.exists():
         return lines
     eid_by_uid = {uid: eid for eid, uid in texts_xml.existing_uids(folder / 'act.xml').items()}
+    mentions = marker.mentions.translated() if marker.mentions is not None else None
     skipped, differences, total = refs.mark_translation(
-        path, marker.targets, eid_by_uid, marker.found, marker.act, marker.implicit,
+        path, marker.targets, eid_by_uid, marker.found, marker.act, marker.implicit, mentions,
     )
     lines.append('%sссылок ru: %d; не размечено ru: %s' % (
         prefix, total, skipped_text(skipped),
@@ -207,12 +312,25 @@ class Command(BaseCommand):
         report = []
 
         info = law_info(manifest)
-        tree, _, notes = consolidated.parse(root_dir / manifest['file'], info.uid)
+        if manifest.get('layout') == 'amending':
+            self.collect_amending(root_dir, manifest['file'], folder, info, remarks, report)
+            return
+        tree, _, notes = consolidated.parse(
+            root_dir / manifest['file'],
+            info.uid,
+            manifest['source'],
+            history.read_splits(folder / 'collect.xml'),
+        )
         act_notes, other_notes = split_notes(notes, acts)
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
-        marker = refs.Marker(refs.Targets(node.eid for node in versions), refs.EL)
+        known_from_publication(versions, info.published_on, base_ref)
+        index = acts_index.Index.read(root_dir)
+        marker = refs.Marker(
+            refs.Targets(node.eid for node in versions), refs.EL,
+            mentions=acts_index.Mentions(index, 'el', info.uid),
+        )
         inline = write(folder, info, versions, other_notes, marker)
         report.extend(mark_translation(folder, marker))
         self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
@@ -231,9 +349,11 @@ class Command(BaseCommand):
                 version.known_from = amending.published_on
                 version.paragraphs = list(node.paragraphs)
                 amending_versions[node] = [version]
+            apply_corrections(amending, amending_versions, report)
             # ссылки на базовый закон; у ΚΔΠ своих статей нет — без указания акта тоже он
             amending_marker = refs.Marker(
                 marker.targets, refs.EL, info.uid, implicit=amending.kind != 'law',
+                mentions=acts_index.Mentions(index, 'el', amending.uid),
             )
             write(
                 root_dir / amending.uid,
@@ -250,6 +370,36 @@ class Command(BaseCommand):
                 if op.provision not in provisions:
                     report.append('%s: положения нет в разборе акта' % op.ref)
 
+        self.write_report(remarks, report)
+
+    def collect_amending(self, root_dir, file, folder, info, remarks, report):
+        """Изменяющий акт, чьего базового закона в базе нет (layout="amending"):
+        PDF газеты разбирается как изменяющий акт, ссылки — только на акты из указателя."""
+        tree, title = gazette.parse(root_dir / file, info.uid)
+        if not info.title:
+            info.title = title
+        versions = {}
+        for node in tree.walk():
+            if node.kind == 'act':
+                continue
+            version = base_version(info)
+            version.valid_from = info.in_force_from
+            version.known_from = info.published_on
+            version.paragraphs = list(node.paragraphs)
+            versions[node] = [version]
+        base_ref = '%s#%s' % (info.uid, BASE_KEY)
+        apply_remarks(versions, remarks, base_ref, report)
+        index = acts_index.Index.read(root_dir)
+        marker = refs.Marker(
+            refs.Targets([]), refs.EL,
+            mentions=acts_index.Mentions(index, 'el', info.uid),
+        )
+        write(folder, info, versions, [], marker)
+        report.extend(mark_translation(folder, marker))
+        self.stdout.write('%s: фрагментов %d' % (info.uid, len(versions)))
+        self.write_report(remarks, report)
+
+    def write_report(self, remarks, report):
         for target, text, _ in remarks:
             report.append('%s: %s' % (target, text))
         self.stdout.write('Отчёт (%d):' % len(report))

@@ -233,6 +233,107 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Νέο κείμενο')
         self.assertNotContains(response, 'Παλαιό κείμενο')
 
+    def add_repealed_article(self):
+        article = Fragment.objects.get(eid='art_1')
+        repealed = Fragment.objects.create(
+            uid='lw00000005',
+            act=self.law,
+            kind='art',
+            eid='art_2',
+            parent=article.parent,
+            order_key='0002',
+        )
+        base = Amendment.objects.get(amending_act=self.law, kind='base')
+        self.add_version(repealed, 'base', base, '2', self.el, 'Καταργούμενο', heading='Τέλη')
+        delete = Amendment.objects.create(
+            amending_act=self.amending,
+            amending_fragment=Fragment.objects.get(uid='am00000001'),
+            kind='delete',
+            key='art_2:delete',
+            marker='art_2:delete',
+            published_on=datetime.date(2025, 2, 1),
+            in_force_from=datetime.date(2025, 3, 1),
+        )
+        self.add_version(
+            repealed,
+            '2025-03-01',
+            delete,
+            '2',
+            None,
+            '',
+            state='repealed',
+            valid_from=datetime.date(2025, 3, 1),
+            known_from=datetime.date(2025, 2, 1),
+        )
+        later = Fragment.objects.create(
+            uid='lw00000006',
+            act=self.law,
+            kind='art',
+            eid='art_3',
+            parent=article.parent,
+            order_key='0003',
+        )
+        self.add_version(
+            later,
+            '2025-03-01',
+            delete,
+            '3',
+            self.el,
+            'Νέο άρθρο',
+            valid_from=datetime.date(2025, 3, 1),
+            known_from=datetime.date(2025, 2, 1),
+        )
+
+    def test_repealed_article_page(self):
+        self.add_repealed_article()
+        response = self.client.get(ACT_URL + '@2025-06-01/art_2/')
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, 'site/repealed.html')
+        self.assertContains(response, 'Άρθρο 2. Τέλη')
+        self.assertContains(response, 'Η διάταξη έπαψε να ισχύει από 01.03.2025.')
+        self.assertContains(response, 'href="/cy/law/2024/2_I/art_2/"')
+        self.assertContains(response, f'href="{ACT_URL}@2025-02-28/art_2/"')
+        self.assertContains(response, '(στις 28.02.2025)')
+        self.assertContains(response, f'href="{ACT_URL}art_2/history/"')
+        self.assertNotContains(response, 'Καταργούμενο')
+
+    def test_repealed_article_page_in_english(self):
+        self.add_repealed_article()
+        english = Expression.objects.create(
+            act=self.law,
+            lang='en',
+            status='our_translation',
+            source=self.el.source,
+            title='Test Law',
+        )
+        base_version = Fragment.objects.get(uid='lw00000005').versions.get(key='base')
+        FragmentText.objects.create(
+            version=base_version,
+            expression=english,
+            body='<p>Repealed text</p>',
+            text_hash='en',
+        )
+        response = self.client.get(ACT_URL + '@2025-06-01/art_2/en/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'This provision ceased to have effect on 01.03.2025.')
+        self.assertContains(response, 'Last version in force (as at 28.02.2025)')
+        self.assertContains(response, f'href="{ACT_URL}@2025-02-28/art_2/en/"')
+        response = self.client.get(ACT_URL + '@2025-06-01/art_2/', {'lang': 'en'}, follow=True)
+        self.assertContains(response, 'This provision ceased to have effect on 01.03.2025.')
+
+    def test_repealed_article_before_repeal_shows_text(self):
+        self.add_repealed_article()
+        response = self.client.get(ACT_URL + '@2025-02-28/art_2/')
+        self.assertTemplateNotUsed(response, 'site/repealed.html')
+        self.assertContains(response, 'Καταργούμενο')
+
+    def test_not_yet_existing_article_is_404(self):
+        self.add_repealed_article()
+        response = self.client.get(ACT_URL + '@2025-02-28/art_3/')
+        self.assertEqual(response.status_code, 404)
+        response = self.client.get(ACT_URL + '@2025-06-01/art_3/')
+        self.assertContains(response, 'Νέο άρθρο')
+
     def test_amended_version_links_to_provision(self):
         response = self.client.get(ACT_URL + '@2025-02-01/art_1/')
         self.assertContains(response, 'href="/cy/law/2024/2_I/art_2/"')
@@ -318,6 +419,21 @@ class ViewerTests(TestCase):
         self.assertTrue(all(entry['version'].amendment.kind != 'base' for entry in nested))
         response = self.client.get(ACT_URL + 'prt_I/history/')
         self.assertEqual(response.context['nested'][0]['place'], '1(1)')
+
+    def test_section_address_leads_to_its_first_page(self):
+        """У раздела своей страницы нет: адрес раздела ведёт на первую страницу в нём (не 500)."""
+        response = self.client.get(ACT_URL + 'prt_I/')
+        self.assertRedirects(response, ACT_URL + 'art_1/', fetch_redirect_response=False)
+        response = self.client.get(ACT_URL + '@2024-06-01/prt_I/', {'orig': '1'})
+        self.assertRedirects(
+            response,
+            ACT_URL + '@2024-06-01/art_1/?orig=1',
+            fetch_redirect_response=False,
+        )
+
+    def test_empty_section_address_is_not_found(self):
+        Fragment.objects.create(uid='lw00000099', act=self.law, kind='prt', eid='prt_II')
+        self.assertEqual(self.client.get(ACT_URL + 'prt_II/').status_code, 404)
 
     def test_history_without_any_changes_says_so(self):
         response = self.client.get(ACT_URL + 'art_1.par_2/history/')
@@ -1017,6 +1133,33 @@ class PublicOnlyTests(TestCase):
         self.client.post('/logout/')
         self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
 
+
+    def test_login_link_and_home_text_follow_sign_in(self):
+        """Без входа: пункт «Войти» и текст главной об актах ЕС; со входом — «Выйти» и прежний."""
+        eu_text = 'Акты ЕС об НДС и VIES'
+        cy_text = 'Законы Кипра об НДС'
+        response = self.client.get('/')
+        self.assertContains(response, 'href="/login/"')
+        self.assertContains(response, eu_text)
+        self.assertNotContains(response, cy_text)
+        response = self.client.get('/login/')
+        self.assertContains(response, 'aria-current="page"\n          >\n            Войти')
+        response = self.client.get('/', {'lang': 'el'})
+        self.assertContains(response, 'href="/login/?lang=el"')
+        self.assertContains(response, 'Σύνδεση')
+        self.assertContains(response, 'Πράξεις της ΕΕ για τον ΦΠΑ και το VIES')
+        self.client.force_login(self.reader)
+        response = self.client.get('/')
+        self.assertNotContains(response, 'href="/login/"')
+        self.assertContains(response, 'action="/logout/"')
+        self.assertContains(response, cy_text)
+        self.assertNotContains(response, eu_text)
+
+    def test_no_login_link_when_everything_is_open(self):
+        with self.settings(NOMOS_PUBLIC_ONLY=False):
+            response = self.client.get('/')
+        self.assertNotContains(response, 'href="/login/"')
+        self.assertContains(response, 'Законы Кипра об НДС')
 
     def test_anonymous_html_has_no_greek_letters(self):
         """Без входа на ru в HTML нет греческих букв: ни текстов, ни названия газеты.

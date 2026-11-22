@@ -156,13 +156,20 @@ def read(request, path):
     if route.history:
         return history_page(request, route, structure, fragment)
     unit = structure.unit_of(fragment)
+    anchor = '#' + fragment.eid
+    if unit is None:
+        # у раздела своей страницы нет: адрес раздела ведёт на первую страницу в нём
+        unit = structure.first_unit(fragment)
+        anchor = ''
+        if unit is None:
+            raise Http404('В разделе нет страниц')
     if unit.eid != route.eid:
         # постоянная ссылка фрагмента ведёт на его страницу с якорем
         # строка запроса сохраняется: from/at — путь «← Назад» к месту ссылки, orig — режим
         url = reading.build_url(route.act, on=route.on, eid=unit.eid, lang=route.lang)
         if request.GET:
             url += '?' + request.GET.urlencode()
-        return redirect(url + '#' + fragment.eid)
+        return redirect(url + anchor)
     return unit_page(request, route, structure, unit)
 
 
@@ -524,7 +531,10 @@ def related_entry(act, route):
 def unit_page(request, route, structure, unit):
     root = reading.build_nodes(structure, unit, route)
     if root is None:
-        raise Http404('Фрагмента нет на эту дату')
+        repeal = unit.repeal_on(route.date)
+        if repeal is None:
+            raise Http404('Фрагмента нет на эту дату')
+        return repealed_page(request, route, structure, unit, *repeal)
     toc = reading.build_toc(structure, route)
     units = reading.toc_units(toc)
     eids = [item.fragment.eid for item in units]
@@ -560,6 +570,47 @@ def unit_page(request, route, structure, unit):
     )
     context.update(nav_context(route, toc, unit))
     return render(request, 'site/unit.html', context)
+
+
+def repealed_page(request, route, structure, unit, repealing, last):
+    """Страница исключённого на дату положения: с какой даты, каким актом, прежняя редакция.
+
+    Ответ 200: адрес законный — на другие даты по нему есть текст, есть история редакций.
+    """
+    since = repealing.start(Fragment.Axis.APPLIES)
+    last_url = ''
+    if last is not None and since is not None and since > reading.EARLIEST:
+        # последний день действия прежней редакции; раньше 01.01.2024 редакции не прослеживаются
+        last_url = (
+            reading.build_url(
+                route.act,
+                on=since - datetime.timedelta(days=1),
+                eid=unit.eid,
+                lang=route.lang,
+            )
+            + route.chain_query
+        )
+    amendment = repealing.amendment
+    toc = reading.build_toc(structure, route)
+    context = base_context(request, route)
+    context.update(nav_context(route, toc, unit))
+    context.update(
+        {
+            'unit': unit,
+            'unit_label': history_label(structure, unit, route, last or repealing),
+            'since': since,
+            'repealed_by': (
+                introduced_by(amendment) if amendment.kind != amendment.Kind.BASE else None
+            ),
+            'last_url': last_url,
+            'last_until': since - datetime.timedelta(days=1) if last_url else None,
+            'history_url': (
+                reading.build_url(route.act, eid=unit.eid, lang=route.lang, history=True)
+                + route.chain_query
+            ),
+        }
+    )
+    return render(request, 'site/repealed.html', context)
 
 
 def toc_label(toc_items, fragment, version):
@@ -615,14 +666,7 @@ def history_page(request, route, structure, fragment):
         start = version.start(Fragment.Axis.APPLIES)
         introduced = None
         if amendment.kind != amendment.Kind.BASE:
-            label = reading.act_label(amendment.amending_act)
-            if amendment.amending_fragment is not None:
-                label += ', ' + amendment.amending_fragment.eid
-            introduced = {
-                'label': label,
-                'url': amendment_url(amendment),
-                'note': amendment.note,
-            }
+            introduced = introduced_by(amendment)
         read_on = start if start is not None and start >= reading.EARLIEST else None
         if in_force is not None and version.id == in_force.id:
             # действующая сегодня редакция — адрес без даты
@@ -758,10 +802,13 @@ def nested_place(structure, fragment, kid, by_fragment):
     return ''.join(parts)
 
 
-def history_label(structure, fragment, route):
-    """«Статья 5. Заголовок перевода» (без перевода — «Статья 5»), у пункта — «Статья 5, 1»."""
+def history_label(structure, fragment, route, version=None):
+    """«Статья 5. Заголовок перевода» (без перевода — «Статья 5»), у пункта — «Статья 5, 1».
+
+    version — редакция страницы для подписи; по умолчанию — действующая на дату.
+    """
     unit = structure.unit_of(fragment) or fragment
-    version = unit.version_on(route.date) or unit.versions.last()
+    version = version or unit.version_on(route.date) or unit.versions.last()
     headings = reading.translated_headings(
         [version],
         route.lang,
@@ -776,6 +823,18 @@ def history_label(structure, fragment, route):
         if own is not None and own.num:
             label = reading.Label(f'{label.text}, {own.num}', label.lang)
     return label
+
+
+def introduced_by(amendment):
+    """Кем введена редакция: «Закон 2(I)/2024, art_2», адрес вводящего положения, примечание."""
+    label = reading.act_label(amendment.amending_act)
+    if amendment.amending_fragment is not None:
+        label += ', ' + amendment.amending_fragment.eid
+    return {
+        'label': label,
+        'url': amendment_url(amendment),
+        'note': amendment.note,
+    }
 
 
 def amendment_url(amendment):

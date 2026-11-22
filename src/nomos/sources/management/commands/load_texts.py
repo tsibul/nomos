@@ -34,6 +34,14 @@ SOURCES = {
         'terms_url': 'https://www.cylaw.org',
         'attribution': 'Сводная редакция CyLaw (www.cylaw.org, ΚΙΝΟΠ), неофициальная',
     },
+    # leginet.eu: на каждой странице PDF «Copyright © Leginet Ltd … All rights reserved»;
+    # условия использования не выяснены (125(Ι)/1999)
+    'leginet': {
+        'name': 'Leginet — неофициальная сводная редакция',
+        'url': 'https://www.leginet.eu',
+        'publisher': 'Leginet Ltd',
+        'attribution': 'Сводная редакция Leginet (www.leginet.eu), неофициальная',
+    },
     # сайт Государственной типографии, где выходит газета (docs/research/vat-sources.md)
     'cy-gazette': {
         'name': 'Официальная газета Республики Кипр',
@@ -57,6 +65,21 @@ SOURCES = {
         'url': 'https://www.gov.cy/mof-tax/documents/ypovoli-tropopoiisi-diloseon-f-p-a/',
         'publisher': 'Τμήμα Φορολογίας Κύπρου',
         'attribution': 'Τμήμα Φορολογίας Κύπρου, www.gov.cy',
+    },
+    # сводка Τμήμα Τελωνείων (Таможенный департамент) — Таможенный кодекс 94(Ι)/2004;
+    # адрес и условия использования не выяснены
+    'cy-customs': {
+        'name': 'Τμήμα Τελωνείων (Customs Department), сводная редакция',
+        'publisher': 'Τμήμα Τελωνείων Κύπρου',
+        'attribution': 'Τμήμα Τελωνείων Κύπρου, сводная редакция, неофициальная',
+    },
+    # бланки Υπηρεσίες Κοινωνικών Ασφαλίσεων (cy/form/yka/…); адрес — из самих бланков,
+    # условия использования не выяснены
+    'cy-sis': {
+        'name': 'Υπηρεσίες Κοινωνικών Ασφαλίσεων (Social Insurance Services)',
+        'url': 'https://www.mlsi.gov.cy/sid',
+        'publisher': 'Υπηρεσίες Κοινωνικών Ασφαλίσεων Κύπρου',
+        'attribution': 'Υπηρεσίες Κοινωνικών Ασφαλίσεων Κύπρου, www.mlsi.gov.cy/sid',
     },
     # собственный перевод проекта, не внешний сайт (LICENSE-CONTENT)
     'nomos': {

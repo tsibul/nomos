@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 # Начало окна загрузки: базовая редакция считается известной с этой даты.
 BASE_KNOWN_FROM = datetime.date(2024, 1, 1)
 BASE_KEY = 'base'
+CORRECT = 'correct'
+# редакция-исправление: то же начало, что у исправленной, и поздний known_from
+CORRECTED_SUFFIX = '~2'
 
 UNKNOWN_BEFORE = (
     'Текст до изменения %s неизвестен: изменяющий акт прежний текст не приводит, '
@@ -38,6 +41,29 @@ class Amending:
     title: str = ''
     note: str = ''
     ops: list = field(default_factory=list)
+    # исправления (Διόρθωση) самого изменяющего акта: перенумерация его статей
+    renumbered: list = field(default_factory=list)
+
+
+@dataclass
+class Correction:
+    """Διόρθωση изменяющего акта: своя публикация, действует с даты исправленного."""
+
+    published_on: datetime.date
+    published_in: str
+
+
+@dataclass
+class Renumber:
+    """Перенумерация статьи изменяющего акта исправлением: eid прежний, номер новый."""
+
+    provision: str
+    num: str
+    correction: Correction
+
+    @property
+    def key(self):
+        return '%s:%s' % (self.provision, CORRECT)
 
 
 @dataclass
@@ -63,6 +89,16 @@ class Op:
     old_num: str = None
     # тексты из изменяющего акта: {eid: [абзацы]}; <p for="eid"> — для потомка цели
     texts: dict = field(default_factory=dict)
+    # прежний текст целиком (замена, отмена): {eid: [абзацы]}; <before for="eid"><p>…
+    before: dict = field(default_factory=dict)
+    # kind="correct": исправление (Διόρθωση) положения изменяющего акта
+    correction: Correction = None
+
+    @property
+    def known_from(self):
+        if self.correction is not None:
+            return self.correction.published_on
+        return self.act.published_on
 
     @property
     def key(self):
@@ -78,7 +114,7 @@ class Op:
 
     @property
     def sort_key(self):
-        return (self.applies_from or self.valid_from, self.act.published_on)
+        return (self.applies_from or self.valid_from, self.known_from)
 
 
 @dataclass
@@ -103,6 +139,12 @@ def parse_date(value):
     return datetime.date.fromisoformat(value)
 
 
+def read_splits(path):
+    """Правки разбора `<split before="…">` из манифеста (см. consolidated.split_blocks)."""
+    root = ET.parse(path).getroot()
+    return [item.get('before') for item in root.iter('split')]
+
+
 def read_manifest(path):
     """Манифест → (атрибуты закона, список изменяющих актов с изменениями)."""
     root = ET.parse(path).getroot()
@@ -121,8 +163,10 @@ def read_manifest(path):
             applies_from=parse_date(element.get('applies')),
             note=(element.findtext('note') or '').strip(),
         )
-        for item in element.iter('op'):
+        for item in element.findall('op'):
             act.ops.append(make_op(act, item))
+        for item in element.findall('correction'):
+            read_correction(act, item)
         acts.append(act)
     # kind="doubt": примечание о сомнении ко всем редакциям фрагмента;
     # until="…": срок, указанный в самом сводном тексте, — фрагмент утрачивает силу на
@@ -134,16 +178,33 @@ def read_manifest(path):
     return root.attrib, acts, remarks
 
 
+def read_correction(act, element):
+    """<correction published="…" gazette="…">: <op kind="correct" …/> — исправление текста
+    закона (old → new); <renumber provision="art_16" num="14"/> — номера статьи акта."""
+    correction = Correction(
+        published_on=parse_date(element.get('published')),
+        published_in=element.get('gazette', ''),
+    )
+    for item in element.findall('op'):
+        op = make_op(act, item)
+        op.kind = CORRECT
+        op.correction = correction
+        op.note = op.note or correction.published_in
+        act.ops.append(op)
+    for item in element.findall('renumber'):
+        act.renumbered.append(Renumber(item.get('provision'), item.get('num'), correction))
+
+
 def make_op(act, item):
     return Op(
         act=act,
         provision=item.get('provision'),
         kind=item.get('kind'),
         target=item.get('target'),
-        old=item.get('old', ''),
-        new=item.get('new', ''),
+        old=spaced(item.get('old', '')),
+        new=spaced(item.get('new', '')),
         at=item.get('at', ''),
-        text=item.get('text', ''),
+        text=spaced(item.get('text', '')),
         valid_from=parse_date(item.get('from')) or act.in_force_from,
         applies_from=parse_date(item.get('applies-from')) or act.applies_from,
         until=parse_date(item.get('until')),
@@ -153,7 +214,13 @@ def make_op(act, item):
         on=item.get('on', ''),
         old_num=item.get('old-num'),
         texts=op_texts(item),
+        before=op_before(item),
     )
+
+
+def spaced(value):
+    """Значения атрибутов в манифесте переносятся по строкам: пробелы — одиночные."""
+    return ' '.join(value.split())
 
 
 def op_texts(item):
@@ -162,6 +229,14 @@ def op_texts(item):
         eid = paragraph.get('for', item.get('target'))
         texts.setdefault(eid, []).append(' '.join(paragraph.text.split()))
     return texts
+
+
+def op_before(item):
+    before = {}
+    for element in item.findall('before'):
+        eid = element.get('for', item.get('target'))
+        before[eid] = [' '.join(paragraph.text.split()) for paragraph in element.findall('p')]
+    return before
 
 
 def ops_by_target(acts):
@@ -220,7 +295,11 @@ def build_versions(node, ops, base_ref, report):
         if op.kind == 'delete':
             version.state = 'repealed'
             version.paragraphs = []
-            text = None
+            text = op.before.get(node.eid)
+            continue
+        if node.eid in op.before:
+            # прежний текст приведён в манифесте (по прежней сводной редакции)
+            text = list(op.before[node.eid])
             continue
         if text is None:
             report.append('%s → %s: не снято, текст раньше уже неизвестен' % (op.ref, node.eid))
@@ -261,12 +340,15 @@ def reverse_heading(op, title, node, report):
 
 
 def version_for(op, text):
+    key = op.valid_from.isoformat()
+    if op.kind == CORRECT:
+        key += CORRECTED_SUFFIX
     return Version(
-        key=op.valid_from.isoformat(),
+        key=key,
         amendment=op.ref,
         valid_from=op.valid_from,
         applies_from=op.applies_from,
-        known_from=op.act.published_on,
+        known_from=op.known_from,
         paragraphs=None if text is None else list(text),
     )
 
@@ -304,7 +386,7 @@ def reverse(op, text):
     if text is None:
         return None, 'текст неизвестен'
     joined = '\n'.join(text)
-    if op.kind == 'replace':
+    if op.kind in ('replace', CORRECT):
         if not op.old and not op.new:
             return None, 'прежний текст не приведён'
         if op.at == 'end':

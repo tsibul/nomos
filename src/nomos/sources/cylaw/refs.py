@@ -24,6 +24,9 @@ from . import numbering
 # разметка, которую ставит этот модуль; снимается перед повторной разметкой
 OWN_REF_RE = re.compile(r'<ref id="r\d+" to="[^"]*">(.*?)</ref>', re.S)
 
+# причины пропуска: другой акт; заглавное слово после упоминания — решает оригинал
+FOREIGN = 'похоже на другой акт'
+CAPITAL = 'заглавное слово после упоминания'
 SUB = r'\([0-9A-Za-zΑ-Ωα-ωА-Яа-яё]{1,5}\)'
 END = r'(?=[\s(,.;:·˙∙\u0387\u037e)»"\-—–]|$)'
 
@@ -31,6 +34,9 @@ END = r'(?=[\s(,.;:·˙∙\u0387\u037e)»"\-—–]|$)'
 # Б — передача греческой Β по звучанию («статья 13Б»)
 CYRILLIC_TO_GREEK = str.maketrans('АБВГДЕЗКМНОРТХ', 'ΑΒΒΓΔΕΖΚΜΗΟΡΤΧ')
 CYRILLIC_LETTER_RE = re.compile(r'[а-яё]')
+# буквы подпунктов русского перевода по порядку (без ё, й, ъ, ы, ь): n-я буква —
+# n-й подпункт оригинала, (в) — (γ), (е) — (στ), (к) — (ι)
+RU_POINT_LETTERS = 'абвгдежзиклмнопрстуфхцчшщэюя'
 
 EL_ORDINALS = [
     ('Ενδέκατ', 11), ('Δωδέκατ', 12), ('Πρώτ', 1), ('Δεύτερ', 2), ('Τρίτ', 3),
@@ -64,6 +70,21 @@ class Language:
     base: str = r'(?!)'
     # «του παρόντος», «настоящего»: в изменяющем акте вне кавычек — сам этот акт
     this_act: str = r'(?!)'
+    # после упоминания слово с заглавной: другой акт, если в оригинале нет той же ссылки
+    capital: str = r'(?!)'
+    # ΚΔΠ: «Κανονισμοί δυνάμει των άρθρων 10, 78…» — статьи уполномочивающего закона
+    enabling_before: str = r'(?!)'
+    # «статьи 3 Закона, как…» — без названия: базовый ли закон, решает оригинал
+    bare_law: str = r'(?!)'
+    # пункты своей части приложения без её названия (Marker.inner_spans)
+    inner_paragraphs: str = r'(?!)'
+    inner_points: str = r'(?!)'
+    # изменяющий акт: «μετά το άρθρο 33Β» без акта — место вставки в базовом законе
+    insert_before: str = r'(?!)'
+    # изменяющий акт: «εδάφιο (3) αυτού» — пункт изменяемой статьи
+    amended_own: str = r'(?!)'
+    # изменяющий акт: «в её пункте (2)» — пункт изменяемой статьи
+    amended_before: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -78,6 +99,19 @@ class Language:
         self.bare_qualified_re = re.compile(self.bare_qualified)
         self.base_re = re.compile(self.base)
         self.this_act_re = re.compile(self.this_act)
+        self.capital_re = re.compile(self.capital)
+        self.enabling_before_re = re.compile(self.enabling_before)
+        self.bare_law_re = re.compile(self.bare_law)
+        self.inner_paragraphs_re = re.compile(self.inner_paragraphs)
+        self.inner_points_re = re.compile(self.inner_points)
+        self.insert_before_re = re.compile(self.insert_before)
+        self.amended_own_re = re.compile(self.amended_own)
+        self.amended_before_re = re.compile(self.amended_before)
+
+
+# пункт в перечислении внутри приложения: «1(1)(α)», «(β)», «(2)(α)»
+INNER_ITEM_RE = re.compile(r'(\d+[Α-Ω]?)((?:%s)*)|((?:%s)+)' % (SUB, SUB))
+INNER_SEPARATORS = r'(?:,?\s+(?:και|ή|μέχρι|έως)\s+|,\s+)'
 
 
 def ordinal_pattern(ordinals):
@@ -90,7 +124,8 @@ EL = Language(
     separators=r',?\s+(?:και|ή|μέχρι|έως)\s+|,\s+',
     paragraph_first=(
         r'(?<![\wά-ώ])(?:εδάφιο|εδαφίου|παράγραφο|παραγράφου|υποπαράγραφο|υποπαραγράφου)'
-        r'\s+((?:%s)+)\s+του\s+άρθρου\s+(\d+(?:ΣΤ|[Α-ΩA-Z]){0,2})%s(?!\()' % (SUB, END)
+        # «του» может не быть: «εδαφίου (3) άρθρου 3» (117(I), ст. 3G)
+        r'\s+((?:%s)+)\s+(?:του\s+)?άρθρου\s+(\d+(?:ΣΤ|[Α-ΩA-Z]){0,2})%s(?!\()' % (SUB, END)
     ),
     schedule=(
         r'(?<![\wά-ώ])(?:(?P<part>Μέρος|Μέρους)\s+(?P<part_num>[IVXΙΧ]+[Α-ΩA-Z]?)\s+του\s+'
@@ -113,6 +148,31 @@ EL = Language(
         r'(?!\s*\(Τροποποιητικ))'
     ),
     this_act=r'^\s+(?:(?:του|της)\s+)?παρόντος',
+    insert_before=(
+        r'(?<![\wά-ώ])(?:αμέσως\s+)?(?:μετά|πριν)(?:\s+από)?\s+(?:το|τα|τον|την)\s+$'
+    ),
+    # «εδαφίου (2) της λέξης «συντάσσει»» — что меняется, не другая статья
+    amended_own=(
+        r'^\s+(?:αυτού|αυτής|(?:της|των)\s+(?:φράσ|λέξ|αριθμ|επιφύλαξ|ακόλουθ'
+        r'|πρώτ|δεύτερ|τρίτ|τελευταί)'
+        # «μετά το εδάφιο (4) του ακόλουθου νέου εδαφίου», «του εδαφίου (12) του ποσού»
+        r'|(?:του|των)\s+(?:ακόλουθ|ποσ)'
+        # «εδαφίου (11) του σημείου της άνω τελείας» — знак препинания
+        r'|του\s+σημείου\s+(?:της|του)\s)'
+    ),
+    enabling_before=r'(?<![\wά-ώ])Κανονισμοί\s+δυνάμει\s+(?:των|του)\s+$',
+    # «παραγράφους 1(1)(α) και (β) και (2)(α) και (β) πιο πάνω» (95(Ι), Πρώτο Παράρτημα)
+    inner_paragraphs=(
+        r'(?<![\wά-ώ])(?:παράγραφο|παραγράφου|παραγράφους|παραγράφων)\s+'
+        r'(\d+[Α-Ω]?(?:%s)*(?:%s(?:\d+[Α-Ω]?)?(?:%s)+)*)'
+        r'\s+πιο\s+(?:πάνω|κάτω)(?![\wά-ώ])' % (SUB, INNER_SEPARATORS, SUB)
+    ),
+    # «υποπαραγράφους (α) έως (ε) της παραγράφου (2) του σημείου 5»
+    inner_points=(
+        r'(?<![\wά-ώ])(?:υποπαράγραφο|υποπαραγράφου|υποπαραγράφους|υποπαραγράφων)\s+'
+        r'(%s(?:%s%s)*)\s+της\s+(παραγράφου\s+(%s)\s+του\s+σημείου\s+(\d+[Α-Ω]?))%s'
+        % (SUB, INNER_SEPARATORS, SUB, SUB, END)
+    ),
 )
 
 RU = Language(
@@ -135,25 +195,41 @@ RU = Language(
         r'[Пп]риложени(?:е|я|ю|ем|и)(?![\wё])' % ordinal_pattern(RU_ORDINALS)
     ),
     external=(
-        r'^\s+(?!настоящего)(?:[А-ЯЁΑ-ΩA-Z]|закона|кодекса|директивы|регламента|указа'
-        r'|постановления|упомянутого|указанного|этого|данного|его|её|их'
+        r'^\s+(?!настоящего)(?:[Α-ΩA-Z]'
+        r'|(?:Закон|Кодекс|Директив|Регламент|Указ|Постановлени|Конвенци|Правил|Договор'
+        r'|Соглашени|Протокол)[а-яё]*(?![\wё])'
+        r'|закона|кодекса|директивы|регламента|указа'
+        r'|постановления|упомянутого|указанного|этого|данного|его|её|их|т(?:ого|ой)\s+же'
         r'|к\s+(?!настоящему)[А-ЯЁа-яё])'
     ),
     ordinals=RU_ORDINALS,
     external_before=r'(?<![\wё])(?:его|её|их|этого|указанного|упомянутого|данного)\s+$',
     bare_word=r'(?<![\wё])[Пп]ункт\w*\s+',
+    # заглавная — название другого акта («ΚΔΠ», «Ν.»), но не латинская аббревиатура
+    # организации из 2+ букв («HIO», «NPE»)
     bare_qualified=(
-        r'^\s*(?:(?:,\s*)?стат(?:ьи|ей|ье|ья)(?![\wё])|[A-ZΑ-Ω]'
-        r'|(?:Закона|Законов|Директивы|Регламента|Кодекса|Правил|Постановления|Указа'
+        r'^\s*(?:(?:,\s*)?стат(?:ьи|ей|ье|ья)(?![\wё])|(?![A-Z]{2,}(?![\wё]))[A-ZΑ-Ω]'
+        r'|(?:Закона|Законов|Директивы|Регламента|Кодекса|Правил'
+        # «пунктом (1) Правила 3 …» — другой акт; «пункта (7) Правила могут» — нет
+        r'|Правил(?:а|у|ом|е)(?=\s+\d)|Постановления|Указа'
         r'|Конвенции|закона|кодекса|директивы|регламента|указа|постановления'
         r'|упомянутого|указанного|этого|данного|его|её|их|той\s+же|того\s+же)(?![\wё]))'
     ),
     base=(
-        r'^\s*(?:базового\s+[Зз]акона|к\s+базовому\s+[Зз]акону|к\s+[Зз]акону(?![\wё])'
+        r'^\s*(?:(?:базового|основного)\s+[Зз]акона|к\s+(?:базовому|основному)\s+[Зз]акону'
+        r'|к\s+[Зз]акону(?![\wё])'
         r'|[Зз]акон(?:а|ов)\s+о\s+налоге\s+на\s+добавленную\s+стоимость(?![\wё])'
         r'(?!\s*\(изменя))'
     ),
     this_act=r'^\s+настоящ\w+',
+    insert_before=(
+        r'(?<![\wё])(?:сразу\s+|непосредственно\s+)?(?:после|перед)\s+(?:его\s+|её\s+)?$'
+    ),
+    amended_own=r'^\s+(?:его|её)(?![\wё])',
+    amended_before=r'(?<![\wё])(?:его|её)\s+$',
+    # «статьи 5 Части…» — другое; «статьи 33 Генеральный директор» — свой закон
+    capital=r'^\s+[А-ЯЁ]',
+    bare_law=r'^\s+[Зз]акона(?=\s*[,;:.)]|\s+(?:как|в\s+редакции)(?![\wё]))',
 )
 
 
@@ -161,10 +237,20 @@ def number_token(raw):
     """«11Α», «13СТ», «(1Α)», «(α)» → часть eid; None — не разбирается однозначно."""
     raw = raw.strip('()')
     if CYRILLIC_LETTER_RE.search(raw):
-        # строчные кириллические буквы в скобках — переложение (α), (β)…: не угадываем
-        return None
+        return cyrillic_point_token(raw)
     raw = raw.replace('СТ', 'ΣΤ').translate(CYRILLIC_TO_GREEK)
     return numbering.eid_token(numbering.normalize_number(raw))
+
+
+def cyrillic_point_token(raw):
+    """«в» → «g» (γ), «бб» → «bb» (ββ): буква подпункта перевода по её месту в алфавите;
+    None — не одна буква и не удвоенная из первых девяти."""
+    if raw[0] not in RU_POINT_LETTERS or raw != raw[0] * len(raw):
+        return None
+    value = RU_POINT_LETTERS.index(raw[0]) + 1
+    if len(raw) > 2 or (len(raw) == 2 and value > 9):
+        return None
+    return numbering.eid_token(numbering.greek_numeral(value) * len(raw))
 
 
 def ordinal_value(text, ordinals):
@@ -213,9 +299,10 @@ class Marker:
     """Разметка абзацев одного текста; счётчики пропусков — на весь акт.
 
     act — uid базового закона, если размечается изменяющий акт (цели — в законе);
-    implicit — упоминание без указания акта тоже ссылка на базовый закон (ΚΔΠ)."""
+    implicit — упоминание без указания акта тоже ссылка на базовый закон (ΚΔΠ);
+    mentions — упоминания других актов (acts.Mentions): ссылка на акт целиком."""
 
-    def __init__(self, targets, language, act='', implicit=False):
+    def __init__(self, targets, language, act='', implicit=False, mentions=None):
         self.targets = targets
         self.language = language
         self.act = act
@@ -225,18 +312,46 @@ class Marker:
         self.found = {}
         # глубина кавычек «…» в начале текущего абзаца
         self.depth = 0
+        # цели ссылок оригинала в этом тексте — для перевода (mark_translation)
+        self.agreed = set()
+        self.mentions = mentions
+        if mentions is not None:
+            mentions.skipped = self.skipped
+        # изменяющий акт: {eid фрагмента: изменяемая статья закона или None — их несколько};
+        # тексты идут по порядку, предок раньше потомков
+        self.context = {}
+        # статьи закона, упомянутые в текущем тексте (кроме места вставки)
+        self.articles = set()
 
     def mark_text(self, paragraphs, own):
         """Абзацы одного текста (уже экранированные) → (абзацы с <ref>, цели по порядку)."""
         found = []
         marked = []
         self.depth = 0
+        self.articles = set()
         for paragraph in paragraphs:
             plain = OWN_REF_RE.sub(r'\1', paragraph)
             spans = self.spans(plain, own)
             marked.append(self.insert(plain, spans, found))
             self.depth = max(0, self.depth + plain.count('«') - plain.count('»'))
+        if self.act and own and self.articles:
+            self.context[own] = (
+                next(iter(self.articles)) if len(self.articles) == 1 else None
+            )
         return marked, found
+
+    def amended_article(self, own):
+        """Изменяемая статья закона для пунктов без статьи в изменяющем акте, или None.
+
+        Своя статья текста, если она одна; нет своей — ближайшего предка."""
+        if self.articles:
+            return next(iter(self.articles)) if len(self.articles) == 1 else None
+        parts = own.split('.') if own else []
+        for size in range(len(parts) - 1, 0, -1):
+            key = '.'.join(parts[:size])
+            if key in self.context:
+                return self.context[key]
+        return None
 
     def quoted(self, text, position):
         return self.depth + text.count('«', 0, position) - text.count('»', 0, position) > 0
@@ -245,7 +360,8 @@ class Marker:
         parts = []
         position = 0
         for start, end, eid in spans:
-            target = '%s#%s' % (self.act, eid) if self.act else eid
+            # «uid» акта целиком (из mentions) — как есть
+            target = '%s#%s' % (self.act, eid) if self.act and '/' not in eid else eid
             found.append(target)
             parts.append(text[position:start])
             parts.append('<ref id="r%d" to="%s">%s</ref>' % (len(found), target, text[start:end]))
@@ -256,14 +372,25 @@ class Marker:
     def spans(self, text, own):
         """Неперекрывающиеся (начало, конец, eid) по порядку."""
         candidates = (
-            self.paragraph_spans(text)
+            (self.mentions.spans(text, self.agreed) if self.mentions is not None else [])
+            + self.paragraph_spans(text)
             + self.schedule_spans(text)
             + self.article_spans(text)
+            + self.inner_spans(text, own)
         )
         taken = []
         for start, end, eid in candidates:
             if not self.overlaps(taken, start, end):
                 self.take(taken, start, end, eid, own)
+        if self.act:
+            for start, _, eid in taken:
+                # в кавычках — новый текст закона, не указание изменения
+                if (
+                    eid is not None and eid.startswith('art_')
+                    and not self.quoted(text, start)
+                    and not self.language.insert_before_re.search(text[:start])
+                ):
+                    self.articles.add(eid.split('.')[0])
         # пункты без статьи — после всего остального: «εδάφιο (2) του άρθρου 6» уже взято
         for start, end, eid, reason in self.bare_spans(text, own):
             if self.overlaps(taken, start, end):
@@ -291,15 +418,23 @@ class Marker:
     def foreign(self, text, start, end):
         """Почему упоминание не размечается (другой акт), или None — размечается."""
         if not self.act:
-            return 'похоже на другой акт' if self.external(text, end, start) else None
+            return self.external(text, end, start)
         tail = text[end:]
         if self.language.base_re.match(tail):
             return None
         quoted = self.quoted(text, start)
         if self.language.this_act_re.match(tail):
             return None if quoted else 'ссылка на сам изменяющий акт'
-        if self.external(text, end, start):
-            return 'похоже на другой акт'
+        # «αμέσως μετά το άρθρο 32 του ακόλουθου νέου άρθρου» — место вставки в законе
+        if self.language.insert_before_re.search(text[:start]) and (
+            self.language.amended_own_re.match(tail) or not self.external(text, end)
+        ):
+            return None
+        reason = self.external(text, end, start)
+        if reason:
+            return reason
+        if self.implicit and self.language.enabling_before_re.search(text[:start]):
+            return FOREIGN
         if quoted or self.implicit:
             return None
         return 'акт не указан'
@@ -327,18 +462,31 @@ class Marker:
                 continue
             end = items[-1][1]
             reason = None
-            if self.act or not article.startswith('art_'):
+            if self.act:
+                article = self.amended_article(own) or ''
+            qualified = language.bare_qualified_re.match(text[end:]) and not (
+                self.act and language.amended_own_re.match(text[end:])
+            )
+            if not article.startswith('art_'):
                 reason = 'пункт без номера статьи'
-            elif language.bare_qualified_re.match(text[end:]) or (
-                language.external_before_re.search(text[:word.start()])
+            elif qualified or language.external_before_re.search(text[:word.start()]) and not (
+                self.act and language.amended_before_re.search(text[:word.start()])
             ):
                 reason = 'пункт с уточнением (другая статья или акт)'
             for item_start, item_end, subs in items:
                 eid = None
                 item_reason = reason
-                if reason is None:
+                if reason is None and self.act:
+                    # пункт изменяемой статьи; нового пункта в законе нет — статья
+                    eid, partial = self.targets.resolve(article, subs)
+                    if partial:
+                        self.skipped['пункта нет, ссылка на статью или приложение'] += 1
+                elif reason is None:
                     eid, _ = self.targets.resolve(article, subs)
-                    if eid == article:
+                    if eid is None:
+                        # своего текста нет (изменяющий акт без базового закона в базе)
+                        item_reason = 'цели нет в законе'
+                    elif eid == article:
                         # первого пункта в своей статье нет — не размечается
                         eid = None
                         item_reason = 'пункта нет в своей статье'
@@ -346,9 +494,33 @@ class Marker:
         return spans
 
     def external(self, text, end, start=None):
+        """Причина «другой акт», CAPITAL — решает оригинал, или None."""
         if start is not None and self.language.external_before_re.search(text[:start]):
-            return True
-        return self.language.external_re.match(text[end:]) is not None
+            return FOREIGN
+        if self.language.bare_law_re.match(text[end:]):
+            return CAPITAL
+        if self.language.external_re.match(text[end:]):
+            return FOREIGN
+        if self.language.capital_re.match(text[end:]):
+            return CAPITAL
+        return None
+
+    def agreed_target(self, top, subs):
+        """Цель найдена точно и есть среди ссылок оригинала этого текста."""
+        eid, partial = self.targets.resolve(top, subs)
+        # сведённое к предку («статьи 14, или (и)») не подтверждается оригиналом
+        if eid is None or partial:
+            return False
+        return ('%s#%s' % (self.act, eid) if self.act else eid) in self.agreed
+
+    def checked(self, reason, top, subs, start, end):
+        """Упоминание с причиной пропуска (или без) → (начало, конец, eid или None)."""
+        if reason == CAPITAL:
+            reason = None if self.agreed_target(top, subs) else FOREIGN
+        if reason:
+            self.skipped[reason] += 1
+            return (start, end, None)
+        return self.target(top, subs, start, end)
 
     def target(self, top, subs, start, end):
         eid, partial = self.targets.resolve(top, subs)
@@ -363,14 +535,60 @@ class Marker:
         spans = []
         for match in self.language.paragraph_re.finditer(text):
             reason = self.foreign(text, match.start(), match.end())
-            if reason:
-                self.skipped[reason] += 1
-                spans.append((match.start(), match.end(), None))
-                continue
             subs = re.findall(SUB, match.group(1))
             top = 'art_%s' % number_token(match.group(2))
-            spans.append(self.target(top, subs, match.start(), match.end()))
+            spans.append(self.checked(reason, top, subs, match.start(), match.end()))
         return spans
+
+    def inner_spans(self, text, own):
+        """Пункты своей части приложения без её названия (95(Ι), Πρώτο Παράρτημα):
+        «παραγράφους 1(1)(α) και (β) και (2)(α) πιο πάνω» — 1(1)(α), 1(1)(β), 1(2)(α);
+        «υποπαραγράφους (α) έως (ε) της παραγράφου (2) του σημείου 5» — 5(2)(α), 5(2)(ε).
+
+        Часть — то, что выше параграфов текущего фрагмента (`sch_1.prt_I.sct_1`)."""
+        if self.act or not own.startswith('sch_') or '.par_' not in own:
+            return []
+        root = own.split('.par_')[0]
+        spans = []
+        for match in self.language.inner_paragraphs_re.finditer(text):
+            if self.external(text, match.end(), match.start()):
+                continue
+            previous = None
+            items = INNER_ITEM_RE.finditer(text, match.start(1), match.end(1))
+            for item in items:
+                if item.group(1):
+                    path = [item.group(1)] + re.findall(SUB, item.group(2))
+                else:
+                    path = continued(previous, re.findall(SUB, item.group(3)))
+                if path is None:
+                    break
+                previous = path
+                spans.append(self.inner_target(root, path, item.start(), item.end()))
+        for match in self.language.inner_points_re.finditer(text):
+            if self.external(text, match.end(), match.start()):
+                continue
+            paragraph = [match.group(4), match.group(3)]
+            for item in re.finditer(SUB, match.group(1)):
+                start = match.start(1) + item.start()
+                end = match.start(1) + item.end()
+                spans.append(self.inner_target(root, paragraph + [item.group()], start, end))
+            spans.append(
+                self.inner_target(root, paragraph, match.start(2), match.end(2))
+            )
+        return spans
+
+    def inner_target(self, root, path, start, end):
+        token = number_token(path[0])
+        top = self.targets.child(root, token) if token else None
+        if top is None:
+            self.skipped['пункта нет в своей части приложения'] += 1
+            return (start, end, None)
+        eid, partial = self.targets.resolve(top, path[1:])
+        if partial:
+            # без названия части предок вместо пункта не подтверждён ничем: не размечается
+            self.skipped['пункта нет в своей части приложения'] += 1
+            return (start, end, None)
+        return (start, end, eid)
 
     def schedule_spans(self, text):
         spans = []
@@ -379,16 +597,12 @@ class Marker:
             if number is None:
                 continue
             reason = self.foreign(text, match.start(), match.end())
-            if reason:
-                self.skipped[reason] += 1
-                spans.append((match.start(), match.end(), None))
-                continue
             top = 'sch_%d' % number
             subs = []
             for name in ('part', 'table', 'item'):
                 if match.group(name):
                     subs = [match.group(name + '_num')]
-            spans.append(self.target(top, subs, match.start(), match.end()))
+            spans.append(self.checked(reason, top, subs, match.start(), match.end()))
         return spans
 
     def article_spans(self, text):
@@ -427,13 +641,31 @@ class Marker:
             if not items:
                 continue
             reason = self.foreign(text, word.start(), position)
-            if reason:
-                self.skipped[reason] += len(items)
-                spans.extend((item_start, end, None) for item_start, end, _, _ in items)
-                continue
             for item_start, end, item_top, subs in items:
-                spans.append(self.target(item_top, subs, item_start, end))
+                spans.append(self.checked(reason, item_top, subs, item_start, end))
         return spans
+
+
+def sub_kind(raw):
+    """«(1)» — цифра, «(i)» — римская, «(α)» — буква."""
+    inner = raw.strip('()')
+    if inner[0].isdigit():
+        return 'digit'
+    if set(inner) <= set('ivx'):
+        return 'roman'
+    return 'letter'
+
+
+def continued(previous, subs):
+    """Продолжение перечисления: «1(1)(α) και (β)» — (β) вместо (α); «… και (2)(α)» —
+    (2) вместо (1). Уровень — первый в предыдущем пункте того же вида; None — не найден."""
+    if previous is None or not subs:
+        return None
+    kind = sub_kind(subs[0])
+    for level in range(1, len(previous)):
+        if sub_kind(previous[level]) == kind:
+            return previous[:level] + subs
+    return None
 
 
 def align_ids(text, el_targets):
@@ -458,7 +690,9 @@ def align_ids(text, el_targets):
     return re.sub(r'<ref id="r(\d+)" to="([^"]*)">', replace, text)
 
 
-TEXT_RE = re.compile(r'(<text\b[^>]*>)(.*?)(</text>)', re.S)
+# «<text … />» (запись только с заголовком) — не начало текста: иначе тело следующей
+# записи размечается по её ключу и целям el
+TEXT_RE = re.compile(r'(<text\b[^>]*(?<!/)>)(.*?)(</text>)', re.S)
 P_RE = re.compile(r'(<p>)(.*?)(</p>)', re.S)
 ATTR_RE = re.compile(r'\b(fragment|version)="([^"]*)"')
 
@@ -467,13 +701,16 @@ def strip_own_refs(text):
     return OWN_REF_RE.sub(r'\1', text)
 
 
-def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False):
+def mark_translation(
+    path, targets, eid_by_uid, el_marks, act='', implicit=False, mentions=None,
+):
     """Разметка ссылок в файле перевода; текст вне тегов <ref> не меняется.
 
-    el_marks: {(uid, редакция): [цели el]}; act, implicit — как у Marker.
+    el_marks: {(uid, редакция): [цели el]}; act, implicit, mentions — как у Marker
+    (mentions — для русского текста).
     Возвращает (пропуски, расхождения с el, число ссылок)."""
     source = path.read_text(encoding='utf-8')
-    marker = Marker(targets, RU, act, implicit)
+    marker = Marker(targets, RU, act, implicit, mentions)
     differences = []
     total = [0]
 
@@ -483,6 +720,8 @@ def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False
         own = eid_by_uid.get(key[0], '')
         # абзацы текста размечаются вместе: кавычки «…» бывают на несколько абзацев
         paragraphs = [item.group(2) for item in P_RE.finditer(match.group(2))]
+        el_targets = el_marks.get(key, [])
+        marker.agreed = set(el_targets)
         marked, found_all = marker.mark_text(paragraphs, own)
         replaced = iter(marked)
         body = P_RE.sub(
@@ -490,7 +729,6 @@ def mark_translation(path, targets, eid_by_uid, el_marks, act='', implicit=False
             match.group(2),
         )
         total[0] += len(found_all)
-        el_targets = el_marks.get(key, [])
         if key in el_marks and Counter(found_all) != Counter(el_targets):
             differences.append((own, key[1], sorted(el_targets), sorted(found_all)))
         return match.group(1) + align_ids(body, el_targets) + match.group(3)
