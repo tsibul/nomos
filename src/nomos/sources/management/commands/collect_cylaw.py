@@ -346,6 +346,15 @@ class Command(BaseCommand):
                           len(other_notes), inline, len(act_notes)))
 
         for amending in acts:
+            if not amending.file:
+                # текста акта нет: только сведения и изменения, без фрагментов
+                write(
+                    root_dir / amending.uid,
+                    amending_info(amending, info.uid, amending.title),
+                    {},
+                )
+                report.append('%s: текста акта нет, изменения — по манифесту' % amending.uid)
+                continue
             amending_tree, title = gazette.parse(root_dir / amending.file, amending.uid)
             amending_versions = {}
             for node in amending_tree.walk():
