@@ -227,10 +227,11 @@ def pdf_lines(path):
     return ['Προοίμιο', ''] + body_lines(all_rows[start:], toc)
 
 
-def body_lines(all_rows, toc, across_gaps=False):
+def body_lines(all_rows, toc, across_gaps=False, headings=None):
     """Строки текста после оглавления → строки в раскладке сводки CyLaw; `across_gaps` —
-    как в margin_notes."""
-    headings = article_headings(all_rows, toc, across_gaps)
+    как в margin_notes; `headings` — готовые заголовки статей вместо заголовков поля."""
+    if headings is None:
+        headings = article_headings(all_rows, toc, across_gaps)
     lines = []
     skipping = False
     for index, (_, body, indent, gap) in enumerate(all_rows):

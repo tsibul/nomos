@@ -9,11 +9,12 @@
 
 import re
 
-from . import columns, customs, layout, leginet, numbering
+from . import columns, customs, layout, leginet, numbering, rate_table
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
-LAW_NUMBER_RE = re.compile(r'^\d+(\([IΙ]\))?/\d{4}$')
+# номер в истории на полях: «95(I)/2000» или закон колониального свода «ΚΕΦ.219» (Κεφ. 219)
+LAW_NUMBER_RE = re.compile(r'^(\d+(\([IΙ]\))?/\d{4}|ΚΕΦ\.\d+[Α-Ω]?)$')
 CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
 # «244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075» (118(Ι)/2002, ст. 14Β)
 CORRIGENDUM_FULL_RE = re.compile(r'ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+')
@@ -63,15 +64,39 @@ SCHEDULE_ORDINALS = [
     'ΔΕΚΑΤΟ ΤΕΤΑΡΤΟ',
     'ΔΕΚΑΤΟ ΠΕΜΠΤΟ',
 ]
-# «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010): мужской род — с «Σ» на конце
+# «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010): мужской род — с «Σ» на конце;
+# старая форма «ΔΕΥΤΕΡΟΣ ΠΙΝΑΞ» (24/1967), там же опечатка сводки «ΠΡΩΤΟΙ ΠΙΝΑΞ»
 SCHEDULE_RE = re.compile(
-    r'^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ)$'
+    r'^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ|[ΣΙ] ΠΙΝΑΞ)$'
 )
 # «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже;
 # единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера
 ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?$')
 LONE_SCHEDULE = 'ΠΑΡΑΡΤΗΜΑ'
-PART_RE = re.compile(r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$')
+# «ΜΕΡΟΣ ΠΡΩΤΟ ΕΙΣΑΓΩΓΗ» (69(Ι)/1992): номер Μέρους словом — порядковое числительное
+PART_ORDINALS = {
+    'ΠΡΩΤΟ': '1',
+    'ΔΕΥΤΕΡΟ': '2',
+    'ΤΡΙΤΟ': '3',
+    'ΤΕΤΑΡΤΟ': '4',
+    'ΠΕΜΠΤΟ': '5',
+    'ΕΚΤΟ': '6',
+    'ΕΒΔΟΜΟ': '7',
+    'ΟΓΔΟΟ': '8',
+    'ΕΝΑΤΟ': '9',
+    'ΔΕΚΑΤΟ': '10',
+}
+PART_RE = re.compile(
+    r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>(?:%s)\b|[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$'
+    % '|'.join(PART_ORDINALS)
+)
+
+
+def part_number(match):
+    num = match.group('num')
+    return PART_ORDINALS.get(num, num)
+
+
 SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
@@ -95,6 +120,8 @@ PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {'cy/law/1978/4', 'cy/law/2001/89_I'}
 COLUMN_TABLE_ACTS = {'cy/law/2010/59_I', 'cy/law/2002/118_I'}
 # из них — таблицы ставок 118(Ι) Παράρτημα 2: шапка через пустую строку, ряд — строка
 STACKED_TABLE_ACTS = {'cy/law/2002/118_I'}
+# акты, где таблица ставок Πρώτο Παράρτημα собирается по координатам слов (rate_table.py)
+RATE_TABLE_ACTS = {'cy/law/1963/19'}
 
 HEADING_MAX = 110
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
@@ -179,8 +206,10 @@ def split_history(block):
 
 
 def is_group_heading(text):
-    """Заголовок группы статей по центру: короткий, без конечной пунктуации."""
-    if len(text) > HEADING_MAX or text[-1] in '.:;·∙˙,—-':
+    """Заголовок группы статей по центру: короткий, без конечной пунктуации; «ΚΕΦΑΛΑΙΟ Β …»
+    с названием заглавными бывает и длиннее (91(Ι)/2004)."""
+    long = len(text) > HEADING_MAX and not (text.startswith('ΚΕΦΑΛΑΙΟ ') and text.isupper())
+    if long or text[-1] in '.:;·∙˙,—-':
         return False
     return not TOP_RE.match(text) and not match_item(text)[0]
 
@@ -281,8 +310,9 @@ def looks_like_heading(block, following):
 
 
 EDITOR_NOTE_RE = re.compile(r'^Σημείωση\s+\S+\s+(του|της)\s')
-# «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978)
-LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+\D|$)')
+# «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978);
+# «Σημείωση 3» без закона — номер на своей строке (Κεφ. 219)
+LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+(\D|$)|$)')
 
 
 def is_editor_note(block):
@@ -368,6 +398,10 @@ class Parser:
         self.notes = []
         # таблицы в столбцах из приложений (columns.Table); в строках — их метки
         self.tables = []
+        # первые строки абзацев таблицы ставок (rate_table): текст позиций, не заголовки;
+        # из них — строки ставок
+        self.table_lines = set()
+        self.rate_lines = set()
 
     def parse(self, lines):
         start = schedules_start(lines) if self.act_uid in COLUMN_TABLE_ACTS else None
@@ -434,6 +468,12 @@ class Parser:
         if text.startswith(columns.MARK):
             self.open_table(self.tables[int(text[len(columns.MARK):]) - 1])
             return
+        if block.line in self.rate_lines:
+            self.attach_rate(block)
+            return
+        if block.line in self.table_lines:
+            self.feed_text(block)
+            return
         if is_history(text):
             article = self.current_top()
             if article is not None:
@@ -498,7 +538,7 @@ class Parser:
             return False
         part = PART_RE.match(text)
         if part and block.indent >= 14:
-            node = Node('prt', num=part.group('num'), heading=text)
+            node = Node('prt', num=part_number(part), heading=text)
             self.open_container(node, self.schedule)
             return True
         section = SECTION_RE.match(text)
@@ -539,7 +579,15 @@ class Parser:
         self.pending_heading = []
 
     def is_lone_schedule(self, block):
-        return self.lone_schedule and block.text == LONE_SCHEDULE and block.indent >= 25
+        """«ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» по центру без общего «ΠΑΡΑΡΤΗΜΑΤΑ» (сводки
+        Τμήμα Τελωνείων)."""
+        schedule = SCHEDULE_RE.match(block.text)
+        ordinal = schedule is not None and schedule.group('ord') in SCHEDULE_ORDINALS
+        return (
+            self.lone_schedule
+            and (block.text == LONE_SCHEDULE or ordinal)
+            and block.indent >= 25
+        )
 
     def is_part(self, block):
         """«ΜΕΡΟΣ IX …» по центру; длинное заглавное название, перенесённое на несколько
@@ -552,7 +600,7 @@ class Parser:
 
     def open_part(self, text):
         part = PART_RE.match(text)
-        node = Node('prt', num=part.group('num'), heading=text)
+        node = Node('prt', num=part_number(part), heading=text)
         self.root.add(node)
         self.container = node
         self.stack = [node]
@@ -804,6 +852,15 @@ class Parser:
         # каждый следующий абзац без номера — свой фрагмент (ответ координатора на вопрос 1)
         self.open_unnumbered(owner, text, indent)
 
+    def attach_rate(self, block):
+        """Ставка таблицы (rate_table) — свой абзац без номера у пункта своей строки таблицы
+        (после строки без номера — следующий за ней); перечень она не закрывает."""
+        while len(self.stack) > 1 and (
+            self.stack[-1].indent > block.indent or self.stack[-1].unnumbered
+        ):
+            self.stack.pop()
+        self.open_unnumbered(self.stack[-1], block.text, block.indent)
+
     def opens_list(self, node):
         return opens_list(node, self.provisos)
 
@@ -923,6 +980,8 @@ def parse(path, act_uid, source='cylaw', splits=()):
         lines = customs.pdf_lines(path)
     else:
         lines = layout.pdf_lines(path)
+    if act_uid in RATE_TABLE_ACTS:
+        lines, parser.table_lines, parser.rate_lines = rate_table.rewrite(lines, path)
     root = parser.parse(lines)
     article = next(node for node in root.walk() if node.eid == 'art_2')
     mark_definitions(article)

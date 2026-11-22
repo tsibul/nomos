@@ -179,6 +179,16 @@ def apply_remarks(versions, remarks, base_ref, report):
                     node_versions.append(expired_version(day, base_ref))
 
 
+def apply_repeal(versions, repeal):
+    """Закон отменён целиком: у каждого фрагмента последняя редакция — «утратил силу»."""
+    if repeal is None:
+        return
+    for node_versions in versions.values():
+        version = expired_version(repeal.valid_from, repeal.amendment)
+        version.known_from = repeal.known_from
+        node_versions.append(version)
+
+
 def known_from_publication(versions, published_on, base_ref):
     """Акт, опубликованный после 01.01.2024 (приказ ΚΔΠ 378/2025), известен с публикации."""
     if published_on is None or published_on <= history.BASE_KNOWN_FROM:
@@ -321,11 +331,19 @@ class Command(BaseCommand):
             manifest['source'],
             history.read_splits(folder / 'collect.xml'),
         )
+        history.apply_source_fixes(
+            tree, history.read_source_fixes(folder / 'collect.xml'), report,
+        )
         act_notes, other_notes = split_notes(notes, acts)
         base_ref = '%s#%s' % (info.uid, BASE_KEY)
         versions = history.collect(tree, acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)
         known_from_publication(versions, info.published_on, base_ref)
+        # сводка новее 01.01.2024 без изменяющих актов (91(Ι)/2004 на октябрь 2026): её
+        # текст известен только с даты сводки
+        consolidated_on = history.parse_date(manifest.get('consolidated'))
+        known_from_publication(versions, consolidated_on, base_ref)
+        apply_repeal(versions, history.read_repeal(folder / 'collect.xml'))
         index = acts_index.Index.read(root_dir)
         marker = refs.Marker(
             refs.Targets(node.eid for node in versions), refs.EL,
@@ -339,6 +357,15 @@ class Command(BaseCommand):
                           len(other_notes), inline, len(act_notes)))
 
         for amending in acts:
+            if not amending.file:
+                # текста акта нет: только сведения и изменения, без фрагментов
+                write(
+                    root_dir / amending.uid,
+                    amending_info(amending, info.uid, amending.title),
+                    {},
+                )
+                report.append('%s: текста акта нет, изменения — по манифесту' % amending.uid)
+                continue
             amending_tree, title = gazette.parse(root_dir / amending.file, amending.uid)
             amending_versions = {}
             for node in amending_tree.walk():
