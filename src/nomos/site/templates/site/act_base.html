@@ -1,0 +1,21 @@
+{% extends 'site/base.html' %}
+
+{% comment %}
+  Страница акта: шапка акта и боковая навигация. Заголовок и содержимое — в наследниках.
+{% endcomment %}
+
+{% block header %}
+  {% include 'site/parts/act_header.html' %}
+{% endblock %}
+
+{% block aside %}
+  {% include 'site/parts/sidenav.html' %}
+{% endblock %}
+
+{% block main %}
+  {% include 'site/parts/back_ref.html' %}
+
+  {% include 'site/parts/toolbar.html' %}
+
+  {% block content %}{% endblock %}
+{% endblock %}

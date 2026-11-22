@@ -1,17 +1,9 @@
-{% extends 'site/base.html' %}
+{% extends 'site/act_base.html' %}
 
 {% load i18n %}
 
 {% block title %}
   {% translate 'Редакции:' %} {{ fragment_label }} — {{ label }} — Nomos
-{% endblock %}
-
-{% block header %}
-  {% include 'site/parts/act_header.html' %}
-{% endblock %}
-
-{% block aside %}
-  {% include 'site/parts/sidenav.html' %}
 {% endblock %}
 
 {% block main %}
@@ -90,19 +82,7 @@
         </div>
         <div class="history__source">
           {% if entry.introduced %}
-            {% if entry.introduced.url %}
-              <a
-                class="history__link"
-                href="{{ entry.introduced.url }}"
-              >
-                {{ entry.introduced.label }}
-              </a>
-            {% else %}
-              {{ entry.introduced.label }}
-            {% endif %}
-            {% if entry.introduced.note %}
-              — {{ entry.introduced.note }}
-            {% endif %}
+            {% include 'site/parts/amending_ref.html' with ref=entry.introduced link_class='history__link' %}
           {% else %}
             {% translate 'Базовый текст' %}
           {% endif %}
@@ -145,19 +125,7 @@
             {% endif %}
           </div>
           <div class="history__source">
-            {% if entry.introduced.url %}
-              <a
-                class="history__link"
-                href="{{ entry.introduced.url }}"
-              >
-                {{ entry.introduced.label }}
-              </a>
-            {% else %}
-              {{ entry.introduced.label }}
-            {% endif %}
-            {% if entry.introduced.note %}
-              — {{ entry.introduced.note }}
-            {% endif %}
+            {% include 'site/parts/amending_ref.html' with ref=entry.introduced link_class='history__link' %}
           </div>
           <div class="history__known">
             <a
