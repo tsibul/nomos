@@ -90,9 +90,10 @@ BEFORE_118_ACTS = {'cy/law/2000/95_I', 'cy/law/2010/59_I'}
 # акты, собранные до правил оговорок для 117(Ι)/2002 и 118(Ι)/2002 (оговорка N — к пункту
 # оговорки N-1, «Νοείται … ότι,» открывает перечень): правила меняют их фрагменты с переводом
 PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {'cy/law/1978/4', 'cy/law/2001/89_I'}
-# акты, где таблицы приложений разбираются по столбцам (columns.py); у 118(Ι) Παράρτημα 2
-# ряды таблиц ставок разделены одной пустой строкой — разбор под них не проверен
-COLUMN_TABLE_ACTS = {'cy/law/2010/59_I'}
+# акты, где таблицы приложений разбираются по столбцам (columns.py)
+COLUMN_TABLE_ACTS = {'cy/law/2010/59_I', 'cy/law/2002/118_I'}
+# из них — таблицы ставок 118(Ι) Παράρτημα 2: шапка через пустую строку, ряд — строка
+STACKED_TABLE_ACTS = {'cy/law/2002/118_I'}
 
 HEADING_MAX = 110
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
@@ -367,7 +368,13 @@ class Parser:
     def parse(self, lines):
         start = schedules_start(lines) if self.act_uid in COLUMN_TABLE_ACTS else None
         if start is not None:
-            lines, self.tables = columns.extract(lines, start, is_page_furniture, ends_table)
+            lines, self.tables = columns.extract(
+                lines,
+                start,
+                is_page_furniture,
+                ends_table,
+                stacked=self.act_uid in STACKED_TABLE_ACTS,
+            )
         all_blocks = layout.blocks(
             lines,
             skip=is_page_furniture,
