@@ -1074,6 +1074,46 @@ class RefsTests(SimpleTestCase):
         self.assertEqual(found, [])
         self.assertEqual(skipped['пункт без номера статьи'], 1)
 
+    def test_amending_act_paragraph_of_amended_article(self):
+        """Пункт без статьи — пункт изменяемой статьи: своей или предка."""
+        marker = refs.Marker(refs.Targets(REF_EIDS), refs.EL, LAW)
+        marker.mark_text(['Το άρθρο 9 του βασικού νόμου τροποποιείται ως ακολούθως:'], 'art_3')
+        cases = [
+            ('με την προσθήκη στο εδάφιο (4) της φράσης «και»·', [LAW + '#art_9.par_4']),
+            ('με την αντικατάσταση του εδαφίου (5) αυτού·', [LAW + '#art_9.par_5']),
+            # нового пункта в законе нет — статья
+            ('με την προσθήκη αμέσως μετά το εδάφιο (7) του ακόλουθου νέου εδαφίου:',
+             [LAW + '#art_9']),
+            # статья в кавычках — новый текст, не изменяемая статья
+            ('με την προσθήκη στο εδάφιο (4) της φράσης «του άρθρου 5 του βασικού νόμου»',
+             [LAW + '#art_9.par_4', LAW + '#art_5']),
+        ]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(marker.mark_text([text], 'art_3.pnt_a')[1], expected)
+        own = marker.mark_text(['Το άρθρο 6 του βασικού νόμου, στο εδάφιο (2)'], 'art_4')
+        self.assertEqual(own[1], [LAW + '#art_6', LAW + '#art_6.par_2'])
+        # две статьи — какая изменяется, неизвестно
+        marker.mark_text(['Τα άρθρα 5 και 6 του βασικού νόμου τροποποιούνται:'], 'art_5')
+        self.assertEqual(marker.mark_text(['στο εδάφιο (2)'], 'art_5.pnt_a')[1], [])
+        self.assertEqual(marker.skipped['пункт без номера статьи'], 1)
+
+    def test_amending_act_insert_after_article(self):
+        """«αμέσως μετά το άρθρο 9» без акта — статья закона; она не изменяемая."""
+        marker = refs.Marker(refs.Targets(REF_EIDS), refs.EL, LAW)
+        _, found = marker.mark_text([
+            'Ο βασικός νόμος τροποποιείται με την προσθήκη, αμέσως μετά το άρθρο 9 '
+            'του ακόλουθου νέου άρθρου: «9Α.-(1) Τηρουμένων των διατάξεων του εδαφίου (2)»',
+        ], 'art_2')
+        self.assertEqual(found, [LAW + '#art_9'])
+        self.assertEqual(marker.skipped['пункт без номера статьи'], 1)
+        ru = refs.Marker(refs.Targets(REF_EIDS), refs.RU, LAW)
+        _, found = ru.mark_text(['добавлением сразу после его статьи 9 новой статьи'], 'art_2')
+        self.assertEqual(found, [LAW + '#art_9'])
+        ru.mark_text(['Статья 9 базового Закона изменяется:'], 'art_3')
+        _, found = ru.mark_text(['заменой в её пункте (4) слов «А»'], 'art_3.pnt_a')
+        self.assertEqual(found, [LAW + '#art_9.par_4'])
+
     def test_translation_ids_follow_greek(self):
         marked = refs.align_ids(
             '<ref id="r1" to="art_9">статьи 9</ref> и <ref id="r2" to="art_8">8</ref>',
