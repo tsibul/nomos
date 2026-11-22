@@ -23,6 +23,16 @@ SUBSECTION_RE = re.compile(r'^\(\d+\)(\s|\()')
 ITEM_RE = re.compile(r'^(«\s*)?(\(\w{1,5}\)|\d+[Α-Ω]{0,3}\.)')
 END_RE = re.compile(r'^\s*(_{5,}|[TΤ]υπώθηκε)')
 HEADER_RE = re.compile(r'^\s*(Ε\.Ε\.\s*Παρ\.|Αρ\.\s*\d+,|Αριθμός\s+\d+|\d{3,5}\s*$)')
+# шапка первой страницы выпуска: номер акта справа вверху, название газеты, приложение, часть
+MASTHEAD_RE = re.compile(
+    r'^\s*(N\.\s*\d+\s*\([ΙI]\)/\d{4}'
+    r'|Κ\.Δ\.Π\.\s*\d+/\d{4}'
+    r'|ΕΠΙΣΗΜΗ ΕΦΗΜΕΡΙΔΑ'
+    r'|ΤΗΣ ΚΥΠΡΙΑΚΗΣ ΔΗΜΟΚΡΑΤΙΑΣ'
+    r'|ΠΑΡΑΡΤΗΜΑ [Α-Ω]+'
+    r'|(ΝΟΜΟΘΕΣΙΑ\s*-\s*)?ΜΕΡΟΣ [ΙI]+'
+    r'|ΚΑΝΟΝΙΣΤΙΚΕΣ ΔΙΟΙΚΗΤΙΚΕΣ ΠΡΑΞΕΙΣ)\s*$'
+)
 # перенос слова в конце строки: «Τροπο- ποιητικός» → «Τροποποιητικός»
 HYPHEN_RE = re.compile(r'([α-ρσ-ωάέήίόύώϊϋΐΰ])- ([α-ωάέήίόύώϊϋΐΰ])')
 # «… των εδαφίων (4) και» — перечень номеров продолжается на следующей строке
@@ -237,6 +247,8 @@ class GazetteParser:
             if END_RE.match(line) and self.article is not None:
                 break
             if HEADER_RE.match(line):
+                continue
+            if self.article is None and MASTHEAD_RE.match(line):
                 continue
             margin, body = split_line(line, column, previous)
             if line.strip():
