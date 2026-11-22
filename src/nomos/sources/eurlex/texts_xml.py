@@ -7,7 +7,9 @@
 import re
 from dataclasses import dataclass, field
 
-from nomos.sources.cylaw.texts_xml import assign_uids, attrs, escape, foreign_parts
+from nomos.sources.cylaw.texts_xml import (
+    amendment_line, assign_uids, attrs, foreign_parts, version_line,
+)
 
 LANGS = ('en', 'el')
 OWN_EXPRESSION_RE = re.compile(r'<expression\b[^>]*\blang="(?:en|el)"')
@@ -78,18 +80,7 @@ def write_act(path, info, fragments, uids):
     for kind, target in info.relations:
         lines.append('  <relation %s />' % attrs([('kind', kind), ('to', target)]))
     for amendment in info.amendments:
-        lines.append('  <amendment %s>%s</amendment>' % (
-            attrs([
-                ('key', amendment.key),
-                ('provision', amendment.provision),
-                ('kind', amendment.kind),
-                ('published-on', amendment.published_on),
-                ('in-force-from', amendment.in_force_from),
-                ('applies-from', amendment.applies_from),
-                ('marker', amendment.marker),
-            ]),
-            escape(amendment.note),
-        ))
+        lines.append(amendment_line(amendment, with_marker=True))
     lines.append('')
     for fragment in fragments:
         lines.append('  <fragment %s>' % attrs([
@@ -100,16 +91,7 @@ def write_act(path, info, fragments, uids):
             ('order-key', fragment.order_key),
         ]))
         for version in fragment.versions:
-            lines.append('    <version %s />' % attrs([
-                ('key', version.key),
-                ('num', version.num),
-                ('heading', version.heading),
-                ('amendment', version.amendment),
-                ('state', '' if version.state == 'active' else version.state),
-                ('valid-from', version.valid_from),
-                ('applies-from', version.applies_from),
-                ('known-from', version.known_from),
-            ]))
+            lines.append(version_line(version, version.num, version.heading))
         lines.append('  </fragment>')
     lines.append('</act>')
     path.parent.mkdir(parents=True, exist_ok=True)

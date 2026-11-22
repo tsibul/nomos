@@ -613,7 +613,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Неофициальный перевод. Перевод выполнен ИИ')
         self.assertNotContains(response, 'Текст неизвестен</p>')
         self.assertNotContains(response, 'Перевод готовится')
-        self.assertContains(response, 'class="crumbs__item"\n        lang="el"')
+        self.assertContains(response, 'class="crumbs__item"\n      lang="el"')
 
     def test_untranslated_article_is_marked(self):
         Expression.objects.create(

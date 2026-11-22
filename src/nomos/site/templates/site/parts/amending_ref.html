@@ -1,0 +1,17 @@
+{% comment %}
+  Изменяющий акт: ссылка или подпись, затем примечание. Параметр ref: label, url, note.
+{% endcomment %}
+
+{% if ref.url %}
+  <a
+    class="{{ link_class }}"
+    href="{{ ref.url }}"
+  >
+    {{ ref.label }}
+  </a>
+{% else %}
+  {{ ref.label }}
+{% endif %}
+{% if ref.note %}
+  — {{ ref.note }}
+{% endif %}

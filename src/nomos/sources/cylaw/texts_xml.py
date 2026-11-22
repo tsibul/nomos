@@ -259,12 +259,8 @@ def headed_uids(uids, headings, old, lost):
     return found
 
 
-def move_to_headings(folder, triples):
-    """Перевод фрагмента, ставшего заголовком, — в атрибут heading записи нового фрагмента.
-
-    Текст записи (абзацы без разметки) становится заголовком; запись потерянного убирается,
-    её примечания переходят в запись нового. Запись нового создаётся, если её нет."""
-    moves = {(uid, key): target for uid, target, key in triples}
+def translation_files(folder):
+    """Файлы переводов папки акта: (путь, текст, {(uid, редакция): запись})."""
     for path in sorted(folder.glob('*.xml')):
         if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
             continue
@@ -273,6 +269,16 @@ def move_to_headings(folder, triples):
             (match.group('uid'), match.group('key')): match
             for match in TEXT_BLOCK_RE.finditer(source)
         }
+        yield path, source, blocks
+
+
+def move_to_headings(folder, triples):
+    """Перевод фрагмента, ставшего заголовком, — в атрибут heading записи нового фрагмента.
+
+    Текст записи (абзацы без разметки) становится заголовком; запись потерянного убирается,
+    её примечания переходят в запись нового. Запись нового создаётся, если её нет."""
+    moves = {(uid, key): target for uid, target, key in triples}
+    for path, source, blocks in translation_files(folder):
         headings = {}
         drop = {}
         for (uid, key), target in moves.items():
@@ -325,14 +331,7 @@ def merge_translations(folder, pairs):
 
     Перевод не меняется, только соединяется так же, как el; записи без пары остаются."""
     into = dict((child, parent) for parent, child in pairs)
-    for path in sorted(folder.glob('*.xml')):
-        if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
-            continue
-        source = path.read_text(encoding='utf-8')
-        blocks = {
-            (match.group('uid'), match.group('key')): match
-            for match in TEXT_BLOCK_RE.finditer(source)
-        }
+    for path, source, blocks in translation_files(folder):
         tails = {}
         drop = set()
         for (uid, key), match in blocks.items():
@@ -399,6 +398,35 @@ def foreign_parts(path, lang):
     return own_extra, kept
 
 
+def amendment_line(amendment, with_marker=False):
+    """Строка <amendment> act.xml; marker есть только у изменений актов ЕС."""
+    fields = [
+        ('key', amendment.key),
+        ('provision', amendment.provision),
+        ('kind', amendment.kind),
+        ('published-on', amendment.published_on),
+        ('in-force-from', amendment.in_force_from),
+        ('applies-from', amendment.applies_from),
+    ]
+    if with_marker:
+        fields.append(('marker', amendment.marker))
+    return '  <amendment %s>%s</amendment>' % (attrs(fields), escape(amendment.note))
+
+
+def version_line(version, num, heading):
+    """Строка <version> act.xml; номер и заголовок передаёт вызывающий."""
+    return '    <version %s />' % attrs([
+        ('key', version.key),
+        ('num', num),
+        ('heading', heading),
+        ('amendment', version.amendment),
+        ('state', '' if version.state == 'active' else version.state),
+        ('valid-from', version.valid_from),
+        ('applies-from', version.applies_from),
+        ('known-from', version.known_from),
+    ])
+
+
 def write_act(path, info, versions, uids):
     """versions: {node: [history.Version]} в порядке обхода дерева."""
     own_extra, kept = foreign_parts(path, info.lang)
@@ -432,17 +460,7 @@ def write_act(path, info, versions, uids):
     for kind, target in info.relations:
         lines.append('  <relation %s />' % attrs([('kind', kind), ('to', target)]))
     for amendment in info.amendments:
-        lines.append('  <amendment %s>%s</amendment>' % (
-            attrs([
-                ('key', amendment.key),
-                ('provision', amendment.provision),
-                ('kind', amendment.kind),
-                ('published-on', amendment.published_on),
-                ('in-force-from', amendment.in_force_from),
-                ('applies-from', amendment.applies_from),
-            ]),
-            escape(amendment.note),
-        ))
+        lines.append(amendment_line(amendment))
     lines.append('')
     for node, node_versions in versions.items():
         lines.append('  <fragment %s>' % attrs([
@@ -453,16 +471,11 @@ def write_act(path, info, versions, uids):
             ('order-key', node.order_key),
         ]))
         for version in node_versions:
-            lines.append('    <version %s />' % attrs([
-                ('key', version.key),
-                ('num', node.num if version.num is None else version.num),
-                ('heading', node.heading if version.heading is None else version.heading),
-                ('amendment', version.amendment),
-                ('state', '' if version.state == 'active' else version.state),
-                ('valid-from', version.valid_from),
-                ('applies-from', version.applies_from),
-                ('known-from', version.known_from),
-            ]))
+            lines.append(version_line(
+                version,
+                node.num if version.num is None else version.num,
+                node.heading if version.heading is None else version.heading,
+            ))
         lines.append('  </fragment>')
     lines.append('</act>')
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,4 @@
-{% extends 'site/base.html' %}
+{% extends 'site/act_base.html' %}
 
 {% load i18n %}
 
@@ -8,30 +8,8 @@
 
 {% block title %}{{ unit_label }} — {{ label }} — Nomos{% endblock %}
 
-{% block header %}
-  {% include 'site/parts/act_header.html' %}
-{% endblock %}
-
-{% block aside %}
-  {% include 'site/parts/sidenav.html' %}
-{% endblock %}
-
-{% block main %}
-  {% include 'site/parts/back_ref.html' %}
-
-  {% include 'site/parts/toolbar.html' %}
-
-  <nav
-    class="crumbs"
-    aria-label="{% translate 'Положение в акте' %}"
-  >
-    <a
-      class="crumbs__link"
-      href="{{ act_url }}"
-    >
-      {% translate 'Оглавление' %}
-    </a>
-  </nav>
+{% block content %}
+  {% include 'site/parts/crumbs.html' %}
 
   <h1
     class="page__title"
@@ -57,19 +35,7 @@
     {% if repealed_by %}
       <p class="repealed__by">
         {% translate 'Исключено:' %}
-        {% if repealed_by.url %}
-          <a
-            class="repealed__link"
-            href="{{ repealed_by.url }}"
-          >
-            {{ repealed_by.label }}
-          </a>
-        {% else %}
-          {{ repealed_by.label }}
-        {% endif %}
-        {% if repealed_by.note %}
-          — {{ repealed_by.note }}
-        {% endif %}
+        {% include 'site/parts/amending_ref.html' with ref=repealed_by link_class='repealed__link' %}
       </p>
     {% endif %}
 
