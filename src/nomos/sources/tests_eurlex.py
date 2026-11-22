@@ -385,6 +385,31 @@ class LinkerTests(SimpleTestCase):
         )
         self.assertIn('to="anx_I"', self.mark('el', 'στο παράρτημα I'))
 
+    def test_annex_of_other_act(self):
+        self.assertIn(
+            '<ref id="r1" to="eu/reg/2011/282#anx_II">Annex II</ref> to Council',
+            self.mark('en', 'set out in Annex II to Council Implementing Regulation (EU)'
+                      ' No 282/2011'),
+        )
+        self.assertIn(
+            'to="eu/reg/2011/282#anx_II">παράρτημα II</ref>',
+            self.mark('el', 'στο παράρτημα II του εκτελεστικού κανονισμού (ΕΕ) αριθ.'
+                      ' 282/2011 του Συμβουλίου'),
+        )
+        self.assertIn(
+            'to="eu/dir/2006/112#anx_III"',
+            self.mark('en', 'point (12) of Annex III to Directive 2006/112/EC'),
+        )
+        self.assertIn('to="anx_I"', self.mark('en', 'Annex I to this Regulation'))
+        self.assertNotIn(
+            '<ref',
+            self.mark('en', 'listed in Annex IX, Part A, to Directive (EU) 2018/2001'),
+        )
+        self.assertNotIn(
+            '<ref',
+            self.mark('el', 'στο παράρτημα V του κανονισμού (ΕΕ) 2015/1189 της Επιτροπής'),
+        )
+
     def test_self_reference(self):
         self.assertNotIn('<ref', self.mark('en', 'this Article 1', own='art_1.par_2'))
 
