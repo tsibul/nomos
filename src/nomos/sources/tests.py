@@ -2864,3 +2864,54 @@ class DefenceContributionLawTests(TestCase):
         eid = 'art_4.par_2.sub_1'
         self.assertIn('ή τα ενοίκια', self.text(eid, datetime.date(2025, 12, 31)))
         self.assertNotIn('ή τα ενοίκια', self.text(eid, datetime.date(2026, 1, 1)))
+
+
+EMPLOYER_FUND_LAWS = ['cy/law/1967/8', 'cy/law/1967/24', 'cy/law/2002/124_I']
+
+
+class EmployerFundLawsTests(TestCase):
+    """Отпуска 8/1967, прекращение занятости 24/1967, фонд соцсплочённости 124(Ι)/2002."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.copy = Path(cls.temp.name) / 'texts'
+        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
+        output = StringIO()
+        for uid in EMPLOYER_FUND_LAWS:
+            call_command('collect_cylaw', uid, texts_dir=str(cls.copy), stdout=output)
+        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls.temp.cleanup()
+
+    def test_rebuild_keeps_files(self):
+        for uid in EMPLOYER_FUND_LAWS:
+            folder = self.copy / uid
+            changed = [
+                path.name
+                for path in folder.iterdir()
+                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
+            ]
+            self.assertEqual(changed, [], uid)
+
+    def test_old_style_schedules_of_law_24_1967(self):
+        """«ΠΡΩΤΟΙ ΠΙΝΑΞ» … «ΤΕΤΑΡΤΟΣ ΠΙΝΑΞ» — приложения 1–4, не пункты части VI."""
+        fragments = Fragment.objects.filter(act__uid='cy/law/1967/24')
+        schedules = fragments.filter(kind='sch').order_by('order_key')
+        self.assertEqual(
+            [fragment.eid for fragment in schedules],
+            ['sch_1', 'sch_2', 'sch_3', 'sch_4'],
+        )
+        self.assertFalse(fragments.filter(kind='par', parent__eid='prt_VI').exists())
+        self.assertEqual(fragments.get(eid='sch_1.par_1').parent.eid, 'sch_1')
+
+    def test_unchanged_since_2024(self):
+        day = datetime.date(2024, 1, 1)
+        for uid in EMPLOYER_FUND_LAWS:
+            fragments = Fragment.objects.filter(act__uid=uid)
+            self.assertTrue(fragments.exists(), uid)
+            for fragment in fragments:
+                self.assertIsNotNone(fragment.version_on(day), fragment.eid)
