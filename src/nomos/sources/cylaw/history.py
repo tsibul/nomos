@@ -145,6 +145,35 @@ def read_splits(path):
     return [item.get('before') for item in root.iter('split')]
 
 
+@dataclass
+class Repeal:
+    """Отмена закона целиком:
+    `<repealed by="<uid>" provision="<eid>" from="…" published="…" />`; сводный текст
+    отменённого закона остаётся, все фрагменты утрачивают силу с `from`. Изменение —
+    `<uid>#base`: отменяющий закон собран отдельным актом, своих изменений по статьям в нём нет."""
+
+    act: str
+    provision: str
+    valid_from: datetime.date
+    known_from: datetime.date
+
+    @property
+    def amendment(self):
+        return '%s#base' % self.act
+
+
+def read_repeal(path):
+    item = ET.parse(path).getroot().find('repealed')
+    if item is None:
+        return None
+    return Repeal(
+        item.get('by'),
+        item.get('provision', ''),
+        parse_date(item.get('from')),
+        parse_date(item.get('published')),
+    )
+
+
 def read_manifest(path):
     """Манифест → (атрибуты закона, список изменяющих актов с изменениями)."""
     root = ET.parse(path).getroot()

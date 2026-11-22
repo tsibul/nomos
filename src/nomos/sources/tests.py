@@ -1892,6 +1892,41 @@ class BasicEarningsOrderTests(TestCase):
         self.assertIn('€220,76', text)
 
 
+class RepealTests(SimpleTestCase):
+    """Закон отменён целиком (19/1963 — 239(Ι)/2025): текст в сводке остаётся."""
+
+    def test_repealed_from(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(
+                '<collect uid="cy/law/1963/19">\n'
+                '  <repealed by="cy/law/2025/239_I" provision="art_2" from="2026-01-01"'
+                ' published="2025-12-31" />\n</collect>\n',
+                encoding='utf-8',
+            )
+            repeal = history.read_repeal(path)
+        base = history.Version(key='base', amendment='cy/law/1963/19#base', paragraphs=['α'])
+        versions = {'art_1': [base]}
+        collect_cylaw.apply_repeal(versions, repeal)
+        expired = versions['art_1'][-1]
+        self.assertEqual(versions['art_1'][0].paragraphs, ['α'])
+        self.assertEqual(
+            (expired.amendment, expired.state, expired.valid_from, expired.known_from),
+            (
+                'cy/law/2025/239_I#base',
+                'repealed',
+                datetime.date(2026, 1, 1),
+                datetime.date(2025, 12, 31),
+            ),
+        )
+
+    def test_not_repealed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text('<collect uid="cy/law/1978/4" />\n', encoding='utf-8')
+            self.assertIsNone(history.read_repeal(path))
+
+
 HEALTH_LAW = 'cy/law/2001/89_I'
 
 
