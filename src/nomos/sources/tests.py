@@ -858,6 +858,25 @@ class RefsTests(SimpleTestCase):
             with self.subTest(text=text):
                 self.assertEqual(self.marked(text, refs.RU)[1], expected)
 
+    def test_russian_point_letters(self):
+        """Кириллическая буква подпункта — по месту в алфавите: (в) — (γ), (е) — (στ)."""
+        eids = [
+            'art_43', 'art_43.par_1', 'art_43.par_1.pnt_g', 'art_43.par_1.pnt_st',
+            'art_43.par_1.pnt_i', 'art_43.par_1.pnt_bb',
+        ]
+        cases = {
+            'пункт (1)(в) статьи 43': ['art_43.par_1.pnt_g'],
+            'пункта (1)(е) статьи 43': ['art_43.par_1.pnt_st'],
+            'пункта (1)(к) статьи 43': ['art_43.par_1.pnt_i'],
+            'пункта (1)(бб) статьи 43': ['art_43.par_1.pnt_bb'],
+            # такого подпункта нет — ближайший предок
+            'пункта (1)(а) статьи 43': ['art_43.par_1'],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                marker = refs.Marker(refs.Targets(eids), refs.RU)
+                self.assertEqual(marker.mark_text([text], 'art_1')[1], expected)
+
     def test_not_marked(self):
         cases = [
             ('του παρόντος άρθρου', refs.EL),

@@ -104,6 +104,13 @@ def translit_upper(suffix):
     return ''.join(TRANSLIT.get(letter, letter) for letter in split_letters(suffix))
 
 
+def greek_numeral(value):
+    """Обратное greek_value для 1…49: 12 → «ιβ», 6 → «στ»."""
+    letters = {number: text for text, number in GREEK_NUMERALS.items()}
+    tens, units = divmod(value, 10)
+    return (letters[tens * 10] if tens else '') + (letters[units] if units else '')
+
+
 def roman_value(text):
     total = 0
     previous = 0
