@@ -1225,6 +1225,45 @@ class RefsTests(SimpleTestCase):
             self.assertEqual(path.read_text(encoding='utf-8'), result)
 
 
+    def test_translation_existing_refs_kept(self):
+        """94(Ι)/2004: пересборка не снимает ручные и уже размеченные ссылки ru; новые —
+        только там, где ссылки нет; ссылка на исчезнувший фрагмент снимается."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'ru.xml'
+            path.write_text(
+                '<texts>\n  <text fragment="u1" version="base">\n'
+                '    <p>согласно <ref id="r1" to="art_9.par_4">подразделу (4)</ref>'
+                ' и <ref id="r2" to="art_5.par_1">подразделу (1) статьи 5</ref>,'
+                ' статье 8 и <ref id="r3" to="art_7">статье 7</ref></p>\n'
+                '  </text>\n</texts>\n',
+                encoding='utf-8',
+            )
+            skipped, _, total = refs.mark_translation(
+                path, refs.Targets(REF_EIDS), {'u1': 'art_9'}, {},
+            )
+            result = path.read_text(encoding='utf-8')
+        self.assertEqual(total, 3)
+        self.assertIn('<ref id="r1" to="art_9.par_4">подразделу (4)</ref>', result)
+        self.assertIn('<ref id="r2" to="art_5.par_1">подразделу (1) статьи 5</ref>', result)
+        self.assertIn('<ref id="r3" to="art_8">статье 8</ref>', result)
+        self.assertIn(' и статье 7</p>', result)
+        self.assertEqual(skipped['прежняя ссылка: цели нет'], 1)
+
+    def test_translation_union_code_article_foreign(self):
+        """«статье 5, пункт 17) Таможенного кодекса Союза» — статья другого акта."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'ru.xml'
+            path.write_text(
+                '<texts>\n  <text fragment="u1" version="base">\n'
+                '    <p>в статье 5, пункт 17) Таможенного кодекса Союза</p>\n'
+                '  </text>\n</texts>\n',
+                encoding='utf-8',
+            )
+            _, _, total = refs.mark_translation(
+                path, refs.Targets(REF_EIDS), {'u1': 'art_2'}, {},
+            )
+        self.assertEqual(total, 0)
+
     def test_translation_heading_only_record_not_text_start(self):
         """95(Ι)/2000: «<text … heading="…" />» перед записью — тело размечается по своему ключу."""
         with tempfile.TemporaryDirectory() as folder:
