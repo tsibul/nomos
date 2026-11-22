@@ -252,6 +252,9 @@ class GazetteParser:
         return self.root
 
     def feed(self, margin, body):
+        if body and self.quote_depth > 0 and self.unclosed_quote(margin, body):
+            # кавычка не закрыта в самой газете (242(Ι)/2025, ст. 3: «…(€450.000)·»)
+            self.quote_depth = 0
         if body and self.quote_depth == 0:
             match = ARTICLE_RE.match(body)
             if match and self.is_next_article(int(match.group('num')), margin):
@@ -296,6 +299,19 @@ class GazetteParser:
             ('».', '»:', '»·', '»\u0387', '»\ua78f', '»;', '»∙')
         ):
             self.flush()
+
+    def unclosed_quote(self, margin, body):
+        """Внутри «цитаты» начинается следующая статья самого акта: номер статьи по порядку,
+        заголовок на поле без кавычки, прежняя фраза закончена."""
+        if self.legacy or self.article is None:
+            return False
+        heading = margin.strip()
+        if not heading or heading.startswith('«'):
+            return False
+        match = ARTICLE_RE.match(body)
+        if not match or int(match.group('num')) != self.expected:
+            return False
+        return self.ends_sentence()
 
     def is_next_article(self, num, margin):
         """Следующая статья; закон может пропустить номер (244(Ι)/2025: за 13 идёт 16) —
