@@ -20,10 +20,12 @@ def pdf_lines(path):
     """Строки PDF с сохранённой раскладкой (poppler pdftotext).
 
     Скан без текстового слоя заменяется выверенной расшифровкой `.txt` в той же
-    раскладке: поля слева, текст с отступом.
+    раскладке: поля слева, текст с отступом. Первый блок расшифровки (до пустой строки) —
+    служебная пометка («Расшифровка скана …»), не текст акта: её строки пустые, номера
+    строк не сдвигаются.
     """
     if Path(path).suffix == '.txt':
-        return Path(path).read_text(encoding='utf-8').split('\n')
+        return drop_header(Path(path).read_text(encoding='utf-8').split('\n'))
     result = subprocess.run(
         ['pdftotext', '-layout', str(path), '-'],
         check=True,
@@ -31,6 +33,14 @@ def pdf_lines(path):
         text=True,
     )
     return [fix_lookalikes(line.replace('\f', '')) for line in result.stdout.split('\n')]
+
+
+def drop_header(lines):
+    """Строки служебной пометки в начале расшифровки → пустые."""
+    if not lines or not lines[0].startswith('Расшифровка'):
+        return lines
+    end = next((index for index, line in enumerate(lines) if not line.strip()), len(lines))
+    return [''] * end + lines[end:]
 
 
 # латинские буквы, набранные в греческом тексте вместо греческих (CyLaw: «αvαφέρovται»)
