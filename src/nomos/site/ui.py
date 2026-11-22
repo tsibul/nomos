@@ -7,7 +7,7 @@
 
 from django.utils import translation
 
-from . import reading
+from . import access, reading
 
 UI_LANGS = reading.UI_LANGS
 
@@ -45,9 +45,11 @@ class InterfaceLanguageMiddleware:
 
 
 def ui(request):
-    """Контекстный процессор: язык интерфейса и хвост адреса для ссылок вне акта."""
+    """Контекстный процессор: язык интерфейса, хвост адреса для ссылок вне акта и режим
+    «только публичное» (посетитель без входа при NOMOS_PUBLIC_ONLY)."""
     lang = reading.interface_lang()
     return {
         'ui_lang': lang,
         'lang_query': lang_query(lang),
+        'public_only': access.is_restricted(),
     }

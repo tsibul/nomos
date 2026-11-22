@@ -1134,6 +1134,33 @@ class PublicOnlyTests(TestCase):
         self.assertEqual(self.client.get(ACT_URL + 'art_1/').status_code, 404)
 
 
+    def test_login_link_and_home_text_follow_sign_in(self):
+        """Без входа: пункт «Войти» и текст главной об актах ЕС; со входом — «Выйти» и прежний."""
+        eu_text = 'Акты ЕС об НДС и VIES'
+        cy_text = 'Законы Кипра об НДС'
+        response = self.client.get('/')
+        self.assertContains(response, 'href="/login/"')
+        self.assertContains(response, eu_text)
+        self.assertNotContains(response, cy_text)
+        response = self.client.get('/login/')
+        self.assertContains(response, 'aria-current="page"\n          >\n            Войти')
+        response = self.client.get('/', {'lang': 'el'})
+        self.assertContains(response, 'href="/login/?lang=el"')
+        self.assertContains(response, 'Σύνδεση')
+        self.assertContains(response, 'Πράξεις της ΕΕ για τον ΦΠΑ και το VIES')
+        self.client.force_login(self.reader)
+        response = self.client.get('/')
+        self.assertNotContains(response, 'href="/login/"')
+        self.assertContains(response, 'action="/logout/"')
+        self.assertContains(response, cy_text)
+        self.assertNotContains(response, eu_text)
+
+    def test_no_login_link_when_everything_is_open(self):
+        with self.settings(NOMOS_PUBLIC_ONLY=False):
+            response = self.client.get('/')
+        self.assertNotContains(response, 'href="/login/"')
+        self.assertContains(response, 'Законы Кипра об НДС')
+
     def test_anonymous_html_has_no_greek_letters(self):
         """Без входа на ru в HTML нет греческих букв: ни текстов, ни названия газеты.
 

@@ -95,3 +95,13 @@ msgstr "Last version in force (as at %(date)s)"
 #: nomos/site/templates/site/repealed.html
 msgid "Все редакции"
 msgstr "All versions"
+
+msgid "Войти"
+msgstr "Sign in"
+
+msgid ""
+"Акты ЕС об НДС и VIES для тех, кто читает по-русски: русский перевод, "
+"редакции на любую дату с 01.01.2024, ссылка на официальный текст."
+msgstr ""
+"EU acts on VAT and VIES for Russian readers: Russian translation, versions "
+"as at any date from 01.01.2024, link to the official text."
