@@ -18,7 +18,7 @@ from nomos.acts.models import (
 from nomos.translate.models import Note
 
 from .cylaw import (
-    consolidated, gazette, history, layout, leginet, numbering, refs, texts_xml,
+    acts, consolidated, gazette, history, layout, leginet, numbering, refs, texts_xml,
 )
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
@@ -190,10 +190,10 @@ class VatLawTests(TestCase):
         self.assertTrue(found.filter(from_text__expression__lang='el').exists())
         self.assertTrue(found.filter(from_text__expression__lang='ru').exists())
         self.assertFalse(found.filter(resolved=False).exists())
-        self.assertFalse(found.filter(to_fragment=None).exists())
-        self.assertFalse(
-            found.exclude(to_fragment__act__uid=LAW).exists(),
-        )
+        # без фрагмента — ссылки на закон целиком («ο περί ΦΠΑ Νόμος»)
+        articles = found.exclude(to_fragment=None)
+        self.assertTrue(articles.exists())
+        self.assertFalse(articles.exclude(to_fragment__act__uid=LAW).exists())
 
     def test_public_only_on_ru_of_laws_kdp_and_eu(self):
         """public — только у ru-выражений кипрских законов, ΚΔΠ и актов ЕС.
@@ -900,6 +900,78 @@ class RefsTests(SimpleTestCase):
             self.assertEqual(total, 1)
             self.assertEqual(differences, [])
 
+class ActMentionsTests(SimpleTestCase):
+    """Упоминание другого акта по названию или номеру → ссылка на акт целиком."""
+
+    index = acts.Index(
+        uids={
+            'cy/law/2000/95_I', 'cy/law/2010/59_I', 'cy/law/2025/245_I',
+            'eu/dir/2022/2523', 'eu/dir/2006/112', 'eu/reg/2010/904',
+        },
+        amending={
+            ('Έκτακτης Εισφοράς για την Άμυνα της Δημοκρατίας', '2025', '4'):
+                'cy/law/2025/245_I',
+        },
+    )
+
+    def marked(self, text, lang='el', own='cy/kdp/2012/52', agreed=()):
+        language = refs.EL if lang == 'el' else refs.RU
+        marker = refs.Marker(
+            refs.Targets(REF_EIDS), language, mentions=acts.Mentions(self.index, lang, own),
+        )
+        marker.agreed = set(agreed)
+        paragraphs, found = marker.mark_text([text], 'art_1')
+        return paragraphs[0], found
+
+    def test_greek_forms(self):
+        cases = {
+            'του περί Κοινωνικών Ασφαλίσεων Νόμου': ['cy/law/2010/59_I'],
+            'τους περί ΦΠΑ Νόμους του 2000 έως (Αρ. 2) του 2025': ['cy/law/2000/95_I'],
+            'ο περί Φόρου Προστιθέμενης Αξίας Νόμος του 1990': [],
+            'του περί Εταιρειών Νόμου': [],
+            'του περί Έκτακτης Εισφοράς για την Άμυνα της Δημοκρατίας (Τροποποιητικού) '
+            '(Αρ. 4) Νόμου του 2025': ['cy/law/2025/245_I'],
+            'τον Νόμο 59(Ι)/2010': ['cy/law/2010/59_I'],
+            'την Οδηγία (ΕΕ) 2022/2523 του Συμβουλίου': ['eu/dir/2022/2523'],
+            'της οδηγίας 2006/112/ΕΚ': ['eu/dir/2006/112'],
+            'του κανονισμού (ΕΕ) αριθ. 904/2010': ['eu/reg/2010/904'],
+            'του Κανονισμού (ΕΕ) 2022/2472': [],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(self.marked(text)[1], expected)
+
+    def test_markup(self):
+        text, _ = self.marked('των άρθρων 10 και 78 του περί Κοινωνικών Ασφαλίσεων Νόμου, αφού')
+        self.assertIn(
+            '<ref id="r1" to="cy/law/2010/59_I">περί Κοινωνικών Ασφαλίσεων Νόμου</ref>, αφού',
+            text,
+        )
+
+    def test_own_act_not_marked(self):
+        self.assertEqual(self.marked('59(Ι)/2010', own='cy/law/2010/59_I')[1], [])
+
+    def test_russian_law_only_agreed(self):
+        text = 'статей 10 и 78 Закона о социальном страховании'
+        self.assertNotIn('cy/law/2010/59_I', self.marked(text, 'ru')[1])
+        found = self.marked(text, 'ru', agreed=['cy/law/2010/59_I'])[1]
+        self.assertIn('cy/law/2010/59_I', found)
+
+    def test_russian_forms(self):
+        agreed = ['cy/law/2000/95_I', 'cy/law/2025/245_I']
+        cases = {
+            'Законов о налоге на добавленную стоимость 2000 года до (№ 2) 2025 года':
+                ['cy/law/2000/95_I'],
+            'Закона о специальном взносе на оборону Республики (о внесении изменений) (№ 4) '
+            '2025 года': ['cy/law/2025/245_I'],
+            'Директива Совета (ЕС) 2022/2523': ['eu/dir/2022/2523'],
+            'Регламент (ЕС) № 904/2010': ['eu/reg/2010/904'],
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(self.marked(text, 'ru', agreed=agreed)[1], expected)
+
+
 class PublicAttributeTests(TestCase):
     """Атрибут public у <expression>: читается загрузчиком, сохраняется при пересборке."""
 
@@ -1091,9 +1163,12 @@ class VatReturnGuideTests(TestCase):
         greek = texts.filter(expression__lang='el')
         self.assertEqual(greek.count(), 145)
         references = Reference.objects.filter(from_text__in=greek)
-        self.assertEqual(references.count(), 28)
-        self.assertFalse(references.filter(resolved=False).exists())
-        self.assertFalse(references.exclude(to_act__uid=LAW).exists())
+        self.assertEqual(references.count(), 31)
+        # бланки 4B, 3A, 14 (cy/form/…, cy/leaflet/…): их текстов в базе нет
+        forms = references.filter(resolved=False)
+        self.assertEqual(forms.count(), 3)
+        self.assertFalse(forms.exclude(to_act=None).exists())
+        self.assertFalse(references.filter(resolved=True).exclude(to_act__uid=LAW).exists())
 
     def test_translation_if_present(self):
         """Русский — если перевод уже есть: фрагменты те же, ссылки разрешены."""
@@ -1108,7 +1183,8 @@ class VatReturnGuideTests(TestCase):
             greek_fragments, set(russian.values_list('version__fragment', flat=True)),
         )
         references = Reference.objects.filter(from_text__in=russian)
-        self.assertFalse(references.filter(resolved=False).exists())
+        self.assertFalse(references.filter(resolved=False).exclude(to_act=None).exists())
+        self.assertEqual(references.filter(resolved=False).count(), 3)
         # заголовки разделов (в el — в act.xml) переведены записями без текста
         headed = FragmentVersion.objects.filter(fragment__act__uid=GUIDE).exclude(heading='')
         self.assertEqual(
