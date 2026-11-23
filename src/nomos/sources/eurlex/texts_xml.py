@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass, field
 
 from nomos.sources.cylaw.texts_xml import (
-    amendment_line, assign_uids, attrs, foreign_parts, version_line,
+    assign_uids, attrs, finish_act, foreign_parts,
 )
 
 LANGS = ('en', 'el')
@@ -75,27 +75,20 @@ def write_act(path, info, fragments, uids):
             ('file', '%s.xml' % lang),
             ('title', info.titles.get(lang, '')),
         ]))
-    for element in kept:
-        lines.append('  ' + element)
-    for kind, target in info.relations:
-        lines.append('  <relation %s />' % attrs([('kind', kind), ('to', target)]))
-    for amendment in info.amendments:
-        lines.append(amendment_line(amendment, with_marker=True))
-    lines.append('')
-    for fragment in fragments:
-        lines.append('  <fragment %s>' % attrs([
-            ('uid', uids[fragment]),
-            ('kind', fragment.kind),
-            ('eid', fragment.eid),
-            ('parent', fragment.parent_eid),
-            ('order-key', fragment.order_key),
-        ]))
-        for version in fragment.versions:
-            lines.append(version_line(version, version.num, version.heading))
-        lines.append('  </fragment>')
-    lines.append('</act>')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    finish_act(
+        path,
+        lines,
+        kept,
+        info,
+        [(fragment, fragment.versions) for fragment in fragments],
+        uids,
+        version_num_heading,
+        with_marker=True,
+    )
+
+
+def version_num_heading(fragment, version):
+    return version.num, version.heading
 
 
 def write_texts(path, act_uid, lang, fragments, uids, mark):
