@@ -1661,6 +1661,80 @@ class FollowTextsTests(SimpleTestCase):
         new = {parent: {'base': 'Ένα.'}}
         self.assertEqual(texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb']), [])
 
+    def test_bridge_word_merge_inserts_word(self):
+        """Слово на стыке («355»), потерянное прежним разбором, вставляется в перевод."""
+        parent = Place('art_4.par_1.pnt_c')
+        uids = {parent: 'aaaaaaaaaa'}
+        old = {
+            'aaaaaaaaaa': {'base': 'άρθρα 349 και'},
+            'bbbbbbbbbb': {'base': 'παράγραφος 1 της ΣΛΕΕ·'},
+        }
+        new = {parent: {'base': 'άρθρα 349 και 355 παράγραφος 1 της ΣΛΕΕ·'}}
+        merged = texts_xml.continued_uids(uids, new, old, ['bbbbbbbbbb'])
+        self.assertEqual(merged, [('aaaaaaaaaa', 'bbbbbbbbbb', '355')])
+        self.assertEqual(texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb']), [
+            ('aaaaaaaaaa', 'bbbbbbbbbb'),
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'ru.xml').write_text(
+                '<texts>\n'
+                '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+                '    <p>статьях 349 и</p>\n'
+                '    <note kind="doubt">обрыв?</note>\n'
+                '  </text>\n'
+                '  <text fragment="bbbbbbbbbb" version="base" review="draft">\n'
+                '    <p>пункт 1 ДФЕС;</p>\n'
+                '  </text>\n'
+                '</texts>\n',
+                encoding='utf-8',
+            )
+            texts_xml.merge_translations(root, merged)
+            result = (root / 'ru.xml').read_text(encoding='utf-8')
+        self.assertEqual(
+            result,
+            '<texts>\n'
+            '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+            '    <p>статьях 349 и 355 пункт 1 ДФЕС;</p>\n'
+            '    <note kind="doubt">обрыв?</note>\n'
+            '  </text>\n'
+            '</texts>\n',
+        )
+
+    def test_bridge_word(self):
+        self.assertEqual(texts_xml.bridge_word('εδάφια (1) και', 'του άρθρου', (
+            'εδάφια (1) και (2) του άρθρου'
+        )), '(2)')
+        self.assertIsNone(texts_xml.bridge_word('349 και', 'παράγραφος', '349 και ή παράγραφος'))
+        self.assertIsNone(texts_xml.bridge_word('349 και', 'παράγραφος', None))
+
+    def test_interleaved_merge(self):
+        """Строка во всю ширину, которую прежний разбор делил на два столбца, склеена."""
+        self.assertTrue(texts_xml.interleaved('Νοείται ότι τα', 'οχήματα', (
+            'Νοείται οχήματα ότι τα'
+        )))
+        self.assertFalse(texts_xml.interleaved('Νοείται ότι', 'οχήματα', 'οχήματα Νοείται ότι'))
+        self.assertFalse(texts_xml.interleaved('Νοείται ότι', 'οχήματα', 'Νοείται ότι τα'))
+        parent = Place('sch_4.prt_A.sub_9')
+        uids = {parent: 'aaaaaaaaaa'}
+        old = {'aaaaaaaaaa': {'base': 'Νοείται ότι τα'}, 'bbbbbbbbbb': {'base': 'οχήματα'}}
+        new = {parent: {'base': 'Νοείται οχήματα ότι τα'}}
+        self.assertEqual(texts_xml.continued_uids(uids, new, old, ['bbbbbbbbbb']), [
+            ('aaaaaaaaaa', 'bbbbbbbbbb', ''),
+        ])
+
+    def test_lost_uid_rehomed_to_same_text(self):
+        """Потерянный uid с тем же текстом, что у фрагмента с новым uid, переходит к нему."""
+        first = Place('sch_4.prt_A.sub_2')
+        second = Place('sch_4.prt_A.sub_3')
+        uids = {first: 'new1new1ne', second: 'new2new2ne'}
+        old = {'aaaaaaaaaa': {'base': '0%'}, 'bbbbbbbbbb': {'base': '0%'}}
+        new = {first: {'base': '0%'}, second: {'base': '0%'}}
+        nums = {first: None, second: None}
+        rehomed = texts_xml.rehomed_uids(uids, new, old, nums, ['aaaaaaaaaa', 'bbbbbbbbbb'])
+        self.assertEqual(rehomed, ['aaaaaaaaaa', 'bbbbbbbbbb'])
+        self.assertEqual(uids, {first: 'aaaaaaaaaa', second: 'bbbbbbbbbb'})
+
     def test_fragment_became_heading(self):
         """Абзац прежнего разбора стал заголовком следующего пункта: перевод — в heading."""
         place = Place('sch_13.prt_I.par_4')
@@ -2389,6 +2463,37 @@ class ExciseLayoutTests(SimpleTestCase):
         # ссылка на закон заглавными у столбца ставок — не заголовок
         reference = [(410, 420, 'N.'), (422, 470, '140(I)/2018')]
         self.assertEqual(customs.split_rate(reference, 408), ([], reference))
+        # строка во всю ширину без просвета у столбца ставок — текст, не ставка
+        proviso = [(200, 240, 'Νοείται'), (245, 400, 'ότι τα οχήματα'), (403, 450, 'που')]
+        self.assertEqual(customs.split_rate(proviso, 400), (proviso, []))
+
+    def test_attach_numbers(self):
+        """Число отдельной строкой под строкой, кончающейся союзом, дописывается к союзу."""
+        words = [(100, 500, 120, 'άρθρα'), (125, 500, 140, '349'), (145, 500, 160, 'και'),
+                 (100, 512, 120, '355')]
+        self.assertEqual(customs.attach_numbers(words), [
+            (100, 500, 120, 'άρθρα'), (125, 500, 140, '349'), (145, 500, 160, 'και 355'),
+        ])
+        # под строкой без союза число — номер страницы, остаётся как есть
+        page = [(100, 500, 120, 'ΣΛΕΕ·'), (300, 512, 310, '17')]
+        self.assertEqual(customs.attach_numbers(page), page)
+
+    def test_join_dangling(self):
+        """Продолжение после «349 και 355» и «(1) και» дописывается к строке."""
+        rows = [
+            ('', 'άρθρα 349 και 355', 60, ''),
+            ('', 'παράγραφος 1 της ΣΛΕΕ·', 60, ''),
+            ('', 'εδάφια (1) και', 60, ''),
+            ('', '(2) του άρθρου 11Β', 60, None),
+            ('', 'Β ή', 60, ''),
+            ('', '(γ) άλλο', 60, None),
+        ]
+        self.assertEqual(customs.join_dangling(rows), [
+            ('', 'άρθρα 349 και 355 παράγραφος 1 της ΣΛΕΕ·', 60, ''),
+            ('', 'εδάφια (1) και (2) του άρθρου 11Β', 60, ''),
+            ('', 'Β ή', 60, ''),
+            ('', '(γ) άλλο', 60, None),
+        ])
 
     def test_split_schedules(self):
         """Каждое «… ΠΑΡΑΡΤΗΜΑ» начинает своё приложение; страница без него — продолжение."""
