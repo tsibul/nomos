@@ -4,12 +4,14 @@ import datetime
 import hashlib
 import os
 import re
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
+from nomos.acts import grouping
 from nomos.acts.models import (
     Act,
     ActRelation,
@@ -18,6 +20,7 @@ from nomos.acts.models import (
     Fragment,
     FragmentText,
     FragmentVersion,
+    NavNode,
     Reference,
 )
 from nomos.sources.cylaw import history, texts_xml
@@ -142,6 +145,7 @@ class Loader:
         for path, element in zip(paths, self.elements):
             self.load_versions(path, element)
         self.load_references()
+        self.load_nav()
         self.stdout.write(
             'актов %d, фрагментов %d, редакций %d, текстов %d, примечаний %d, ссылок %d' % (
                 Act.objects.count(),
@@ -233,6 +237,40 @@ class Loader:
             if target is None:
                 raise CommandError('%s: нет акта %s' % (act.uid, item.get('to')))
             ActRelation.objects.create(from_act=act, to_act=target, kind=item.get('kind'))
+
+    def load_nav(self):
+        """Каркас меню из nav.xml; затем — акты, которые в меню не попали, для проверки."""
+        path = self.root_dir / 'nav.xml'
+        if not path.exists():
+            self.stdout.write('нет nav.xml: меню пусто')
+            return
+        self.nav_order = 0
+        for element in ET.parse(path).getroot():
+            self.load_nav_node(element, None)
+        missing = NavNode.objects.exclude(act_uid='').filter(act__isnull=True)
+        for node in missing:
+            self.stdout.write('в меню, но не загружен: %s' % node.act_uid)
+        loose = grouping.unattached()
+        self.stdout.write('актов без связи с основным актом: %d' % len(loose))
+        for act in loose:
+            self.stdout.write('  %s' % act.uid)
+
+    def load_nav_node(self, element, parent):
+        # <changes> раздела «Аналитика» — страницы на дату, пока не делаются
+        if element.tag not in ('section', 'item'):
+            return
+        self.nav_order += 1
+        uid = element.get('act', '')
+        node = NavNode.objects.create(
+            parent=parent,
+            key=element.get('key', ''),
+            label=element.get('label', ''),
+            order=self.nav_order,
+            act_uid=uid,
+            act=self.acts.get(uid),
+        )
+        for child in element:
+            self.load_nav_node(child, node)
 
     def load_versions(self, path, element):
         act = self.acts[element.get('uid')]
@@ -333,6 +371,7 @@ class Command(BaseCommand):
         with transaction.atomic():
             # редакции защищают изменения от удаления: сначала они
             FragmentVersion.objects.all().delete()
+            NavNode.objects.all().delete()
             Amendment.objects.all().delete()
             Act.objects.all().delete()
             Loader(root, self.stdout, settings.NOMOS_PUBLIC_ONLY).run()

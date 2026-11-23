@@ -19,6 +19,7 @@ urlpatterns = [
     ),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
     path('<str:jurisdiction>/', views.act_list, name='section'),
+    path('<str:jurisdiction>/<str:subsection>/', views.act_list, name='subsection'),
     # /<акт>/[@<дата>/][<eid>/][history/][<язык>/] — разбор в reading.parse_path
     re_path(r'^(?P<path>(?:[^/]+/){3,8})$', views.read, name='read'),
 ]

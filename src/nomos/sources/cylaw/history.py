@@ -145,6 +145,14 @@ def read_splits(path):
     return [item.get('before') for item in root.iter('split')]
 
 
+
+def read_relations(path):
+    """Связи закона из манифеста: `<relation kind="related" to="eu/dir/2006/112" />`
+    прямо в `<collect>` → [(вид, uid)]; пересборка переносит их в act.xml."""
+    root = ET.parse(path).getroot()
+    return [(item.get('kind'), item.get('to')) for item in root.findall('relation')]
+
+
 @dataclass
 class SourceFix:
     """Ошибка сводного текста источника:

@@ -21,13 +21,13 @@
         {% endif %}
       </p>
       <div class="hero__actions">
-        {% if base %}
+        {% if first %}
           <a
             class="hero__button hero__button--primary"
-            href="{{ base.0.url }}"
-            lang="{{ base.0.short.lang }}"
+            href="{{ first.url }}"
+            lang="{{ first.short.lang }}"
           >
-            {{ base.0.short }}
+            {{ first.short }}
           </a>
         {% endif %}
         <a
@@ -49,23 +49,36 @@
   </h1>
 
   {% if has_acts %}
-    {% if base %}
-      <ul class="acts__cards">
-        {% for entry in base %}
-          <li class="acts__card">
-            {% include 'site/parts/act_entry.html' %}
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-
     {% for group in groups %}
-      <details class="acts__group">
-        <summary class="acts__summary">
-          {{ group.title }}, {{ group.entries|length }}
-        </summary>
-        {% include 'site/parts/act_entries.html' with entries=group.entries %}
-      </details>
+      <section class="acts__section">
+        {% if group.title %}
+          <h2 class="acts__heading">
+            <a
+              class="acts__heading-link"
+              href="{{ group.url }}{{ lang_query }}"
+            >
+              {{ group.title }}
+            </a>
+          </h2>
+        {% endif %}
+        <ul class="acts__cards">
+          {% for item in group.items %}
+            <li class="acts__card{% if not item.entry %} acts__card--missing{% endif %}">
+              {% if item.entry %}
+                {% include 'site/parts/act_entry.html' with entry=item.entry %}
+                {% include 'site/parts/act_blocks.html' with blocks=item.blocks %}
+              {% else %}
+                <span class="acts__name">
+                  {{ item.label }}
+                </span>
+                <span class="acts__missing">
+                  {% translate 'не загружен' %}
+                </span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </section>
     {% endfor %}
   {% else %}
     <p class="acts__empty">

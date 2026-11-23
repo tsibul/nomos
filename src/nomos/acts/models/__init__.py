@@ -6,6 +6,7 @@ from .fragment import Fragment
 from .fragment_alias import FragmentAlias
 from .fragment_text import FragmentText
 from .fragment_version import FragmentVersion
+from .nav_node import NavNode
 from .reference import Reference
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     'FragmentAlias',
     'FragmentText',
     'FragmentVersion',
+    'NavNode',
     'Reference',
 ]

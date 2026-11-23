@@ -3,6 +3,11 @@
   class="acts__link"
   href="{{ entry.url }}"
 >
+  {% if entry.nav_label %}
+    <span class="acts__name">
+      {{ entry.nav_label }}
+    </span>
+  {% endif %}
   <span
     class="acts__label"
     lang="{{ entry.short.lang }}"

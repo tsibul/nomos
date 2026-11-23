@@ -1,0 +1,8 @@
+{% for block in blocks %}
+  <details class="acts__group">
+    <summary class="acts__summary">
+      {{ block.title }}, {{ block.entries|length }}
+    </summary>
+    {% include 'site/parts/act_entries.html' with entries=block.entries %}
+  </details>
+{% endfor %}

@@ -324,6 +324,7 @@ class Command(BaseCommand):
         report = []
 
         info = law_info(manifest)
+        info.relations.extend(history.read_relations(folder / 'collect.xml'))
         if manifest.get('layout') == 'amending':
             self.collect_amending(root_dir, manifest['file'], folder, info, remarks, report)
             return

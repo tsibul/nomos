@@ -14,9 +14,10 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase, override_settings
 
+from nomos.acts import grouping
 from nomos.acts.models import (
     Act, ActRelation, Amendment, Expression, Fragment, FragmentText, FragmentVersion,
-    Reference,
+    NavNode, Reference,
 )
 from nomos.translate.models import Note
 
@@ -3542,3 +3543,128 @@ class PublicOnlyLoadTests(TestCase):
         self.assertEqual(
             self.load(public_only=False, body=''), {'cy/law/2000/1_I', 'cy/form/vat/4B'},
         )
+
+
+class NavLoadTests(TestCase):
+    """nav.xml: каркас меню в NavNode; акты по связям у основных актов; акты вне меню."""
+
+    ACTS = (
+        ('cy/law/2000/95_I', 'cy', 'law', ['related eu/dir/2006/112']),
+        ('cy/kdp/2010/290', 'cy', 'kdp', ['based_on cy/law/2000/95_I']),
+        ('cy/kdp/2024/1', 'cy', 'kdp', ['amends cy/kdp/2010/290']),
+        ('cy/form/vat/4', 'cy', 'form', ['based_on cy/law/2000/95_I']),
+        ('cy/instr/2024/guide', 'cy', 'instr', ['explains cy/law/2000/95_I']),
+        ('cy/law/2024/7_I', 'cy', 'law', ['amends cy/law/2000/95_I']),
+        ('cy/law/1967/8', 'cy', 'law', []),
+        ('eu/dir/2006/112', 'eu', 'dir', []),
+        ('eu/dir/2022/542', 'eu', 'dir', ['amends eu/dir/2006/112']),
+    )
+
+    NAV = (
+        '<nav>\n'
+        '  <section key="cy" label="Кипр">\n'
+        '    <section key="taxes" label="Налоги">\n'
+        '      <item act="cy/law/2000/95_I" label="НДС" />\n'
+        '      <item act="cy/law/2002/118_I" label="Подоходный налог" />\n'
+        '    </section>\n'
+        '  </section>\n'
+        '  <section key="eu" label="ЕС">\n'
+        '    <section key="vat" label="НДС">\n'
+        '      <item act="eu/dir/2006/112" />\n'
+        '    </section>\n'
+        '  </section>\n'
+        '  <section key="analytics" label="Аналитика">\n'
+        '    <changes date="2026-01-01" scope="cy/taxes" />\n'
+        '  </section>\n'
+        '</nav>\n'
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for uid, jurisdiction, kind, relations in cls.ACTS:
+                path = root / uid / 'act.xml'
+                path.parent.mkdir(parents=True)
+                lines = [
+                    '<relation kind="%s" to="%s" />' % tuple(item.split())
+                    for item in relations
+                ]
+                path.write_text(
+                    '<?xml version="1.0" encoding="utf-8"?>\n'
+                    '<act uid="%s" jurisdiction="%s" kind="%s">\n%s\n</act>\n'
+                    % (uid, jurisdiction, kind, '\n'.join(lines)),
+                    encoding='utf-8',
+                )
+            (root / 'nav.xml').write_text(cls.NAV, encoding='utf-8')
+            output = StringIO()
+            call_command('load_texts', texts_dir=folder, stdout=output)
+        cls.output = output.getvalue()
+
+    def test_tree(self):
+        top = NavNode.objects.filter(parent=None)
+        self.assertEqual([node.key for node in top], ['cy', 'eu', 'analytics'])
+        item = NavNode.objects.get(act_uid='cy/law/2000/95_I')
+        self.assertEqual(item.act.uid, 'cy/law/2000/95_I')
+        self.assertEqual((item.label, item.parent.keys()), ('НДС', ['cy', 'taxes']))
+        missing = NavNode.objects.get(act_uid='cy/law/2002/118_I')
+        self.assertIsNone(missing.act)
+        # <changes> пока не загружается
+        self.assertFalse(NavNode.objects.filter(parent__key='analytics').exists())
+        self.assertIn('в меню, но не загружен: cy/law/2002/118_I', self.output)
+
+    def test_blocks_by_relations(self):
+        law = Act.objects.get(uid='cy/law/2000/95_I')
+        blocks = grouping.Relations().blocks(law, grouping.main_act_ids())
+        uids = {block: [act.uid for act in acts] for block, acts in blocks.items()}
+        self.assertEqual(
+            uids,
+            {
+                grouping.AMENDING: ['cy/law/2024/7_I'],
+                # изменяющая ΚΔΠ — у закона, в блоке своей ΚΔΠ
+                grouping.SUBSIDIARY: ['cy/kdp/2010/290', 'cy/kdp/2024/1'],
+                grouping.FORMS: ['cy/form/vat/4', 'cy/instr/2024/guide'],
+                grouping.EU: ['eu/dir/2006/112'],
+            },
+        )
+
+    def test_main_act_does_not_pull_other_main_acts_relations(self):
+        directive = Act.objects.get(uid='eu/dir/2006/112')
+        blocks = grouping.Relations().blocks(directive, grouping.main_act_ids())
+        self.assertEqual(
+            {block: [act.uid for act in acts] for block, acts in blocks.items()},
+            {grouping.AMENDING: ['eu/dir/2022/542']},
+        )
+
+    def test_unattached_listed(self):
+        self.assertEqual([act.uid for act in grouping.unattached()], ['cy/law/1967/8'])
+        self.assertIn('актов без связи с основным актом: 1\n  cy/law/1967/8', self.output)
+
+    def test_without_nav_menu_is_empty(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = StringIO()
+            call_command('load_texts', texts_dir=folder, stdout=output)
+        self.assertIn('нет nav.xml: меню пусто', output.getvalue())
+        self.assertFalse(NavNode.objects.exists())
+
+
+class ManifestRelationsTests(SimpleTestCase):
+    """`<relation>` в collect.xml: связи закона, которые сборка пишет в act.xml."""
+
+    def test_read_relations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(
+                '<collect uid="cy/law/2000/95_I">\n'
+                '  <relation kind="related" to="eu/dir/2006/112" />\n'
+                '  <amending uid="cy/law/2024/10_I">\n'
+                '    <relation kind="amends" to="cy/law/2000/95_I" />\n'
+                '  </amending>\n'
+                '</collect>\n',
+                encoding='utf-8',
+            )
+            # связи внутри <amending> не берутся: только прямые дети <collect>
+            self.assertEqual(
+                history.read_relations(path),
+                [('related', 'eu/dir/2006/112')],
+            )
