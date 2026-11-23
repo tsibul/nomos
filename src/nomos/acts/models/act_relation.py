@@ -9,6 +9,8 @@ class ActRelation(models.Model):
         REPEALS = 'repeals', 'Отменяет'
         CORRECTS = 'corrects', 'Исправляет (corrigendum)'
         EXPLAINS = 'explains', 'Разъясняет'
+        # из кипрского закона к связанному акту: ЕС, МСФО и др.
+        RELATED = 'related', 'Связанный акт'
 
     from_act = models.ForeignKey('Act', on_delete=models.CASCADE, related_name='relations_out')
     to_act = models.ForeignKey('Act', on_delete=models.CASCADE, related_name='relations_in')

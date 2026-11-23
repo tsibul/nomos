@@ -84,14 +84,7 @@
       </div>
     {% endif %}
 
-    {% if amended_by %}
-      <details class="acts__group">
-        <summary class="acts__summary">
-          {% translate 'Редакции: изменяющие акты,' %} {{ amended_by|length }}
-        </summary>
-        {% include 'site/parts/act_entries.html' with entries=amended_by %}
-      </details>
-    {% endif %}
+    {% include 'site/parts/act_blocks.html' %}
   </section>
 
   {# на широком экране оглавление — в левой колонке, здесь только на телефоне #}
