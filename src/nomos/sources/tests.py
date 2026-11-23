@@ -1248,6 +1248,8 @@ class RefsTests(SimpleTestCase):
              'пункт с уточнением (другая статья или акт)'),
             ('пункта (2) Ν. 95(Ι)/2000', refs.RU, 'art_5.par_1',
              'пункт с уточнением (другая статья или акт)'),
+            ('пункта (2) Десятого приложения', refs.RU, 'art_5.par_1',
+             'пункт с уточнением (другая статья или акт)'),
             ('του εδαφίου (2)', refs.EL, 'sch_1', 'пункт без номера статьи'),
         ]
         for text, language, own, reason in cases:
@@ -1271,6 +1273,12 @@ class RefsTests(SimpleTestCase):
         self.assertEqual(self.marked('пункта 9(4) или (5)', refs.RU)[1],
                          ['art_9.par_4', 'art_9.par_5'])
         self.assertEqual(self.marked('пункта 5(β)', refs.RU)[1], [])
+
+    def test_russian_paragraph_number_in_schedule(self):
+        """В приложении «пункта 9(4)» — пункт самого приложения, не статья 9."""
+        self.assertEqual(self.marked('пункта 9(4) или (5)', refs.RU, 'sch_1.par_2')[1], [])
+        self.assertEqual(self.marked('статьи 9(4)', refs.RU, 'sch_1.par_2')[1],
+                         ['art_9.par_4'])
 
     def amending(self, paragraphs, language=refs.EL, implicit=False):
         marker = refs.Marker(refs.Targets(REF_EIDS), language, LAW, implicit=implicit)
