@@ -27,6 +27,19 @@ ARTICLE_RE = re.compile(rf'^({NUMBER})\.')
 PUNCTUATION_RE = re.compile(r'^[.,·;:ꞏ∙]$')
 PUNCTUATION_DX = 3
 PUNCTUATION_DY = 10
+# союз в конце строки: фраза продолжается на следующей («στα άρθρα 349 και» / «355»)
+CONNECTORS = ('και', 'ή')
+# число отдельной строкой сразу под строкой, кончающейся союзом, — текст, не номер
+# страницы; насколько ниже, pt (шаг строк около 12,6)
+NUMBER_DY = 15
+NUMBER_RE = re.compile(r'^\d+$')
+# строка кончается союзом и числом, дописанным attach_numbers («349 και 355»): просвет
+# под ней — от снятого числа, следующая строка продолжает фразу
+DANGLING_NUMBER_RE = re.compile(r'\s(?:και|ή)\s\d+$')
+# перечень номеров через перенос строки: «σύμφωνα με τα εδάφια (1) και» / «(2) του άρθρου
+# 11Β» — «(2)» не начинает пункт
+ENUMERATION_RE = re.compile(r'\(\d+\)\s(?:και|ή)$')
+ENUMERATED_RE = re.compile(r'^\(\d+\)\s')
 PART_RE = re.compile(r'^ΜΕΡΟΣ\s')
 # заголовок Μέρους или Κεφαλαίου, к которому присоединяется название заглавными
 HEADING_START_RE = re.compile(r'^(ΜΕΡΟΣ|ΚΕΦΑΛΑΙΟ)\s')
@@ -155,6 +168,56 @@ def attach_punctuation(words):
                 y = min(before, key=lambda other: abs(other[1] - y))[1]
         fixed.append((x0, y, x1, text))
     return fixed
+
+
+def attach_numbers(words):
+    """Число отдельной строкой под строкой, кончающейся союзом («349 και» / «355»), — её
+    продолжение: оно дописывается к союзу, иначе leginet.rows снял бы его как номер
+    страницы."""
+    fixed = list(words)
+    for word in words:
+        x0, y, x1, text = word
+        if not NUMBER_RE.match(text):
+            continue
+        if any(other is not word and abs(other[1] - y) <= HEADING_SHIFT for other in words):
+            continue
+        above = [other for other in words if 0 < y - other[1] <= NUMBER_DY]
+        if not above:
+            continue
+        line_y = max(other[1] for other in above)
+        last = max(
+            (other for other in above if abs(other[1] - line_y) <= HEADING_SHIFT),
+            key=lambda other: other[2],
+        )
+        if last[3] not in CONNECTORS or last not in fixed:
+            continue
+        index = fixed.index(last)
+        fixed[index] = (last[0], last[1], last[2], last[3] + ' ' + text)
+        fixed.remove(word)
+    return fixed
+
+
+def join_dangling(all_rows):
+    """Продолжение фразы, оборванной союзом, дописывается к её строке: после «349 και 355»
+    (DANGLING_NUMBER_RE) — и через пустую строку, после «εδάφια (1) και» — строка «(2) …»
+    без просвета, и «(2)» не начинает пункт. Строка с текстом на поле не дописывается: на
+    ней начинается заголовок."""
+    result = []
+    for row in all_rows:
+        margin, body, indent, gap = row
+        previous = next((index for index in range(len(result) - 1, -1, -1)
+                         if result[index][1]), None)
+        before = result[previous][1] if previous is not None else ''
+        dangling = gap in (None, '') and DANGLING_NUMBER_RE.search(before)
+        enumerated = (
+            gap is None and ENUMERATION_RE.search(before) and ENUMERATED_RE.match(body)
+        )
+        if body and not margin and (dangling or enumerated):
+            before = result[previous]
+            result[previous] = (before[0], before[1] + ' ' + body, before[2], before[3])
+            continue
+        result.append(row)
+    return result
 
 
 def mark_articles(all_rows, toc=None):
@@ -381,6 +444,10 @@ def split_rate(parts, left):
     for index, (x0, _, word) in enumerate(parts):
         previous = parts[index - 1] if index else None
         after_gap = previous is None or x0 - previous[1] >= RATE_GAP
+        if x0 >= left and not after_gap:
+            # без просвета у столбца ставок строка идёт во всю ширину: текст, не ставка
+            # (оговорка «Νοείται …» Τέταρτο Παράρτημα, примечания под Πρώτο Παράρτημα)
+            return parts, []
         if x0 >= left or (RATE_RE.match(word) and after_gap and x0 >= left - RATE_REACH):
             return parts[:index], parts[index:]
     return parts, []
@@ -498,7 +565,8 @@ def marked_lines(path):
     pages = [attach_punctuation(words) for words in leginet.pdf_words(path)]
     columns = columns_of(pages)
     body_pages, schedule_pages = split_schedule(pages, columns)
-    raw_rows = leginet.rows(path, columns, body_pages)
+    body_pages = [attach_numbers(words) for words in body_pages]
+    raw_rows = join_dangling(leginet.rows(path, columns, body_pages))
     start = text_start(mark_articles(raw_rows))
     toc = toc_headings(raw_rows[:start])
     all_rows = mark_articles(raw_rows[start:], toc)

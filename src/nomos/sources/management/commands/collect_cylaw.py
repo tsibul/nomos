@@ -234,8 +234,10 @@ def write(folder, info, versions, notes=(), marker=None):
     eids = {uid: eid for eid, uid in texts_xml.existing_uids(act_path).items()}
     uids = texts_xml.follow_texts(info, uids, current, previous, nums, eids)
     lost = texts_xml.lost_uids(folder, uids)
-    merged = texts_xml.merged_uids(uids, current, previous, [uid for _, uid in lost])
-    joined = {uid for _, uid in merged}
+    rehomed = set(texts_xml.rehomed_uids(uids, current, previous, nums, [uid for _, uid in lost]))
+    lost = [(eid, uid) for eid, uid in lost if uid not in rehomed]
+    merged = texts_xml.continued_uids(uids, current, previous, [uid for _, uid in lost])
+    joined = {uid for _, uid, _ in merged}
     lost = [(eid, uid) for eid, uid in lost if uid not in joined]
     headings = {
         node: {version.key: version.heading or node.heading for version in node_versions}
