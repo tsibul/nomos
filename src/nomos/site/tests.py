@@ -1580,24 +1580,30 @@ class PrefixUrlTests(UrlPrefixMixin, TestCase):
         self.assertNotContains(response, 'back-ref')
 
 
+def run_python(code, env):
+    """Код в отдельном процессе Python из src/, с переменными env поверх окружения и без
+    DJANGO_SETTINGS_MODULE: настройки читаются заново."""
+    env = dict(os.environ, **env)
+    env.pop('DJANGO_SETTINGS_MODULE', None)
+    return subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
 class UrlPrefixSettingsTests(TestCase):
     """settings.py: подпуть из .env без лишних слешей; пусто — корень."""
 
     def settings_for(self, value):
-        env = dict(os.environ, NOMOS_URL_PREFIX=value)
-        env.pop('DJANGO_SETTINGS_MODULE', None)
         code = (
             'from nomos import settings as s; '
             'print(repr(s.NOMOS_URL_PREFIX), s.FORCE_SCRIPT_NAME, s.STATIC_URL, '
             's.SESSION_COOKIE_PATH, s.CSRF_COOKIE_PATH)'
         )
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            cwd=Path(__file__).resolve().parents[2],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        result = run_python(code, {'NOMOS_URL_PREFIX': value})
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.split()
 
@@ -1614,19 +1620,11 @@ class HomeLinkSettingsTests(TestCase):
     """settings.py: ссылка на внешний сайт из .env; подпись по умолчанию — адрес."""
 
     def settings_for(self, url, label):
-        env = dict(os.environ, NOMOS_HOME_URL=url, NOMOS_HOME_LABEL=label)
-        env.pop('DJANGO_SETTINGS_MODULE', None)
         code = (
             'from nomos import settings as s; '
             'print(repr((s.NOMOS_HOME_URL, s.NOMOS_HOME_LABEL)))'
         )
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            cwd=Path(__file__).resolve().parents[2],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        result = run_python(code, {'NOMOS_HOME_URL': url, 'NOMOS_HOME_LABEL': label})
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
 

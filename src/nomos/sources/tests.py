@@ -151,6 +151,19 @@ class CollectedTextsTests(TestCase):
             if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
         ]
 
+    def unapplied_problems(self):
+        """Строки отчёта о неснятых изменениях: кроме примечаний, правок источника и замен
+        целиком без прежнего текста."""
+        return [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and ':note →' not in line
+                and 'правка источника' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+            or 'положения нет' in line
+        ]
+
     def version(self, eid, day):
         return Fragment.objects.get(act__uid=self.main_uid, eid=eid).version_on(day)
 
@@ -488,6 +501,14 @@ def parse_body(*lines, act_uid='cy/law/1978/4'):
     return consolidated.Parser(act_uid).parse(rows)
 
 
+def definition_eids(*lines):
+    """eid ст. 2 после разметки определений в теле из строк lines."""
+    root = parse_body(*lines)
+    article = next(node for node in root.walk() if node.eid == 'art_2')
+    consolidated.mark_definitions(article)
+    return [node.eid for node in root.walk() if node.eid.startswith('art_2')]
+
+
 class ConsolidatedTests(SimpleTestCase):
     def test_article_paragraph_point_in_one_line(self):
         """«51Α. (1)(α)» и «42.―(1)» (U+2015): статья, εδάφιο и пункт в одной строке."""
@@ -500,15 +521,12 @@ class ConsolidatedTests(SimpleTestCase):
 
     def test_definitions_in_article_without_subsections(self):
         """Ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи."""
-        root = parse_body(
+        eids = definition_eids(
             '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
             '«Οργανισμός» σημαίνει τον Οργανισμό Ασφάλισης Υγείας·',
             '«Υπουργός» σημαίνει τον Υπουργό Υγείας.',
             '3. Άλλο.',
         )
-        article = next(node for node in root.walk() if node.eid == 'art_2')
-        consolidated.mark_definitions(article)
-        eids = [node.eid for node in root.walk() if node.eid.startswith('art_2')]
         self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_ypoyrgos'])
 
     def test_article_2_without_definitions(self):
@@ -596,15 +614,12 @@ class ConsolidatedTests(SimpleTestCase):
 
     def test_definition_repeated_term(self):
         """Один термин дважды (205(Ι)/2012, DAC6 и DAC9): второй — `def_<slug>_2`."""
-        root = parse_body(
+        eids = definition_eids(
             '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
             '«Οργανισμός» σημαίνει πρώτη έννοια·',
             '«Οργανισμός» σημαίνει δεύτερη έννοια.',
             '3. Άλλο.',
         )
-        article = next(node for node in root.walk() if node.eid == 'art_2')
-        consolidated.mark_definitions(article)
-        eids = [node.eid for node in root.walk() if node.eid.startswith('art_2')]
         self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_organismos_2'])
 
     def test_history_with_heading(self):
@@ -2031,29 +2046,13 @@ FUND_ACCOUNTS = 'cy/kdp/2010/290'
     (TEXTS_DIR / FUND_ACCOUNTS / 'collect.xml').exists(),
     'нет Nomos-texts с регламентом ΚΔΠ 290/2010',
 )
-class FundAccountsRegulationsTests(TestCase):
+class FundAccountsRegulationsTests(CollectedTextsTests):
     """Регламент о счетах фонда ΚΔΠ 290/2010: расшифровка скана, проценты взносов по счетам."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', FUND_ACCOUNTS, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = (FUND_ACCOUNTS,)
 
     def test_rebuild_keeps_files(self):
-        changed = [
-            path.name
-            for path in (self.copy / FUND_ACCOUNTS).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / FUND_ACCOUNTS / path.name, shallow=False)
-        ]
+        changed = self.differing(FUND_ACCOUNTS)
         self.assertEqual(changed, [])
 
     def test_based_on_law(self):
@@ -2093,29 +2092,13 @@ BENEFITS = 'cy/kdp/2010/288'
     (TEXTS_DIR / BENEFITS / 'collect.xml').exists(),
     'нет Nomos-texts с регламентом ΚΔΠ 288/2010',
 )
-class BenefitsRegulationsTests(TestCase):
+class BenefitsRegulationsTests(CollectedTextsTests):
     """Регламент о пособиях ΚΔΠ 288/2010: расшифровка скана, сроки подачи и выплаты."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', BENEFITS, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = (BENEFITS,)
 
     def test_rebuild_keeps_files(self):
-        changed = [
-            path.name
-            for path in (self.copy / BENEFITS).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / BENEFITS / path.name, shallow=False)
-        ]
+        changed = self.differing(BENEFITS)
         self.assertEqual(changed, [])
 
     def test_based_on_law(self):
@@ -2226,16 +2209,7 @@ class HealthSystemLawTests(CollectedTextsTests):
 
     def test_all_ops_applied(self):
         """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
-        problems = [
-            line.strip()
-            for line in self.report.splitlines()
-            if ('→' in line and ':note →' not in line
-                and 'правка источника' not in line
-                and not line.endswith(('не применено', 'прежний текст не приведён')))
-            or 'не найдена' in line
-            or 'положения нет' in line
-        ]
-        self.assertEqual(problems, [])
+        self.assertEqual(self.unapplied_problems(), [])
 
     def test_dental_proviso_from_law_29_2025(self):
         eid = 'art_22.par_5A'
@@ -2856,16 +2830,7 @@ class IncomeTaxLawTests(CollectedTextsTests):
 
     def test_all_ops_applied(self):
         """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
-        problems = [
-            line.strip()
-            for line in self.report.splitlines()
-            if ('→' in line and ':note →' not in line
-                and 'правка источника' not in line
-                and not line.endswith(('не применено', 'прежний текст не приведён')))
-            or 'не найдена' in line
-            or 'положения нет' in line
-        ]
-        self.assertEqual(problems, [])
+        self.assertEqual(self.unapplied_problems(), [])
 
     def test_structure(self):
         eids = set(Fragment.objects.filter(act__uid=INCOME_TAX_LAW).values_list('eid', flat=True))

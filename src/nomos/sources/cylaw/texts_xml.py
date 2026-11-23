@@ -554,27 +554,38 @@ def write_act(path, info, versions, uids):
     names = {name for name, _ in own}
     own += [(name, value) for name, value in own_extra.items() if name not in names]
     lines.append('  <expression %s />' % attrs(own))
+    finish_act(path, lines, kept, info, versions.items(), uids, node_num_heading)
+
+
+def node_num_heading(node, version):
+    """Номер и заголовок редакции: свои у версии, иначе — узла."""
+    return (
+        node.num if version.num is None else version.num,
+        node.heading if version.heading is None else version.heading,
+    )
+
+
+def finish_act(path, lines, kept, info, fragments, uids, num_heading, with_marker=False):
+    """Хвост act.xml после <expression> и запись файла.
+
+    fragments — пары (фрагмент, версии); num_heading(фрагмент, версия) → (номер, заголовок)."""
     for element in kept:
         lines.append('  ' + element)
     for kind, target in info.relations:
         lines.append('  <relation %s />' % attrs([('kind', kind), ('to', target)]))
     for amendment in info.amendments:
-        lines.append(amendment_line(amendment))
+        lines.append(amendment_line(amendment, with_marker=with_marker))
     lines.append('')
-    for node, node_versions in versions.items():
+    for fragment, fragment_versions in fragments:
         lines.append('  <fragment %s>' % attrs([
-            ('uid', uids[node]),
-            ('kind', node.kind),
-            ('eid', node.eid),
-            ('parent', node.parent_eid),
-            ('order-key', node.order_key),
+            ('uid', uids[fragment]),
+            ('kind', fragment.kind),
+            ('eid', fragment.eid),
+            ('parent', fragment.parent_eid),
+            ('order-key', fragment.order_key),
         ]))
-        for version in node_versions:
-            lines.append(version_line(
-                version,
-                node.num if version.num is None else version.num,
-                node.heading if version.heading is None else version.heading,
-            ))
+        for version in fragment_versions:
+            lines.append(version_line(version, *num_heading(fragment, version)))
         lines.append('  </fragment>')
     lines.append('</act>')
     path.parent.mkdir(parents=True, exist_ok=True)
