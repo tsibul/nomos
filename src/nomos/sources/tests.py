@@ -3646,3 +3646,25 @@ class NavLoadTests(TestCase):
             call_command('load_texts', texts_dir=folder, stdout=output)
         self.assertIn('нет nav.xml: меню пусто', output.getvalue())
         self.assertFalse(NavNode.objects.exists())
+
+
+class ManifestRelationsTests(SimpleTestCase):
+    """`<relation>` в collect.xml: связи закона, которые сборка пишет в act.xml."""
+
+    def test_read_relations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(
+                '<collect uid="cy/law/2000/95_I">\n'
+                '  <relation kind="related" to="eu/dir/2006/112" />\n'
+                '  <amending uid="cy/law/2024/10_I">\n'
+                '    <relation kind="amends" to="cy/law/2000/95_I" />\n'
+                '  </amending>\n'
+                '</collect>\n',
+                encoding='utf-8',
+            )
+            # связи внутри <amending> не берутся: только прямые дети <collect>
+            self.assertEqual(
+                history.read_relations(path),
+                [('related', 'eu/dir/2006/112')],
+            )
