@@ -105,3 +105,84 @@ msgid ""
 msgstr ""
 "EU acts on VAT and VIES for Russian readers: Russian translation, versions "
 "as at any date from 01.01.2024, link to the official text."
+
+msgid "Налоги"
+msgstr "Taxes"
+
+msgid "Взносы"
+msgstr "Contributions"
+
+msgid "НДС"
+msgstr "VAT"
+
+msgid "Подоходный налог"
+msgstr "Income tax"
+
+msgid "Специальный взнос на оборону"
+msgstr "Special defence contribution"
+
+msgid "Прирост капитала"
+msgstr "Capital gains tax"
+
+msgid "Гербовый сбор"
+msgstr "Stamp duty"
+
+msgid "Установление и взимание налогов"
+msgstr "Assessment and collection of taxes"
+
+msgid "Взыскание налогов"
+msgstr "Collection of taxes"
+
+msgid "Таможенный кодекс"
+msgstr "Customs code"
+
+msgid "Акцизы"
+msgstr "Excise duties"
+
+msgid "Международные трасты"
+msgstr "International trusts"
+
+msgid "Соцстрахование"
+msgstr "Social insurance"
+
+msgid "ГеСИ"
+msgstr "GHS"
+
+msgid "Развитие человеческих ресурсов"
+msgstr "Human resource development"
+
+msgid "Сотрудничество в НДС"
+msgstr "VAT cooperation"
+
+msgid "Минимальный налог"
+msgstr "Minimum tax"
+
+msgid "МСФО"
+msgstr "IFRS"
+
+msgid "Аналитика"
+msgstr "Analytics"
+
+msgid "Кипр"
+msgstr "Cyprus"
+
+msgid "ЕС"
+msgstr "EU"
+
+msgid "Подзаконные акты"
+msgstr "Subsidiary legislation"
+
+msgid "Формы и руководства"
+msgstr "Forms and guides"
+
+msgid "Связанные акты ЕС"
+msgstr "Related EU acts"
+
+msgid "Прочее"
+msgstr "Other"
+
+msgid "Изменяющие акты"
+msgstr "Amending acts"
+
+msgid "не загружен"
+msgstr "not loaded"

@@ -1,22 +1,10 @@
-{% extends 'site/base.html' %}
+{% extends 'site/act_base.html' %}
 
 {% load i18n %}
 
 {% block title %}{{ label }} — Nomos{% endblock %}
 
-{% block header %}
-  {% include 'site/parts/act_header.html' %}
-{% endblock %}
-
-{% block aside %}
-  {% include 'site/parts/sidenav.html' %}
-{% endblock %}
-
-{% block main %}
-  {% include 'site/parts/back_ref.html' %}
-
-  {% include 'site/parts/toolbar.html' %}
-
+{% block content %}
   <section class="act-info">
     <h1
       class="act-info__title"
@@ -96,14 +84,7 @@
       </div>
     {% endif %}
 
-    {% if amended_by %}
-      <details class="acts__group">
-        <summary class="acts__summary">
-          {% translate 'Редакции: изменяющие акты,' %} {{ amended_by|length }}
-        </summary>
-        {% include 'site/parts/act_entries.html' with entries=amended_by %}
-      </details>
-    {% endif %}
+    {% include 'site/parts/act_blocks.html' %}
   </section>
 
   {# на широком экране оглавление — в левой колонке, здесь только на телефоне #}

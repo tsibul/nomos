@@ -11,17 +11,19 @@ from unittest import skipUnless
 from unittest.mock import patch
 
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import SimpleTestCase, TestCase, override_settings
 
+from nomos.acts import grouping
 from nomos.acts.models import (
-    ActRelation, Amendment, Expression, Fragment, FragmentText, FragmentVersion,
-    Reference,
+    Act, ActRelation, Amendment, Expression, Fragment, FragmentText, FragmentVersion,
+    NavNode, Reference,
 )
 from nomos.translate.models import Note
 
 from .cylaw import (
-    acts, columns, consolidated, customs, gazette, history, layout, leginet, numbering,
-    rate_table, refs, texts_xml,
+    acts, columns, consolidated, customs, gazette, gazette_law, history, layout, leginet,
+    numbering, rate_table, refs, texts_xml,
 )
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
@@ -115,25 +117,69 @@ class SlugTests(SimpleTestCase):
         self.assertEqual(numbering.slug('«αναδιάρθρωση»'), 'anadiarthrwsh')
 
 
-@skipUnless((TEXTS_DIR / LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом о НДС')
-class VatLawTests(TestCase):
-    """Сборка и загрузка закона о НДС из Nomos-texts (NOMOS_TEXTS_DIR)."""
+class CollectedTextsTests(TestCase):
+    """Основа тестов сборки: копия Nomos-texts, сборка актов `collected`, загрузка в БД.
+
+    Сборка пишет файлы — в копию, а не в рабочее дерево Nomos-texts. `loads` — сколько раз
+    подряд грузятся тексты, `report` — вывод сборщика, `main_uid` — акт для version и text."""
+
+    collected = ()
+    main_uid = None
+    loads = 1
 
     @classmethod
     def setUpTestData(cls):
-        # сборка пишет файлы — в копию, а не в рабочее дерево Nomos-texts
         cls.temp = tempfile.TemporaryDirectory()
         cls.copy = Path(cls.temp.name) / 'texts'
         shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
         output = StringIO()
-        call_command('collect_cylaw', LAW, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
+        for uid in cls.collected:
+            call_command('collect_cylaw', uid, texts_dir=str(cls.copy), stdout=output)
+        cls.report = output.getvalue()
+        for _ in range(cls.loads):
+            call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
 
     @classmethod
     def tearDownClass(cls):
         super().tearDownClass()
         cls.temp.cleanup()
+
+    def differing(self, uid):
+        """Файлы акта в копии, отличающиеся от Nomos-texts."""
+        return [
+            path.name
+            for path in (self.copy / uid).iterdir()
+            if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
+        ]
+
+    def unapplied_problems(self):
+        """Строки отчёта о неснятых изменениях: кроме примечаний, правок источника и замен
+        целиком без прежнего текста."""
+        return [
+            line.strip()
+            for line in self.report.splitlines()
+            if ('→' in line and ':note →' not in line
+                and 'правка источника' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
+            or 'не найдена' in line
+            or 'положения нет' in line
+        ]
+
+    def version(self, eid, day):
+        return Fragment.objects.get(act__uid=self.main_uid, eid=eid).version_on(day)
+
+    def text(self, eid, day):
+        version = self.version(eid, day)
+        return FragmentText.objects.get(version=version, expression__lang='el').body
+
+
+@skipUnless((TEXTS_DIR / LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом о НДС')
+class VatLawTests(CollectedTextsTests):
+    """Сборка и загрузка закона о НДС из Nomos-texts (NOMOS_TEXTS_DIR)."""
+
+    collected = (LAW,)
+    main_uid = LAW
+    loads = 2
 
     def test_rebuild_keeps_files_and_translation(self):
         """Пересборка и две загрузки подряд: файлы как в git, русский перевод на месте."""
@@ -243,9 +289,6 @@ class VatLawTests(TestCase):
         today = self.active_eids('art_45.', datetime.date(2026, 11, 20))
         self.assertEqual(today - before, {'art_45.par_7G', 'art_45.par_7D'})
         self.assertEqual(before - today, set())
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=LAW, eid=eid).version_on(day)
 
     def test_schedule_12_item_6_periods(self):
         """82/2026 вставляет с 1.4.2026, 167/2026 отменяет с 30.4.2026, 363/2026 — новый."""
@@ -401,6 +444,21 @@ class SourceFixTests(SimpleTestCase):
             'правка источника: цели art_7 нет в разборе',
         ])
 
+    def test_heading_replaced(self):
+        path = Path(tempfile.mkdtemp()) / 'collect.xml'
+        self.addCleanup(shutil.rmtree, path.parent)
+        path.write_text(
+            '<collect><source-fix target="art_21" heading="Καταβολή\n  χορηγήματος" />'
+            '</collect>',
+            encoding='utf-8',
+        )
+        root = Node(kind='act')
+        article = root.add(Node(kind='art', num='21', heading='Καταβολή της φράσης'))
+        report = []
+        history.apply_source_fixes(root, history.read_source_fixes(path), report)
+        self.assertEqual((article.heading, article.num), ('Καταβολή χορηγήματος', '21'))
+        self.assertEqual(report, ['правка источника art_21 → art_21: текст заменён'])
+
 
 class BeforeTests(SimpleTestCase):
     """<before>: прежний текст целиком — по прежней сводной редакции."""
@@ -444,6 +502,14 @@ def parse_body(*lines, act_uid='cy/law/1978/4'):
     return consolidated.Parser(act_uid).parse(rows)
 
 
+def definition_eids(*lines):
+    """eid ст. 2 после разметки определений в теле из строк lines."""
+    root = parse_body(*lines)
+    article = next(node for node in root.walk() if node.eid == 'art_2')
+    consolidated.mark_definitions(article)
+    return [node.eid for node in root.walk() if node.eid.startswith('art_2')]
+
+
 class ConsolidatedTests(SimpleTestCase):
     def test_article_paragraph_point_in_one_line(self):
         """«51Α. (1)(α)» и «42.―(1)» (U+2015): статья, εδάφιο и пункт в одной строке."""
@@ -456,15 +522,12 @@ class ConsolidatedTests(SimpleTestCase):
 
     def test_definitions_in_article_without_subsections(self):
         """Ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи."""
-        root = parse_body(
+        eids = definition_eids(
             '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
             '«Οργανισμός» σημαίνει τον Οργανισμό Ασφάλισης Υγείας·',
             '«Υπουργός» σημαίνει τον Υπουργό Υγείας.',
             '3. Άλλο.',
         )
-        article = next(node for node in root.walk() if node.eid == 'art_2')
-        consolidated.mark_definitions(article)
-        eids = [node.eid for node in root.walk() if node.eid.startswith('art_2')]
         self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_ypoyrgos'])
 
     def test_article_2_without_definitions(self):
@@ -524,6 +587,41 @@ class ConsolidatedTests(SimpleTestCase):
         # шапка таблицы — текст приложения, а не заголовок пункта
         self.assertEqual(schedule.paragraphs, ['Μήνες εισφορών — Ημερομηνία'])
         self.assertEqual(schedule.children[0].heading, '')
+
+    def test_annex_roman_with_sections(self):
+        """«ΠΑΡΑΡΤΗΜΑ V» и «ΤΜΗΜΑ ΙΙ» (205(Ι)/2012): sch_5.sct_II; строка-якорь слева — не текст."""
+        lines = [
+            'Προοίμιο',
+            '',
+            '      Η Βουλή των Αντιπροσώπων ψηφίζει ως ακολούθως:',
+            '',
+            'Ερμηνεία.',
+            '',
+            '      2.-(1) Στον παρόντα Νόμο «Νόμος» σημαίνει τον Νόμο.',
+            '',
+            'ΠΑΡΑΡΤΗΜΑ V - ΔΙΑΔΙΚΑΣΙΕΣ ΔΕΟΥΣΑΣ ΕΠΙΜΕΛΕΙΑΣ',
+            '',
+            '                                   ΠΑΡΑΡΤΗΜΑ V',
+            '',
+            '                                   ΤΜΗΜΑ ΙΙ',
+            '',
+            '      1. Κείμενο του Τμήματος.',
+        ]
+        root = consolidated.Parser('x').parse(lines)
+        schedule = root.children[-1]
+        self.assertEqual(schedule.token, 'sch_5')
+        self.assertEqual(schedule.paragraphs, [])
+        self.assertEqual(schedule.children[0].token, 'sct_II')
+
+    def test_definition_repeated_term(self):
+        """Один термин дважды (205(Ι)/2012, DAC6 и DAC9): второй — `def_<slug>_2`."""
+        eids = definition_eids(
+            '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
+            '«Οργανισμός» σημαίνει πρώτη έννοια·',
+            '«Οργανισμός» σημαίνει δεύτερη έννοια.',
+            '3. Άλλο.',
+        )
+        self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_organismos_2'])
 
     def test_history_with_heading(self):
         self.assertTrue(consolidated.is_history('Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018'))
@@ -887,6 +985,75 @@ class GazetteTests(SimpleTestCase):
             root.children[2].paragraphs,
             ['(1) Οι έρευνες δεν δημοσιεύονται.', '(2)(α) Η διαδικασία είναι κατάλληλη.'],
         )
+
+
+class GazetteLawTests(SimpleTestCase):
+    """Базовый закон из газеты без сводки (151(Ι)/2024) → раскладка сводки CyLaw."""
+
+    LONG = ' — текст статьи достаточно длинный, чтобы задать колонку страницы.'
+
+    def parse(self, *pages):
+        lines = gazette_law.convert([gazette_lines(*page) for page in pages])
+        return consolidated.Parser('cy/law/2024/151_I', ()).parse(lines)
+
+    def test_articles_headings_and_parts(self):
+        root = self.parse((
+            ('Προοίμιο.', 'Για σκοπούς εναρμόνισης με την πράξη της Ευρωπαϊκής Ένωσης,'),
+            ('', ''),
+            ('', '   Η Βουλή των Αντιπροσώπων ψηφίζει ως ακολούθως:'),
+            ('', ''),
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος' + self.LONG),
+            ('τίτλος.', ''),
+            ('', ''),
+            ('', '                    ΜΕΡΟΣ Ι'),
+            ('', '               ΕΙΣΑΓΩΓΙΚΕΣ ΔΙΑΤΑΞΕΙΣ'),
+            ('', ''),
+            ('Πεδίο', '2.-(1) Ο παρών Νόμος εφαρμόζεται στις οντότητες' + self.LONG),
+            ('εφαρμογής.', ''),
+            ('64(Ι) του 2004.', ''),
+            ('', ''),
+            ('', '   (2) Αρμόδια αρχή είναι ο Έφορος Φορολογίας' + self.LONG),
+        ))
+        nodes = {node.eid: node for node in root.walk()}
+        self.assertEqual(nodes['art_1'].heading, 'Συνοπτικός τίτλος')
+        self.assertEqual(nodes['art_2'].heading, 'Πεδίο εφαρμογής')
+        self.assertEqual(nodes['art_2'].parent.eid, 'prt_I')
+        self.assertIn('art_2.par_2', nodes)
+        # формула «Η Βουλή … ψηφίζει» — абзац преамбулы, не отдельный узел у корня
+        self.assertEqual(nodes['sub_1'].parent.eid, 'cit_1')
+
+    def test_heading_continues_on_next_page(self):
+        root = self.parse(
+            (
+                ('Προοίμιο.', 'Η Βουλή των Αντιπροσώπων ψηφίζει ως ακολούθως:' + self.LONG),
+                ('', ''),
+                ('Προσδιορισμός', '1. Όταν μια συνιστώσα οντότητα είναι επενδυτική' + self.LONG),
+                ('του πραγματικού', 'οντότητα, ο πραγματικός φορολογικός συντελεστής' + self.LONG),
+            ),
+            (
+                ('συντελεστή.', 'υπολογίζεται χωριστά για κάθε δικαιοδοσία' + self.LONG),
+            ),
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_1')
+        self.assertEqual(article.heading, 'Προσδιορισμός του πραγματικού συντελεστή')
+
+    def test_label_raised_to_first_line(self):
+        """pdftotext ставит метку в середину абзаца — она переносится в его первую строку."""
+        lines = [
+            '',
+            '       μεταγενέστερα έγγραφα που δημοσιεύονται από τον ΟΟΣΑ,',
+            '       σχετικά με τις φορολογικές προκλήσεις που προκύπτουν',
+            ' (ι)   κανόνες κατά της διάβρωσης της φορολογικής βάσης,',
+            '       όπως αυτά ορίζονται με διάταγμα που εκδίδεται',
+            '       από τον Υπουργό.',
+            '',
+            ' (α)   πρώτος πόντος δύο γραμμών,',
+            '       συνέχεια του πρώτου.',
+        ]
+        raised = gazette_law.raise_labels(lines)
+        self.assertEqual(raised[1], ' (ι)   μεταγενέστερα έγγραφα που δημοσιεύονται από τον ΟΟΣΑ,')
+        self.assertEqual(raised[3], '       κανόνες κατά της διάβρωσης της φορολογικής βάσης,')
+        self.assertEqual(raised[7:], lines[7:])
 
 
 class OrderKeyTests(SimpleTestCase):
@@ -1617,6 +1784,80 @@ class FollowTextsTests(SimpleTestCase):
         new = {parent: {'base': 'Ένα.'}}
         self.assertEqual(texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb']), [])
 
+    def test_bridge_word_merge_inserts_word(self):
+        """Слово на стыке («355»), потерянное прежним разбором, вставляется в перевод."""
+        parent = Place('art_4.par_1.pnt_c')
+        uids = {parent: 'aaaaaaaaaa'}
+        old = {
+            'aaaaaaaaaa': {'base': 'άρθρα 349 και'},
+            'bbbbbbbbbb': {'base': 'παράγραφος 1 της ΣΛΕΕ·'},
+        }
+        new = {parent: {'base': 'άρθρα 349 και 355 παράγραφος 1 της ΣΛΕΕ·'}}
+        merged = texts_xml.continued_uids(uids, new, old, ['bbbbbbbbbb'])
+        self.assertEqual(merged, [('aaaaaaaaaa', 'bbbbbbbbbb', '355')])
+        self.assertEqual(texts_xml.merged_uids(uids, new, old, ['bbbbbbbbbb']), [
+            ('aaaaaaaaaa', 'bbbbbbbbbb'),
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'ru.xml').write_text(
+                '<texts>\n'
+                '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+                '    <p>статьях 349 и</p>\n'
+                '    <note kind="doubt">обрыв?</note>\n'
+                '  </text>\n'
+                '  <text fragment="bbbbbbbbbb" version="base" review="draft">\n'
+                '    <p>пункт 1 ДФЕС;</p>\n'
+                '  </text>\n'
+                '</texts>\n',
+                encoding='utf-8',
+            )
+            texts_xml.merge_translations(root, merged)
+            result = (root / 'ru.xml').read_text(encoding='utf-8')
+        self.assertEqual(
+            result,
+            '<texts>\n'
+            '  <text fragment="aaaaaaaaaa" version="base" review="draft">\n'
+            '    <p>статьях 349 и 355 пункт 1 ДФЕС;</p>\n'
+            '    <note kind="doubt">обрыв?</note>\n'
+            '  </text>\n'
+            '</texts>\n',
+        )
+
+    def test_bridge_word(self):
+        self.assertEqual(texts_xml.bridge_word('εδάφια (1) και', 'του άρθρου', (
+            'εδάφια (1) και (2) του άρθρου'
+        )), '(2)')
+        self.assertIsNone(texts_xml.bridge_word('349 και', 'παράγραφος', '349 και ή παράγραφος'))
+        self.assertIsNone(texts_xml.bridge_word('349 και', 'παράγραφος', None))
+
+    def test_interleaved_merge(self):
+        """Строка во всю ширину, которую прежний разбор делил на два столбца, склеена."""
+        self.assertTrue(texts_xml.interleaved('Νοείται ότι τα', 'οχήματα', (
+            'Νοείται οχήματα ότι τα'
+        )))
+        self.assertFalse(texts_xml.interleaved('Νοείται ότι', 'οχήματα', 'οχήματα Νοείται ότι'))
+        self.assertFalse(texts_xml.interleaved('Νοείται ότι', 'οχήματα', 'Νοείται ότι τα'))
+        parent = Place('sch_4.prt_A.sub_9')
+        uids = {parent: 'aaaaaaaaaa'}
+        old = {'aaaaaaaaaa': {'base': 'Νοείται ότι τα'}, 'bbbbbbbbbb': {'base': 'οχήματα'}}
+        new = {parent: {'base': 'Νοείται οχήματα ότι τα'}}
+        self.assertEqual(texts_xml.continued_uids(uids, new, old, ['bbbbbbbbbb']), [
+            ('aaaaaaaaaa', 'bbbbbbbbbb', ''),
+        ])
+
+    def test_lost_uid_rehomed_to_same_text(self):
+        """Потерянный uid с тем же текстом, что у фрагмента с новым uid, переходит к нему."""
+        first = Place('sch_4.prt_A.sub_2')
+        second = Place('sch_4.prt_A.sub_3')
+        uids = {first: 'new1new1ne', second: 'new2new2ne'}
+        old = {'aaaaaaaaaa': {'base': '0%'}, 'bbbbbbbbbb': {'base': '0%'}}
+        new = {first: {'base': '0%'}, second: {'base': '0%'}}
+        nums = {first: None, second: None}
+        rehomed = texts_xml.rehomed_uids(uids, new, old, nums, ['aaaaaaaaaa', 'bbbbbbbbbb'])
+        self.assertEqual(rehomed, ['aaaaaaaaaa', 'bbbbbbbbbb'])
+        self.assertEqual(uids, {first: 'aaaaaaaaaa', second: 'bbbbbbbbbb'})
+
     def test_fragment_became_heading(self):
         """Абзац прежнего разбора стал заголовком следующего пункта: перевод — в heading."""
         place = Place('sch_13.prt_I.par_4')
@@ -1730,38 +1971,14 @@ TAX_LAW = 'cy/law/1978/4'
 
 
 @skipUnless((TEXTS_DIR / TAX_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 4/1978')
-class TaxCollectionLawTests(TestCase):
+class TaxCollectionLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о начислении и взимании налогов 4/1978."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', TAX_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=TAX_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (TAX_LAW,)
+    main_uid = TAX_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / TAX_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / TAX_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(TAX_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -1797,38 +2014,14 @@ SOCIAL_LAW = 'cy/law/2010/59_I'
 @skipUnless(
     (TEXTS_DIR / SOCIAL_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 59(I)/2010',
 )
-class SocialInsuranceLawTests(TestCase):
+class SocialInsuranceLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о социальном страховании 59(Ι)/2010."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', SOCIAL_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=SOCIAL_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (SOCIAL_LAW,)
+    main_uid = SOCIAL_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / SOCIAL_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / SOCIAL_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(SOCIAL_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -1836,7 +2029,8 @@ class SocialInsuranceLawTests(TestCase):
         problems = [
             line.strip()
             for line in self.report.splitlines()
-            if ('→' in line and not line.endswith(('не применено', 'прежний текст не приведён')))
+            if ('→' in line and 'правка источника' not in line
+                and not line.endswith(('не применено', 'прежний текст не приведён')))
             or 'не найдена' in line
         ]
         self.assertEqual(problems, [])
@@ -1880,29 +2074,16 @@ CONTRIBUTIONS = 'cy/kdp/2010/289'
 @skipUnless(
     (TEXTS_DIR / CONTRIBUTIONS / 'collect.xml').exists(), 'нет Nomos-texts с ΚΔΠ 289/2010',
 )
-class ContributionRegulationsTests(TestCase):
+class ContributionRegulationsTests(CollectedTextsTests):
     """Регламент о взносах ΚΔΠ 289/2010: расшифровка скана, 4Α из ΚΔΠ 52/2012."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', CONTRIBUTIONS, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = (CONTRIBUTIONS,)
 
     def test_rebuild_keeps_files(self):
         changed = [
-            '%s/%s' % (act, path.name)
+            '%s/%s' % (act, name)
             for act in (CONTRIBUTIONS, 'cy/kdp/2012/52')
-            for path in (self.copy / act).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+            for name in self.differing(act)
         ]
         self.assertEqual(changed, [])
 
@@ -1928,6 +2109,87 @@ class ContributionRegulationsTests(TestCase):
         self.assertLessEqual(expected, eids)
 
 
+FUND_ACCOUNTS = 'cy/kdp/2010/290'
+
+
+@skipUnless(
+    (TEXTS_DIR / FUND_ACCOUNTS / 'collect.xml').exists(),
+    'нет Nomos-texts с регламентом ΚΔΠ 290/2010',
+)
+class FundAccountsRegulationsTests(CollectedTextsTests):
+    """Регламент о счетах фонда ΚΔΠ 290/2010: расшифровка скана, проценты взносов по счетам."""
+
+    collected = (FUND_ACCOUNTS,)
+
+    def test_rebuild_keeps_files(self):
+        changed = self.differing(FUND_ACCOUNTS)
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        self.assertTrue(ActRelation.objects.filter(
+            from_act__uid=FUND_ACCOUNTS, to_act__uid=SOCIAL_LAW, kind='based_on',
+        ).exists())
+
+    def test_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=FUND_ACCOUNTS).values_list('eid', flat=True))
+        expected = {
+            'art_2.par_1.def_nomos',
+            'art_3.par_3.pnt_g.sub_1',
+            'art_3.par_4.pnt_b',
+            'art_3.par_5',
+            'art_6',
+        }
+        self.assertLessEqual(expected, eids)
+        self.assertNotIn('art_7', eids)
+
+    def test_amended_by_390_2019_and_172_2024(self):
+        for amending in ('cy/kdp/2019/390', 'cy/kdp/2024/172'):
+            self.assertTrue(ActRelation.objects.filter(
+                from_act__uid=amending, to_act__uid=FUND_ACCOUNTS, kind='amends',
+            ).exists())
+
+    def test_rates_2024_version(self):
+        text = (self.copy / FUND_ACCOUNTS / 'el.xml').read_text(encoding='utf-8')
+        self.assertIn('version="2024-05-10"', text)
+        self.assertIn('ποσοστό 12,65%', text)
+        self.assertIn('ποσοστό 7,2%', text)
+        self.assertIn('ποσοστό 7,85%', text)
+
+BENEFITS = 'cy/kdp/2010/288'
+
+
+@skipUnless(
+    (TEXTS_DIR / BENEFITS / 'collect.xml').exists(),
+    'нет Nomos-texts с регламентом ΚΔΠ 288/2010',
+)
+class BenefitsRegulationsTests(CollectedTextsTests):
+    """Регламент о пособиях ΚΔΠ 288/2010: расшифровка скана, сроки подачи и выплаты."""
+
+    collected = (BENEFITS,)
+
+    def test_rebuild_keeps_files(self):
+        changed = self.differing(BENEFITS)
+        self.assertEqual(changed, [])
+
+    def test_based_on_law(self):
+        self.assertTrue(ActRelation.objects.filter(
+            from_act__uid=BENEFITS, to_act__uid=SOCIAL_LAW, kind='based_on',
+        ).exists())
+
+    def test_structure(self):
+        eids = set(Fragment.objects.filter(act__uid=BENEFITS).values_list('eid', flat=True))
+        expected = {
+            'art_2.par_1.def_nomos',
+            'art_3.par_2.pnt_d',
+            'art_3.par_8',
+            'art_4.par_7',
+            'art_6.pnt_b',
+            'art_8',
+        }
+        self.assertLessEqual(expected, eids)
+        self.assertNotIn('art_9', eids)
+
+
 
 ORDERS = ('cy/kdp/2024/392', 'cy/kdp/2025/378')
 
@@ -1936,30 +2198,16 @@ ORDERS = ('cy/kdp/2024/392', 'cy/kdp/2025/378')
     all((TEXTS_DIR / order / 'collect.xml').exists() for order in ORDERS),
     'нет Nomos-texts с приказами ΚΔΠ 392/2024 и 378/2025',
 )
-class BasicEarningsOrderTests(TestCase):
+class BasicEarningsOrderTests(CollectedTextsTests):
     """Приказы о базовых заработках (ст. 20 закона 59(Ι)/2010): ст. 2 без определений."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        for order in ORDERS:
-            call_command('collect_cylaw', order, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = ORDERS
 
     def test_rebuild_keeps_files(self):
         changed = [
-            '%s/%s' % (order, path.name)
+            '%s/%s' % (order, name)
             for order in ORDERS
-            for path in (self.copy / order).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / order / path.name, shallow=False)
+            for name in self.differing(order)
         ]
         self.assertEqual(changed, [])
 
@@ -2019,51 +2267,19 @@ HEALTH_LAW = 'cy/law/2001/89_I'
 
 
 @skipUnless((TEXTS_DIR / HEALTH_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 89(Ι)/2001')
-class HealthSystemLawTests(TestCase):
+class HealthSystemLawTests(CollectedTextsTests):
     """Закон о ГеСИ 89(Ι)/2001 с изменениями 29, 53, 118, 139(Ι)/2025, 60 и 61(Ι)/2026."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', HEALTH_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=HEALTH_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (HEALTH_LAW,)
+    main_uid = HEALTH_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / HEALTH_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / HEALTH_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(HEALTH_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
         """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
-        problems = [
-            line.strip()
-            for line in self.report.splitlines()
-            if ('→' in line and ':note →' not in line
-                and not line.endswith(('не применено', 'прежний текст не приведён')))
-            or 'не найдена' in line
-            or 'положения нет' in line
-        ]
-        self.assertEqual(problems, [])
+        self.assertEqual(self.unapplied_problems(), [])
 
     def test_dental_proviso_from_law_29_2025(self):
         eid = 'art_22.par_5A'
@@ -2323,6 +2539,43 @@ class ExciseLayoutTests(SimpleTestCase):
         self.assertEqual(customs.split_rate(short, 408), (short[:1], short[1:]))
         heading = [(250, 300, 'ΜΕΡΟΣ'), (305, 320, 'Α')]
         self.assertEqual(customs.split_rate(heading, 280), (heading, []))
+        # вторая строка заголовка Μέρους — заголовок, хоть и правее столбца
+        others = [(300, 350, '(ΛΟΙΠΑ)')]
+        self.assertEqual(customs.split_rate(others, 280), (others, []))
+        # ссылка на закон заглавными у столбца ставок — не заголовок
+        reference = [(410, 420, 'N.'), (422, 470, '140(I)/2018')]
+        self.assertEqual(customs.split_rate(reference, 408), ([], reference))
+        # строка во всю ширину без просвета у столбца ставок — текст, не ставка
+        proviso = [(200, 240, 'Νοείται'), (245, 400, 'ότι τα οχήματα'), (403, 450, 'που')]
+        self.assertEqual(customs.split_rate(proviso, 400), (proviso, []))
+
+    def test_attach_numbers(self):
+        """Число отдельной строкой под строкой, кончающейся союзом, дописывается к союзу."""
+        words = [(100, 500, 120, 'άρθρα'), (125, 500, 140, '349'), (145, 500, 160, 'και'),
+                 (100, 512, 120, '355')]
+        self.assertEqual(customs.attach_numbers(words), [
+            (100, 500, 120, 'άρθρα'), (125, 500, 140, '349'), (145, 500, 160, 'και 355'),
+        ])
+        # под строкой без союза число — номер страницы, остаётся как есть
+        page = [(100, 500, 120, 'ΣΛΕΕ·'), (300, 512, 310, '17')]
+        self.assertEqual(customs.attach_numbers(page), page)
+
+    def test_join_dangling(self):
+        """Продолжение после «349 και 355» и «(1) και» дописывается к строке."""
+        rows = [
+            ('', 'άρθρα 349 και 355', 60, ''),
+            ('', 'παράγραφος 1 της ΣΛΕΕ·', 60, ''),
+            ('', 'εδάφια (1) και', 60, ''),
+            ('', '(2) του άρθρου 11Β', 60, None),
+            ('', 'Β ή', 60, ''),
+            ('', '(γ) άλλο', 60, None),
+        ]
+        self.assertEqual(customs.join_dangling(rows), [
+            ('', 'άρθρα 349 και 355 παράγραφος 1 της ΣΛΕΕ·', 60, ''),
+            ('', 'εδάφια (1) και (2) του άρθρου 11Β', 60, ''),
+            ('', 'Β ή', 60, ''),
+            ('', '(γ) άλλο', 60, None),
+        ])
 
     def test_split_schedules(self):
         """Каждое «… ΠΑΡΑΡΤΗΜΑ» начинает своё приложение; страница без него — продолжение."""
@@ -2410,30 +2663,16 @@ HRDA_AMENDING = 'cy/law/2026/15_I'
     all((TEXTS_DIR / act / 'collect.xml').exists() for act in (HRDA_LAW, HRDA_FEE)),
     'нет Nomos-texts с 125(Ι)/1999 и ΚΔΠ 128/2026',
 )
-class HumanResourcesLawTests(TestCase):
+class HumanResourcesLawTests(CollectedTextsTests):
     """Закон об АРЧР 125(Ι)/1999 по сводке Leginet и регламент о сборе ΚΔΠ 128/2026."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        for act in (HRDA_LAW, HRDA_FEE):
-            call_command('collect_cylaw', act, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = (HRDA_LAW, HRDA_FEE)
 
     def test_rebuild_keeps_files(self):
         changed = [
-            '%s/%s' % (act, path.name)
+            '%s/%s' % (act, name)
             for act in (HRDA_LAW, HRDA_FEE, HRDA_AMENDING)
-            for path in (self.copy / act).iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / act / path.name, shallow=False)
+            for name in self.differing(act)
         ]
         self.assertEqual(changed, [])
 
@@ -2649,51 +2888,19 @@ INCOME_TAX_LAW = 'cy/law/2002/118_I'
 @skipUnless(
     (TEXTS_DIR / INCOME_TAX_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 118(Ι)/2002',
 )
-class IncomeTaxLawTests(TestCase):
+class IncomeTaxLawTests(CollectedTextsTests):
     """Закон о подоходном налоге 118(Ι)/2002 с изменениями 2024–2026 гг."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', INCOME_TAX_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=INCOME_TAX_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (INCOME_TAX_LAW,)
+    main_uid = INCOME_TAX_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / INCOME_TAX_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / INCOME_TAX_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(INCOME_TAX_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
         """Кроме замен целиком без прежнего текста и примечаний, все изменения сняты."""
-        problems = [
-            line.strip()
-            for line in self.report.splitlines()
-            if ('→' in line and ':note →' not in line
-                and not line.endswith(('не применено', 'прежний текст не приведён')))
-            or 'не найдена' in line
-            or 'положения нет' in line
-        ]
-        self.assertEqual(problems, [])
+        self.assertEqual(self.unapplied_problems(), [])
 
     def test_structure(self):
         eids = set(Fragment.objects.filter(act__uid=INCOME_TAX_LAW).values_list('eid', flat=True))
@@ -2861,38 +3068,14 @@ class DefenceContributionParsingTests(SimpleTestCase):
 DEFENCE_LAW = 'cy/law/2002/117_I'
 
 
-class DefenceContributionLawTests(TestCase):
+class DefenceContributionLawTests(CollectedTextsTests):
     """Закон о взносе на оборону 117(Ι)/2002 с изменениями 2024–2025 гг."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', DEFENCE_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=DEFENCE_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (DEFENCE_LAW,)
+    main_uid = DEFENCE_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / DEFENCE_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / DEFENCE_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(DEFENCE_LAW)
         self.assertEqual(changed, [])
 
     def test_all_ops_applied(self):
@@ -2938,41 +3121,15 @@ CAPITAL_GAINS_LAW = 'cy/law/1980/52'
 @skipUnless(
     (TEXTS_DIR / CAPITAL_GAINS_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 52/1980',
 )
-class CapitalGainsLawTests(TestCase):
+class CapitalGainsLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о налоге на прирост капитала 52/1980."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command(
-            'collect_cylaw', CAPITAL_GAINS_LAW, texts_dir=str(cls.copy), stdout=output,
-        )
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=CAPITAL_GAINS_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (CAPITAL_GAINS_LAW,)
+    main_uid = CAPITAL_GAINS_LAW
 
     def test_rebuild_keeps_files(self):
         for uid in (CAPITAL_GAINS_LAW, 'cy/law/2025/218_I', 'cy/law/2025/242_I'):
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_article_32_fixed_from_law_169_2024(self):
@@ -2981,8 +3138,8 @@ class CapitalGainsLawTests(TestCase):
         self.assertIn('2025', self.text('art_32.pnt_a', datetime.date(2025, 1, 1)))
         self.assertIn('правка источника art_64A → art_32', self.report)
 
-    def test_law_218_2025_without_text(self):
-        """218(Ι)/2025: акта в PDF нет, изменения — по манифесту."""
+    def test_law_218_2025(self):
+        """218(Ι)/2025: изменения по Ε.Ε. 5066, текст акта собран."""
         eid = 'art_2.par_1.def_anadiarthrwsh'
         self.assertIn('εννέα (9)', self.text(eid, datetime.date(2024, 12, 30)))
         self.assertIn('δέκα (10)', self.text(eid, datetime.date(2024, 12, 31)))
@@ -2990,7 +3147,7 @@ class CapitalGainsLawTests(TestCase):
         eid = 'art_32.pnt_a'
         self.assertIn('31η Δεκεμβρίου 2025', self.text(eid, datetime.date(2025, 12, 11)))
         self.assertIn('31η Δεκεμβρίου 2026', self.text(eid, datetime.date(2025, 12, 12)))
-        self.assertIn('cy/law/2025/218_I: текста акта нет', self.report)
+        self.assertNotIn('cy/law/2025/218_I: текста акта нет', self.report)
 
     def test_thresholds_by_law_242_2025(self):
         eid = 'art_5.par_1'
@@ -3000,54 +3157,64 @@ class CapitalGainsLawTests(TestCase):
         self.assertIsNone(self.version('art_5B', datetime.date(2025, 4, 24)))
 
 
+PILLAR_TWO_LAW = 'cy/law/2024/151_I'
+
+
+@skipUnless(
+    (TEXTS_DIR / PILLAR_TWO_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 151(Ι)/2024',
+)
+class PillarTwoLawTests(CollectedTextsTests):
+    """151(Ι)/2024: сводки нет, базовый закон собран из газеты (layout="gazette-law")."""
+
+    collected = (PILLAR_TWO_LAW,)
+    main_uid = PILLAR_TWO_LAW
+
+    def test_rebuild_keeps_files(self):
+        self.assertEqual(self.differing(PILLAR_TWO_LAW), [])
+
+    def test_structure(self):
+        date = datetime.date(2024, 12, 18)
+        self.assertIn('Ο παρών Νόμος θα αναφέρεται', self.text('art_1', date))
+        self.assertIn('ΟΟΣΑ', self.text('art_60.pnt_b', date))
+        self.assertIsNotNone(self.version('art_2.def_kateythynthries_grammes_toy_oosa.pnt_i', date))
+        # нумерация частей в газете: второй «ΜΕΡΟΣ VII» и «ΜΕΡΟΣ XΙ» — правки источника
+        self.assertIsNotNone(self.version('prt_VIII', date))
+        self.assertIsNotNone(self.version('prt_X', date))
+        self.assertIn('правка источника prt_VII_2 → prt_VIII', self.report)
+
+
 COLLECTION_LAW = 'cy/law/1962/31'
 
 
 @skipUnless(
     (TEXTS_DIR / COLLECTION_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 31/1962',
 )
-class TaxRecoveryLawTests(TestCase):
+class TaxRecoveryLawTests(CollectedTextsTests):
     """Сборка и загрузка закона о взыскании налогов 31/1962."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', COLLECTION_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=COLLECTION_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (COLLECTION_LAW,)
+    main_uid = COLLECTION_LAW
 
     def test_rebuild_keeps_files(self):
         for uid in (COLLECTION_LAW, 'cy/law/2025/241_I'):
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_all_ops_applied(self):
+        """Все изменения сняты; правка источника (шапка формы sub_2.sub_16) — не изменение."""
         problems = [
             line.strip()
             for line in self.report.splitlines()
-            if '→' in line or 'не найдена' in line or 'положения нет' in line
+            if ('→' in line and 'правка источника' not in line)
+            or 'не найдена' in line
+            or 'положения нет' in line
         ]
         self.assertEqual(problems, [])
+
+    def test_form_header_by_source_fix(self):
+        text = self.text('sub_2.sub_16', datetime.date(2024, 1, 1))
+        self.assertIn('Αναφορά εις την Φορολογίαν (Αρ., Χωρίον, Έτος) —', text)
+        self.assertIn('— Διαμονή —', text)
 
     def test_restructuring_term_by_laws_163_2024_and_217_2025(self):
         eid = 'art_2.def_anadiarthrwsh'
@@ -3150,35 +3317,15 @@ TRUSTS_LAW = 'cy/law/1992/69_I'
 
 
 @skipUnless((TEXTS_DIR / TRUSTS_LAW / 'collect.xml').exists(), 'нет Nomos-texts с 69(Ι)/1992')
-class InternationalTrustsLawTests(TestCase):
+class InternationalTrustsLawTests(CollectedTextsTests):
     """Закон о международных трастах 69(Ι)/1992: сводка CyLaw с 240(Ι)/2025."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', TRUSTS_LAW, texts_dir=str(cls.copy), stdout=output)
-        cls.report = output.getvalue()
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=TRUSTS_LAW, eid=eid).version_on(day)
+    collected = (TRUSTS_LAW,)
+    main_uid = TRUSTS_LAW
 
     def test_rebuild_keeps_files(self):
         for uid in (TRUSTS_LAW, 'cy/law/2025/240_I'):
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_parts_numbered_by_ordinal_words(self):
@@ -3200,32 +3347,14 @@ class InternationalTrustsLawTests(TestCase):
 EMPLOYER_FUND_LAWS = ['cy/law/1967/8', 'cy/law/1967/24', 'cy/law/2002/124_I']
 
 
-class EmployerFundLawsTests(TestCase):
+class EmployerFundLawsTests(CollectedTextsTests):
     """Отпуска 8/1967, прекращение занятости 24/1967, фонд соцсплочённости 124(Ι)/2002."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        for uid in EMPLOYER_FUND_LAWS:
-            call_command('collect_cylaw', uid, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
+    collected = EMPLOYER_FUND_LAWS
 
     def test_rebuild_keeps_files(self):
         for uid in EMPLOYER_FUND_LAWS:
-            folder = self.copy / uid
-            changed = [
-                path.name
-                for path in folder.iterdir()
-                if not filecmp.cmp(path, TEXTS_DIR / uid / path.name, shallow=False)
-            ]
+            changed = self.differing(uid)
             self.assertEqual(changed, [], uid)
 
     def test_old_style_schedules_of_law_24_1967(self):
@@ -3251,37 +3380,14 @@ class EmployerFundLawsTests(TestCase):
 LAND_FEES_LAW = 'cy/law/cap/219'
 
 
-class LandRegistryFeesLawTests(TestCase):
+class LandRegistryFeesLawTests(CollectedTextsTests):
     """Сборы Κτηματολόγιο, Κεφ. 219, с изменениями 166(Ι)/2024, 51(Ι)/2025, 222(Ι)/2025."""
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.temp = tempfile.TemporaryDirectory()
-        cls.copy = Path(cls.temp.name) / 'texts'
-        shutil.copytree(TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns('.git'))
-        output = StringIO()
-        call_command('collect_cylaw', LAND_FEES_LAW, texts_dir=str(cls.copy), stdout=output)
-        call_command('load_texts', texts_dir=str(cls.copy), stdout=output)
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls.temp.cleanup()
-
-    def version(self, eid, day):
-        return Fragment.objects.get(act__uid=LAND_FEES_LAW, eid=eid).version_on(day)
-
-    def text(self, eid, day):
-        version = self.version(eid, day)
-        return FragmentText.objects.get(version=version, expression__lang='el').body
+    collected = (LAND_FEES_LAW,)
+    main_uid = LAND_FEES_LAW
 
     def test_rebuild_keeps_files(self):
-        folder = self.copy / LAND_FEES_LAW
-        changed = [
-            path.name
-            for path in folder.iterdir()
-            if not filecmp.cmp(path, TEXTS_DIR / LAND_FEES_LAW / path.name, shallow=False)
-        ]
+        changed = self.differing(LAND_FEES_LAW)
         self.assertEqual(changed, [])
 
     def test_restructuring_term_9_10_11_years(self):
@@ -3313,3 +3419,252 @@ class LandRegistryFeesLawTests(TestCase):
             body__startswith='ΚΕΦ.219',
         )
         self.assertFalse(texts.exists())
+
+
+UPLOAD_GUIDE = 'cy/instr/2021/sis_contributions_file'
+
+
+@skipUnless(
+    (TEXTS_DIR / UPLOAD_GUIDE / 'act.xml').exists(),
+    'нет Nomos-texts с руководством ΥΚΑ по файлу взносов',
+)
+class ContributionsFileGuideTests(TestCase):
+    """Руководство ΥΚΑ по файлу TEXT для оплаты взносов (только чтение)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command('load_texts', texts_dir=str(TEXTS_DIR), stdout=StringIO())
+
+    def test_act_and_relation(self):
+        relation = ActRelation.objects.get(from_act__uid=UPLOAD_GUIDE)
+        self.assertEqual(relation.from_act.kind, 'instr')
+        self.assertEqual((relation.kind, relation.to_act.uid), ('explains', SOCIAL_LAW))
+        expression = Expression.objects.get(act__uid=UPLOAD_GUIDE, lang='el')
+        self.assertEqual(expression.source.code, 'cy-sis')
+
+    def test_records_and_fields(self):
+        fragments = Fragment.objects.filter(act__uid=UPLOAD_GUIDE)
+        fields = fragments.filter(kind='fld')
+        counts = {
+            'sct_%d' % index: count
+            for index, count in enumerate([6, 7, 13, 11, 8, 9], 2)
+        }
+        for parent, count in counts.items():
+            self.assertEqual(fields.filter(parent__eid=parent).count(), count, parent)
+        self.assertEqual(fields.count(), sum(counts.values()))
+        tables = fragments.filter(parent__eid='anx_1', kind='sct')
+        self.assertEqual(tables.count(), 3)
+        self.assertEqual(
+            [fragments.filter(parent=table).count() for table in tables.order_by('order_key')],
+            [9, 7, 8],
+        )
+
+
+def write_translated_act(root, title='Закон', heading='Определения', body='<p>Текст</p>'):
+    """Акт cy/law/2000/1_I из одной статьи с заголовком: el и ru."""
+    folder = root / 'cy/law/2000/1_I'
+    folder.mkdir(parents=True)
+    (folder / 'act.xml').write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<act uid="cy/law/2000/1_I" jurisdiction="cy" kind="law" structure-lang="el">\n'
+        '  <expression lang="el" status="official_text" source="cylaw" file="el.xml"'
+        ' title="Νόμος" />\n'
+        '  <expression lang="ru" status="our_translation" source="nomos" file="ru.xml"'
+        ' title="%s" />\n'
+        '  <amendment key="base" kind="base" />\n'
+        '  <fragment uid="aaaaaaaaaa" kind="art" eid="art_1" order-key="0001">\n'
+        '    <version key="base" num="1" heading="Ορισμοί" amendment="cy/law/2000/1_I#base"'
+        ' known-from="2024-01-01" />\n'
+        '  </fragment>\n'
+        '</act>\n' % title,
+        encoding='utf-8',
+    )
+    for lang, text_heading, text_body in (('el', '', '<p>Κείμενο</p>'), ('ru', heading, body)):
+        (folder / ('%s.xml' % lang)).write_text(
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            '<texts act="cy/law/2000/1_I" lang="%s">\n'
+            '  <text fragment="aaaaaaaaaa" version="base" heading="%s">%s</text>\n'
+            '</texts>\n' % (lang, text_heading, text_body),
+            encoding='utf-8',
+        )
+
+
+class CheckTranslationsTests(SimpleTestCase):
+    """check_translations: неполный ru — список и ошибка (код 1), акт без ru только считается."""
+
+    def check(self, **parts):
+        with tempfile.TemporaryDirectory() as folder:
+            write_translated_act(Path(folder), **parts)
+            write_simple_act(Path(folder), 'cy/form/vat/4B', 'form', 'Κείμενο', 'bbbbbbbbbb')
+            out = StringIO()
+            try:
+                call_command('check_translations', texts_dir=folder, stdout=out)
+            except CommandError:
+                return False, out.getvalue()
+            return True, out.getvalue()
+
+    def test_complete(self):
+        passed, out = self.check()
+        self.assertTrue(passed, out)
+        self.assertIn('ru полный: 1, неполный: 0, без ru: 1', out)
+
+    def test_incomplete(self):
+        cases = {
+            'нет названия': {'title': ''},
+            'нет заголовков: 1 (art_1)': {'heading': ''},
+            'нет текста: 1 (art_1)': {'body': ''},
+        }
+        for reason, parts in cases.items():
+            with self.subTest(reason=reason):
+                passed, out = self.check(**parts)
+                self.assertFalse(passed, out)
+                self.assertIn('cy/law/2000/1_I: %s\n' % reason, out)
+                self.assertIn('ru полный: 0, неполный: 1, без ru: 1', out)
+
+
+class PublicOnlyLoadTests(TestCase):
+    """load_texts при NOMOS_PUBLIC_ONLY: загружаются только акты с полным ru."""
+
+    def load(self, public_only=True, **parts):
+        with tempfile.TemporaryDirectory() as folder:
+            write_translated_act(Path(folder), **parts)
+            write_simple_act(Path(folder), 'cy/form/vat/4B', 'form', 'Κείμενο', 'bbbbbbbbbb')
+            with self.settings(NOMOS_PUBLIC_ONLY=public_only):
+                call_command('load_texts', texts_dir=folder, stdout=StringIO())
+        return set(Act.objects.values_list('uid', flat=True))
+
+    def test_incomplete_skipped(self):
+        self.assertEqual(self.load(body=''), set())
+
+    def test_complete_loaded_without_ru_skipped(self):
+        self.assertEqual(self.load(), {'cy/law/2000/1_I'})
+
+    def test_incomplete_loaded_without_public_only(self):
+        self.assertEqual(
+            self.load(public_only=False, body=''), {'cy/law/2000/1_I', 'cy/form/vat/4B'},
+        )
+
+
+class NavLoadTests(TestCase):
+    """nav.xml: каркас меню в NavNode; акты по связям у основных актов; акты вне меню."""
+
+    ACTS = (
+        ('cy/law/2000/95_I', 'cy', 'law', ['related eu/dir/2006/112']),
+        ('cy/kdp/2010/290', 'cy', 'kdp', ['based_on cy/law/2000/95_I']),
+        ('cy/kdp/2024/1', 'cy', 'kdp', ['amends cy/kdp/2010/290']),
+        ('cy/form/vat/4', 'cy', 'form', ['based_on cy/law/2000/95_I']),
+        ('cy/instr/2024/guide', 'cy', 'instr', ['explains cy/law/2000/95_I']),
+        ('cy/law/2024/7_I', 'cy', 'law', ['amends cy/law/2000/95_I']),
+        ('cy/law/1967/8', 'cy', 'law', []),
+        ('eu/dir/2006/112', 'eu', 'dir', []),
+        ('eu/dir/2022/542', 'eu', 'dir', ['amends eu/dir/2006/112']),
+    )
+
+    NAV = (
+        '<nav>\n'
+        '  <section key="cy" label="Кипр">\n'
+        '    <section key="taxes" label="Налоги">\n'
+        '      <item act="cy/law/2000/95_I" label="НДС" />\n'
+        '      <item act="cy/law/2002/118_I" label="Подоходный налог" />\n'
+        '    </section>\n'
+        '  </section>\n'
+        '  <section key="eu" label="ЕС">\n'
+        '    <section key="vat" label="НДС">\n'
+        '      <item act="eu/dir/2006/112" />\n'
+        '    </section>\n'
+        '  </section>\n'
+        '  <section key="analytics" label="Аналитика">\n'
+        '    <changes date="2026-01-01" scope="cy/taxes" />\n'
+        '  </section>\n'
+        '</nav>\n'
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for uid, jurisdiction, kind, relations in cls.ACTS:
+                path = root / uid / 'act.xml'
+                path.parent.mkdir(parents=True)
+                lines = [
+                    '<relation kind="%s" to="%s" />' % tuple(item.split())
+                    for item in relations
+                ]
+                path.write_text(
+                    '<?xml version="1.0" encoding="utf-8"?>\n'
+                    '<act uid="%s" jurisdiction="%s" kind="%s">\n%s\n</act>\n'
+                    % (uid, jurisdiction, kind, '\n'.join(lines)),
+                    encoding='utf-8',
+                )
+            (root / 'nav.xml').write_text(cls.NAV, encoding='utf-8')
+            output = StringIO()
+            call_command('load_texts', texts_dir=folder, stdout=output)
+        cls.output = output.getvalue()
+
+    def test_tree(self):
+        top = NavNode.objects.filter(parent=None)
+        self.assertEqual([node.key for node in top], ['cy', 'eu', 'analytics'])
+        item = NavNode.objects.get(act_uid='cy/law/2000/95_I')
+        self.assertEqual(item.act.uid, 'cy/law/2000/95_I')
+        self.assertEqual((item.label, item.parent.keys()), ('НДС', ['cy', 'taxes']))
+        missing = NavNode.objects.get(act_uid='cy/law/2002/118_I')
+        self.assertIsNone(missing.act)
+        # <changes> пока не загружается
+        self.assertFalse(NavNode.objects.filter(parent__key='analytics').exists())
+        self.assertIn('в меню, но не загружен: cy/law/2002/118_I', self.output)
+
+    def test_blocks_by_relations(self):
+        law = Act.objects.get(uid='cy/law/2000/95_I')
+        blocks = grouping.Relations().blocks(law, grouping.main_act_ids())
+        uids = {block: [act.uid for act in acts] for block, acts in blocks.items()}
+        self.assertEqual(
+            uids,
+            {
+                grouping.AMENDING: ['cy/law/2024/7_I'],
+                # изменяющая ΚΔΠ — у закона, в блоке своей ΚΔΠ
+                grouping.SUBSIDIARY: ['cy/kdp/2010/290', 'cy/kdp/2024/1'],
+                grouping.FORMS: ['cy/form/vat/4', 'cy/instr/2024/guide'],
+                grouping.EU: ['eu/dir/2006/112'],
+            },
+        )
+
+    def test_main_act_does_not_pull_other_main_acts_relations(self):
+        directive = Act.objects.get(uid='eu/dir/2006/112')
+        blocks = grouping.Relations().blocks(directive, grouping.main_act_ids())
+        self.assertEqual(
+            {block: [act.uid for act in acts] for block, acts in blocks.items()},
+            {grouping.AMENDING: ['eu/dir/2022/542']},
+        )
+
+    def test_unattached_listed(self):
+        self.assertEqual([act.uid for act in grouping.unattached()], ['cy/law/1967/8'])
+        self.assertIn('актов без связи с основным актом: 1\n  cy/law/1967/8', self.output)
+
+    def test_without_nav_menu_is_empty(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = StringIO()
+            call_command('load_texts', texts_dir=folder, stdout=output)
+        self.assertIn('нет nav.xml: меню пусто', output.getvalue())
+        self.assertFalse(NavNode.objects.exists())
+
+
+class ManifestRelationsTests(SimpleTestCase):
+    """`<relation>` в collect.xml: связи закона, которые сборка пишет в act.xml."""
+
+    def test_read_relations(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'collect.xml'
+            path.write_text(
+                '<collect uid="cy/law/2000/95_I">\n'
+                '  <relation kind="related" to="eu/dir/2006/112" />\n'
+                '  <amending uid="cy/law/2024/10_I">\n'
+                '    <relation kind="amends" to="cy/law/2000/95_I" />\n'
+                '  </amending>\n'
+                '</collect>\n',
+                encoding='utf-8',
+            )
+            # связи внутри <amending> не берутся: только прямые дети <collect>
+            self.assertEqual(
+                history.read_relations(path),
+                [('related', 'eu/dir/2006/112')],
+            )

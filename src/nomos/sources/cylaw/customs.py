@@ -27,6 +27,19 @@ ARTICLE_RE = re.compile(rf'^({NUMBER})\.')
 PUNCTUATION_RE = re.compile(r'^[.,·;:ꞏ∙]$')
 PUNCTUATION_DX = 3
 PUNCTUATION_DY = 10
+# союз в конце строки: фраза продолжается на следующей («στα άρθρα 349 και» / «355»)
+CONNECTORS = ('και', 'ή')
+# число отдельной строкой сразу под строкой, кончающейся союзом, — текст, не номер
+# страницы; насколько ниже, pt (шаг строк около 12,6)
+NUMBER_DY = 15
+NUMBER_RE = re.compile(r'^\d+$')
+# строка кончается союзом и числом, дописанным attach_numbers («349 και 355»): просвет
+# под ней — от снятого числа, следующая строка продолжает фразу
+DANGLING_NUMBER_RE = re.compile(r'\s(?:και|ή)\s\d+$')
+# перечень номеров через перенос строки: «σύμφωνα με τα εδάφια (1) και» / «(2) του άρθρου
+# 11Β» — «(2)» не начинает пункт
+ENUMERATION_RE = re.compile(r'\(\d+\)\s(?:και|ή)$')
+ENUMERATED_RE = re.compile(r'^\(\d+\)\s')
 PART_RE = re.compile(r'^ΜΕΡΟΣ\s')
 # заголовок Μέρους или Κεφαλαίου, к которому присоединяется название заглавными
 HEADING_START_RE = re.compile(r'^(ΜΕΡΟΣ|ΚΕΦΑΛΑΙΟ)\s')
@@ -40,6 +53,16 @@ RATE_HEADER = 'Συντελεστής'
 RATE_RE = re.compile(r'^(€|\d+(,\d+)?%|Ατελώς)')
 RATE_GAP = 8
 RATE_REACH = 30
+# оговорка в столбце товаров («Νοείται ότι, από την 8η Μαρτίου … ισχύει ο συντελεστής …»)
+PROVISO_RE = re.compile(r'^Νοείται\s')
+# метка строки ставки в раскладке: снимается в pdf_layout, номер строки уходит парсеру
+RATE_MARK = ''
+# цифра: ссылка на закон «N. 140(I)/2018» — не заголовок
+DIGIT_RE = re.compile(r'\d')
+# ссылка на изменяющий закон под ставкой
+LAW_REF_RE = re.compile(r'^N\. \d+\(I\)/\d{4}$')
+# пункт «(β) …» в столбце ставок
+POINT_RE = re.compile(r'^\([α-ω]{1,2}\)\s')
 # пункт приложения «1) Προϊόντα …» — как «1. Προϊόντα …»
 ITEM_PAREN_RE = re.compile(r'^(\d+)\)\s')
 # заголовок Μέρους перед статьёй 1 — не дальше стольких строк
@@ -145,6 +168,56 @@ def attach_punctuation(words):
                 y = min(before, key=lambda other: abs(other[1] - y))[1]
         fixed.append((x0, y, x1, text))
     return fixed
+
+
+def attach_numbers(words):
+    """Число отдельной строкой под строкой, кончающейся союзом («349 και» / «355»), — её
+    продолжение: оно дописывается к союзу, иначе leginet.rows снял бы его как номер
+    страницы."""
+    fixed = list(words)
+    for word in words:
+        x0, y, x1, text = word
+        if not NUMBER_RE.match(text):
+            continue
+        if any(other is not word and abs(other[1] - y) <= HEADING_SHIFT for other in words):
+            continue
+        above = [other for other in words if 0 < y - other[1] <= NUMBER_DY]
+        if not above:
+            continue
+        line_y = max(other[1] for other in above)
+        last = max(
+            (other for other in above if abs(other[1] - line_y) <= HEADING_SHIFT),
+            key=lambda other: other[2],
+        )
+        if last[3] not in CONNECTORS or last not in fixed:
+            continue
+        index = fixed.index(last)
+        fixed[index] = (last[0], last[1], last[2], last[3] + ' ' + text)
+        fixed.remove(word)
+    return fixed
+
+
+def join_dangling(all_rows):
+    """Продолжение фразы, оборванной союзом, дописывается к её строке: после «349 και 355»
+    (DANGLING_NUMBER_RE) — и через пустую строку, после «εδάφια (1) και» — строка «(2) …»
+    без просвета, и «(2)» не начинает пункт. Строка с текстом на поле не дописывается: на
+    ней начинается заголовок."""
+    result = []
+    for row in all_rows:
+        margin, body, indent, gap = row
+        previous = next((index for index in range(len(result) - 1, -1, -1)
+                         if result[index][1]), None)
+        before = result[previous][1] if previous is not None else ''
+        dangling = gap in (None, '') and DANGLING_NUMBER_RE.search(before)
+        enumerated = (
+            gap is None and ENUMERATION_RE.search(before) and ENUMERATED_RE.match(body)
+        )
+        if body and not margin and (dangling or enumerated):
+            before = result[previous]
+            result[previous] = (before[0], before[1] + ' ' + body, before[2], before[3])
+            continue
+        result.append(row)
+    return result
 
 
 def mark_articles(all_rows, toc=None):
@@ -363,12 +436,18 @@ def split_rate(parts, left):
     первого слова у столбца ставок или со ставки после просвета чуть левее его (короткое
     «Ατελώς.» в 91(Ι)/2004, Τέταρτο Παράρτημα)."""
     text = ' '.join(word for _, _, word in parts)
-    if text.replace('(', '').replace(')', '').isupper():
-        # заголовок Μέρους таблицы по центру
+    capitals = text.replace('(', '').replace(')', '').isupper()
+    if capitals and (parts[0][0] < left or not DIGIT_RE.search(text)):
+        # заголовок Μέρους таблицы по центру, и его вторая строка «(ΛΟΙΠΑ)»; ссылка
+        # «N. 140(I)/2018» в столбце ставок — тоже заглавными, но у столбца и с цифрами
         return parts, []
     for index, (x0, _, word) in enumerate(parts):
         previous = parts[index - 1] if index else None
         after_gap = previous is None or x0 - previous[1] >= RATE_GAP
+        if x0 >= left and not after_gap:
+            # без просвета у столбца ставок строка идёт во всю ширину: текст, не ставка
+            # (оговорка «Νοείται …» Τέταρτο Παράρτημα, примечания под Πρώτο Παράρτημα)
+            return parts, []
         if x0 >= left or (RATE_RE.match(word) and after_gap and x0 >= left - RATE_REACH):
             return parts[:index], parts[index:]
     return parts, []
@@ -395,37 +474,99 @@ def schedule_rows(pages, columns):
                 gap = ''
             previous = y
             if gap is not None:
-                result.extend(table_rows(block, columns))
+                result.extend(table_rows(block, columns, in_table))
                 block = []
             product, rate = split_rate(parts, left) if in_table else (parts, [])
             block.append((gap, product, rate))
-        result.extend(table_rows(block, columns))
+        result.extend(table_rows(block, columns, in_table))
     return result
 
 
-def table_rows(block, columns):
-    """Ряд таблицы (или абзац вне её) → строки: сначала столбец товаров, затем ставки."""
-    rows = []
-    gap = block[0][0] if block else None
+def table_rows(block, columns, in_table=True):
+    """Ряд таблицы (или абзац вне её) → строки: столбец товаров, затем ставки.
+
+    Оговорка «Νοείται …» в столбце товаров таблицы — свой абзац. Если ряд начинается
+    ставкой («€429,00 …»), оговорки под товаром идут после ставки: они меняют ставку и
+    продолжаются на следующей странице, не перемешиваясь с ней (Πρώτο Παράρτημα
+    91(Ι)/2004); такая ставка помечена RATE_MARK (см. pdf_layout). Ссылка «N. 140(I)/2018»
+    под ставкой — в конце текста товара: текст ставки, уже переведённый, не меняется. Вне
+    таблицы (`in_table` ложно) абзац не делится."""
+    rates = [' '.join(word for _, _, word in rate) for _, _, rate in block if rate]
+    references = [body for body in rates if LAW_REF_RE.match(body)]
+    rates = [body for body in rates if body not in references]
+    with_rate = in_table and bool(rates) and bool(RATE_RE.match(rates[0]))
+    # строки — (текст, отступ, начало абзаца)
+    products = []
+    provisos = []
     for _, product, _ in block:
-        if product:
-            _, body, left = leginet.split(product, columns)
-            body = ITEM_PAREN_RE.sub(r'\1. ', body)
-            rows.append(('', body, leginet.indent_of(left, columns), gap))
-            gap = None
-    rates = [rate for _, _, rate in block if rate]
-    for index, rate in enumerate(rates):
-        body = ' '.join(word for _, _, word in rate)
-        rows.append(('', body, TEXT_INDENT, gap if not rows else ('' if not index else None)))
-        gap = None
+        if not product:
+            continue
+        _, body, left = leginet.split(product, columns)
+        body = ITEM_PAREN_RE.sub(r'\1. ', body)
+        indent = leginet.indent_of(left, columns)
+        if in_table and PROVISO_RE.match(body):
+            provisos.append((body, indent, True))
+        elif provisos:
+            provisos.append((body, indent, False))
+        else:
+            products.append((body, indent, False))
+    products.extend((body, TEXT_INDENT, False) for body in references)
+    marked = []
+    for index, body in enumerate(rates):
+        if not index and with_rate:
+            body += RATE_MARK
+        # «(β) €6,00 …» под «(α) …» в столбце ставок (Μπύρα, Δεύτερο Παράρτημα)
+        marked.append((body, TEXT_INDENT, not index or bool(POINT_RE.match(body))))
+    if with_rate:
+        lines = products + marked + provisos
+    else:
+        lines = products + provisos + marked
+    gap = block[0][0] if block else None
+    rows = []
+    if gap == leginet.PAGE_BREAK and provisos and lines[0] is provisos[0]:
+        # оговорка вверху страницы — новый абзац, не продолжение ставки на прошлой
+        rows.append(('', '', TEXT_INDENT, gap))
+        gap = ''
+    for body, indent, starts in lines:
+        rows.append(('', body, indent, gap if not rows else ('' if starts else None)))
     return rows
 
 
 def pdf_lines(path):
+    return pdf_layout(path)[0]
+
+
+def pdf_layout(path):
+    """Строки раскладки и номера (с единицы, как у layout.blocks) строк ставок таблиц
+    приложений, за которыми идёт пункт «N. …»: ставка — абзац своего пункта, не заголовок
+    следующего (consolidated Parser.rate_lines)."""
+    lines = []
+    marked = []
+    for line in marked_lines(path):
+        if line.endswith(RATE_MARK):
+            marked.append(len(lines))
+            line = line[:-len(RATE_MARK)]
+        lines.append(line)
+    rate_lines = {index + 1 for index in marked if before_item(lines, index)}
+    return lines, rate_lines
+
+
+def before_item(lines, index):
+    """За абзацем, который начинается строкой index, следует пункт «N. …»."""
+    index += 1
+    while index < len(lines) and lines[index].strip():
+        index += 1
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    return index < len(lines) and bool(ARTICLE_RE.match(lines[index].strip()))
+
+
+def marked_lines(path):
     pages = [attach_punctuation(words) for words in leginet.pdf_words(path)]
     columns = columns_of(pages)
     body_pages, schedule_pages = split_schedule(pages, columns)
-    raw_rows = leginet.rows(path, columns, body_pages)
+    body_pages = [attach_numbers(words) for words in body_pages]
+    raw_rows = join_dangling(leginet.rows(path, columns, body_pages))
     start = text_start(mark_articles(raw_rows))
     toc = toc_headings(raw_rows[:start])
     all_rows = mark_articles(raw_rows[start:], toc)

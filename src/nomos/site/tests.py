@@ -21,6 +21,7 @@ from nomos.acts.models import (
     Fragment,
     FragmentText,
     FragmentVersion,
+    NavNode,
     Reference,
 )
 from nomos.site import access, notices, reading, views
@@ -29,6 +30,33 @@ from nomos.sources.models import Source
 from nomos.translate.models import Note
 
 ACT_URL = '/cy/law/2000/1_I/'
+
+
+def make_nav():
+    """Каркас меню как в nav.xml: Кипр → Налоги, ЕС → НДС, МСФО и Аналитика без пунктов.
+
+    Пункты — основные акты тестов: какие из них есть в базе, те и связаны.
+    """
+    order = iter(range(1, 100))
+
+    def node(parent, key='', label='', uid=''):
+        return NavNode.objects.create(
+            parent=parent,
+            key=key,
+            label=label,
+            order=next(order),
+            act_uid=uid,
+            act=Act.objects.filter(uid=uid).first() if uid else None,
+        )
+
+    cy = node(None, 'cy', 'Кипр')
+    taxes = node(cy, 'taxes', 'Налоги')
+    node(taxes, label='НДС', uid='cy/law/2000/1_I')
+    eu = node(None, 'eu', 'ЕС')
+    vat = node(eu, 'vat', 'НДС')
+    node(vat, uid='eu/dir/2006/112')
+    node(None, 'ifrs', 'МСФО')
+    node(None, 'analytics', 'Аналитика')
 
 
 @override_settings(DJANGO_VITE={'default': {'dev_mode': True}})
@@ -169,6 +197,7 @@ class ViewerTests(TestCase):
             origin='human',
             body='Текст этой редакции неизвестен.',
         )
+        make_nav()
 
     @classmethod
     def add_version(cls, fragment, key, amendment, num, expression, body, **fields):
@@ -193,10 +222,11 @@ class ViewerTests(TestCase):
     def test_act_list_separates_amending_acts(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        base, groups = response.context['base'], response.context['groups']
-        self.assertEqual([entry['act'] for entry in base], [self.law])
-        self.assertEqual(groups[0]['title'], 'Изменяющие законы')
-        self.assertEqual([entry['act'] for entry in groups[0]['entries']], [self.amending])
+        items = response.context['groups'][0]['items']
+        self.assertEqual([item['entry']['act'] for item in items], [self.law])
+        blocks = items[0]['blocks']
+        self.assertEqual(blocks[0]['title'], 'Изменяющие законы')
+        self.assertEqual([entry['act'] for entry in blocks[0]['entries']], [self.amending])
         self.assertContains(response, 'class="acts__group"')
         self.assertContains(response, 'Что меняет: ст. 1')
 
@@ -209,8 +239,40 @@ class ViewerTests(TestCase):
 
     def test_section_lists_its_acts(self):
         response = self.client.get('/cy/')
-        self.assertEqual(len(response.context['base']), 1)
+        self.assertEqual(len(response.context['groups'][0]['items']), 1)
         self.assertEqual(self.client.get('/xx/').status_code, 404)
+        self.assertEqual(self.client.get('/cy/xx/').status_code, 404)
+
+    def test_subsection_page_shows_missing_item(self):
+        taxes = NavNode.objects.get(key='taxes')
+        NavNode.objects.create(
+            parent=taxes,
+            label='Подоходный налог',
+            order=50,
+            act_uid='cy/law/2002/118_I',
+        )
+        response = self.client.get('/cy/taxes/')
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'acts__card--missing')
+        self.assertContains(response, 'Подоходный налог')
+        self.assertContains(response, 'не загружен')
+
+    def test_act_page_blocks_by_relations(self):
+        kdp = Act.objects.create(uid='cy/kdp/2010/290', jurisdiction='cy', kind='kdp')
+        directive = Act.objects.create(uid='eu/dir/2006/112', jurisdiction='eu', kind='dir')
+        ActRelation.objects.create(from_act=kdp, to_act=self.law, kind='based_on')
+        ActRelation.objects.create(from_act=self.law, to_act=directive, kind='related')
+        response = self.client.get(ACT_URL)
+        self.assertEqual(len(response.context['blocks']), 3)
+        titles = (
+            'Τροποποιητικοί νόμοι',
+            'Κανονισμοί και διατάγματα',
+            'Σχετικές πράξεις της ΕΕ',
+        )
+        for title in titles:
+            self.assertContains(response, title)
+        # раздел в боковом меню — родитель пункта акта
+        self.assertContains(response, 'href="/cy/taxes/?')
 
     def test_about_lists_sources(self):
         response = self.client.get('/about/')
@@ -613,7 +675,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'Неофициальный перевод. Перевод выполнен ИИ')
         self.assertNotContains(response, 'Текст неизвестен</p>')
         self.assertNotContains(response, 'Перевод готовится')
-        self.assertContains(response, 'class="crumbs__item"\n        lang="el"')
+        self.assertContains(response, 'class="crumbs__item"\n      lang="el"')
 
     def test_untranslated_article_is_marked(self):
         Expression.objects.create(
@@ -644,7 +706,7 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'toc__link--current')
 
     def test_empty_section_has_same_layout(self):
-        response = self.client.get('/eu/')
+        response = self.client.get('/ifrs/')
         self.assertContains(response, 'В разделе пока нет актов')
         self.assertNotContains(response, 'Изменяющие акты')
 
@@ -652,7 +714,6 @@ class ViewerTests(TestCase):
         response = self.client.get('/cy/')
         self.assertContains(response, 'name="robots"')
         self.assertContains(response, 'Сайт не даёт юридических и налоговых консультаций')
-        self.assertNotContains(response, 'МСФО')
         response = self.client.get(ACT_URL + 'art_1/')
         self.assertContains(response, 'lang="el"\n  >\n    Το Nomos είναι')
         self.assertContains(response, 'Η έκδοση ανασυντέθηκε')
@@ -1029,6 +1090,15 @@ class PublicOnlyTests(TestCase):
             )
         return ru
 
+    def test_missing_item_hidden(self):
+        NavNode.objects.create(
+            parent=NavNode.objects.get(key='taxes'),
+            label='Подоходный налог',
+            order=50,
+            act_uid='cy/law/2002/118_I',
+        )
+        self.assertNotContains(self.client.get('/cy/taxes/'), 'не загружен')
+
     def assertNoGreek(self, response):
         for greek in GREEK_TEXTS:
             self.assertNotContains(response, greek)
@@ -1362,6 +1432,7 @@ class EuOriginalLangTests(TestCase):
                 body=f'<p>{body}</p>',
                 text_hash=lang,
             )
+        make_nav()
 
     def page(self, lang, **query):
         return self.client.get(reading.build_url(self.act, eid='art_1', lang=lang), query)
@@ -1580,24 +1651,30 @@ class PrefixUrlTests(UrlPrefixMixin, TestCase):
         self.assertNotContains(response, 'back-ref')
 
 
+def run_python(code, env):
+    """Код в отдельном процессе Python из src/, с переменными env поверх окружения и без
+    DJANGO_SETTINGS_MODULE: настройки читаются заново."""
+    env = dict(os.environ, **env)
+    env.pop('DJANGO_SETTINGS_MODULE', None)
+    return subprocess.run(
+        [sys.executable, '-c', code],
+        cwd=Path(__file__).resolve().parents[2],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
 class UrlPrefixSettingsTests(TestCase):
     """settings.py: подпуть из .env без лишних слешей; пусто — корень."""
 
     def settings_for(self, value):
-        env = dict(os.environ, NOMOS_URL_PREFIX=value)
-        env.pop('DJANGO_SETTINGS_MODULE', None)
         code = (
             'from nomos import settings as s; '
             'print(repr(s.NOMOS_URL_PREFIX), s.FORCE_SCRIPT_NAME, s.STATIC_URL, '
             's.SESSION_COOKIE_PATH, s.CSRF_COOKIE_PATH)'
         )
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            cwd=Path(__file__).resolve().parents[2],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        result = run_python(code, {'NOMOS_URL_PREFIX': value})
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.split()
 
@@ -1614,19 +1691,11 @@ class HomeLinkSettingsTests(TestCase):
     """settings.py: ссылка на внешний сайт из .env; подпись по умолчанию — адрес."""
 
     def settings_for(self, url, label):
-        env = dict(os.environ, NOMOS_HOME_URL=url, NOMOS_HOME_LABEL=label)
-        env.pop('DJANGO_SETTINGS_MODULE', None)
         code = (
             'from nomos import settings as s; '
             'print(repr((s.NOMOS_HOME_URL, s.NOMOS_HOME_LABEL)))'
         )
-        result = subprocess.run(
-            [sys.executable, '-c', code],
-            cwd=Path(__file__).resolve().parents[2],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        result = run_python(code, {'NOMOS_HOME_URL': url, 'NOMOS_HOME_LABEL': label})
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
 

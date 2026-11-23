@@ -9,6 +9,7 @@ from django.utils.http import urlencode
 from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy, gettext_noop
 
+from nomos.acts import grouping
 from nomos.acts.models import (
     Act,
     ActRelation,
@@ -22,52 +23,114 @@ from nomos.sources.models import Source
 from . import access, menu, notices, paths, reading, ui
 
 
-def act_list(request, jurisdiction=None):
-    """Раздел (или главная): основные акты карточками, изменяющие — свёрнутыми группами."""
-    acts = Act.objects.prefetch_related('expressions').order_by('jurisdiction', 'kind', 'uid')
-    section = None
-    if jurisdiction is not None:
-        if jurisdiction not in menu.section_codes():
+def act_list(request, jurisdiction=None, subsection=None):
+    """Главная или раздел меню: пункты основных актов, у каждого — его акты по связям."""
+    tree = menu.Tree()
+    keys = [key for key in (jurisdiction, subsection) if key]
+    node = None
+    if keys:
+        node = tree.find(keys)
+        if node is None:
             raise Http404('Нет такого раздела')
-        acts = acts.filter(jurisdiction=jurisdiction)
-    acts = sorted(
-        (act for act in acts if access.act_visible(act)),
-        key=reading.act_sort_key,
-    )
     lang = reading.interface_lang()
-    if jurisdiction is not None:
-        section = menu.section_label(jurisdiction)
-    amending_ids = set(
-        ActRelation.objects.filter(kind=ActRelation.Kind.AMENDS).values_list('from_act', flat=True)
-    )
-    targets = reading.amendment_targets([act for act in acts if act.id in amending_ids])
-    base = []
-    amending_laws = []
-    regulations = []
-    for act in acts:
-        entry = act_entry(act, targets.get(act.id, ''), lang)
-        if act.id not in amending_ids:
-            base.append(entry)
-        elif act.kind == Act.Kind.REGULATION_BY_LAW:
-            regulations.append(entry)
-        else:
-            amending_laws.append(entry)
-    groups = [
-        {'title': _('Изменяющие законы'), 'entries': amending_laws},
-        {'title': _('Подзаконные акты (ΚΔΠ)'), 'entries': regulations},
-    ]
+    relations = grouping.Relations()
+    main_ids = grouping.main_act_ids()
+    groups = []
+    for group in section_groups(tree, node):
+        items = [nav_item(item, relations, main_ids, lang) for item in tree.kids(group)]
+        items = [item for item in items if item is not None]
+        if items:
+            groups.append(
+                {
+                    'title': group_title(group, node, tree),
+                    'url': menu.section_url(group),
+                    'items': items,
+                }
+            )
+    entries = [item['entry'] for group in groups for item in group['items'] if item['entry']]
     return render(
         request,
         'site/act_list.html',
         {
-            'base': base,
-            'groups': [group for group in groups if group['entries']],
-            'section': section,
-            'is_home': jurisdiction is None,
-            'has_acts': bool(acts),
-            'disclaimer': notices.disclaimer(jurisdiction),
+            'groups': groups,
+            'first': entries[0] if entries else None,
+            'section': menu.label(node) if node is not None else None,
+            'is_home': node is None,
+            'has_acts': bool(groups),
+            'disclaimer': notices.disclaimer(keys[0] if keys else None),
         },
     )
+
+
+def section_groups(tree, node):
+    """Разделы с пунктами актов внутри node (и сам node), по порядку меню."""
+    found = []
+    kids = tree.kids(node)
+    if node is not None and any(not kid.is_section for kid in kids):
+        found.append(node)
+    for kid in kids:
+        if kid.is_section:
+            found.extend(section_groups(tree, kid))
+    return found
+
+
+def group_title(group, node, tree):
+    """Заголовок группы от открытого раздела вниз: на главной «Кипр: Налоги», в разделе Кипр —
+    «Налоги»; группа — сам открытый раздел — без заголовка."""
+    labels = []
+    while group is not None and group != node:
+        labels.append(menu.label(group))
+        group = group.parent
+    return ': '.join(reversed(labels))
+
+
+def nav_item(item, relations, main_ids, lang):
+    """Пункт меню: карточка акта с его блоками; нет акта — «не загружен» (без входа — ничего)."""
+    act = item.act
+    if access.is_restricted() and (act is None or not access.act_visible(act)):
+        return None
+    if act is None:
+        return {'entry': None, 'label': menu.label(item) or item.act_uid}
+    entry = act_entry(act, '', lang)
+    entry['nav_label'] = menu.label(item)
+    return {'entry': entry, 'blocks': act_blocks(act, relations, main_ids, lang)}
+
+
+# заголовки блоков у основного акта (docs/design/site-navigation.md, раздел 2)
+BLOCK_TITLES = {
+    grouping.SUBSIDIARY: gettext_lazy('Подзаконные акты'),
+    grouping.FORMS: gettext_lazy('Формы и руководства'),
+    grouping.EU: gettext_lazy('Связанные акты ЕС'),
+    grouping.OTHER: gettext_lazy('Прочее'),
+}
+
+
+def block_title(block, act):
+    if block != grouping.AMENDING:
+        return BLOCK_TITLES[block]
+    if act.jurisdiction == Act.Jurisdiction.CY:
+        return _('Изменяющие законы')
+    return _('Изменяющие акты')
+
+
+def act_blocks(act, relations, main_ids, lang):
+    """Непустые блоки актов у акта: [{'title', 'entries'}] по порядку проекта."""
+    found = relations.blocks(act, main_ids)
+    visible = {
+        block: [other for other in acts if access.act_visible(other)]
+        for block, acts in found.items()
+    }
+    targets = reading.amendment_targets(visible.get(grouping.AMENDING, []))
+    return [
+        {
+            'title': block_title(block, act),
+            'entries': [
+                act_entry(other, targets.get(other.id, ''), lang) for other in visible[block]
+            ],
+        }
+        for block in grouping.BLOCKS
+        if visible.get(block)
+    ]
 
 
 def act_entry(act, changes='', lang=reading.READER_LANG):
@@ -420,13 +483,17 @@ def back_label(eid):
 
 
 def nav_context(route, toc, current=None):
-    """Левая колонка открытого акта: оглавление, текущая страница, путь к списку актов."""
-    jurisdiction = route.act.jurisdiction
-    sections = dict(menu.SECTIONS)
+    """Левая колонка открытого акта: оглавление, текущая страница, путь к разделу меню.
+
+    Раздел — тот, где стоит пункт акта; акт не основной — раздел его юрисдикции.
+    """
+    tree = menu.Tree()
+    item = tree.item_of(route.act)
+    section = item.parent if item is not None else tree.find([route.act.jurisdiction])
     query = ui.lang_query(route.lang)
-    if jurisdiction in sections:
-        section_url = paths.url(f'/{jurisdiction}/') + query
-        section_label = menu.section_label(jurisdiction)
+    if section is not None:
+        section_url = menu.section_url(section) + query
+        section_label = menu.label(section)
     else:
         section_url = paths.url('/') + query
         section_label = _('Акты')
@@ -444,12 +511,6 @@ def nav_context(route, toc, current=None):
 def act_page(request, route, structure):
     act = route.act
     toc = reading.build_toc(structure, route)
-    amended_by = [
-        relation.from_act
-        for relation in act.relations_in.filter(kind=ActRelation.Kind.AMENDS)
-        .select_related('from_act')
-        .order_by('from_act__published_on', 'from_act__uid')
-    ]
     amends = [
         relation.to_act
         for relation in act.relations_out.filter(kind=ActRelation.Kind.AMENDS)
@@ -459,9 +520,12 @@ def act_page(request, route, structure):
     context.update(
         {
             'toc': toc,
-            'amended_by': [
-                related_entry(other, route) for other in amended_by if access.act_visible(other)
-            ],
+            'blocks': act_blocks(
+                act,
+                grouping.Relations(),
+                grouping.main_act_ids(),
+                route.lang,
+            ),
             'amends': [
                 related_entry(other, route) for other in amends if access.act_visible(other)
             ],

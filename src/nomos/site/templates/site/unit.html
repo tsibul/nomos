@@ -1,41 +1,11 @@
-{% extends 'site/base.html' %}
+{% extends 'site/act_base.html' %}
 
 {% load i18n %}
 
 {% block title %}{{ unit_label }} — {{ label }} — Nomos{% endblock %}
 
-{% block header %}
-  {% include 'site/parts/act_header.html' %}
-{% endblock %}
-
-{% block aside %}
-  {% include 'site/parts/sidenav.html' %}
-{% endblock %}
-
-{% block main %}
-  {% include 'site/parts/back_ref.html' %}
-
-  {% include 'site/parts/toolbar.html' %}
-
-  <nav
-    class="crumbs"
-    aria-label="{% translate 'Положение в акте' %}"
-  >
-    <a
-      class="crumbs__link"
-      href="{{ act_url }}"
-    >
-      {% translate 'Оглавление' %}
-    </a>
-    {% for crumb in crumbs %}
-      <span
-        class="crumbs__item"
-        lang="{{ crumb.lang }}"
-      >
-        {{ crumb }}
-      </span>
-    {% endfor %}
-  </nav>
+{% block content %}
+  {% include 'site/parts/crumbs.html' %}
 
   {% if untranslated and original_source %}
     <p class="untranslated">

@@ -204,12 +204,54 @@ def joined(first, second):
     return found
 
 
-def merged_uids(uids, new, old, lost):
-    """Фрагменты, слитые новым разбором с предыдущим текстом: [(uid предыдущего, uid слитого)].
+# слово, которое прежний разбор потерял на стыке фрагментов: номер статьи «355», снятый
+# как номер страницы, или «(2)», ставший номером пункта (91(Ι)/2004, ст. 4 и 6)
+BRIDGE_RE = re.compile(r'^(?:\d+|\(\d+\))$')
 
-    Абзац, разорванный переносом страницы, прежний разбор делил на два фрагмента; новый
-    склеивает их. Слитый — потерянный uid, чей текст по всем редакциям продолжает текст
-    предыдущего по el.xml фрагмента."""
+
+def bridge_word(first, second, whole):
+    """Слово на стыке, если whole — first, слово по BRIDGE_RE и second через пробелы; иначе
+    None."""
+    if whole is None:
+        return None
+    if not (whole.startswith(first + ' ') and whole.endswith(' ' + second)):
+        return None
+    middle = whole[len(first) + 1:len(whole) - len(second) - 1]
+    return middle if BRIDGE_RE.match(middle) else None
+
+
+def interleaved(first, second, whole):
+    """Слова whole — слова first и second вперемешку, порядок в каждом сохранён, начало —
+    от first: строку во всю ширину таблицы прежний разбор делил на столбец товаров и
+    столбец ставок (оговорка Τέταρτο Παράρτημα 91(Ι)/2004)."""
+    if whole is None:
+        return False
+    head, tail, words = first.split(), second.split(), whole.split()
+    if len(head) + len(tail) != len(words) or not head or head[0] != words[0]:
+        return False
+    # reachable[j]: первые i слов first и j слов second дают первые i + j слов whole
+    reachable = [True] * (len(tail) + 1)
+    for j in range(1, len(tail) + 1):
+        reachable[j] = reachable[j - 1] and tail[j - 1] == words[j - 1]
+    for i in range(1, len(head) + 1):
+        reachable[0] = reachable[0] and head[i - 1] == words[i - 1]
+        for j in range(1, len(tail) + 1):
+            word = words[i + j - 1]
+            reachable[j] = (
+                (reachable[j] and head[i - 1] == word)
+                or (reachable[j - 1] and tail[j - 1] == word)
+            )
+    return reachable[-1]
+
+
+def continued_uids(uids, new, old, lost):
+    """Фрагменты, слитые новым разбором с предыдущим текстом: [(uid предыдущего, uid слитого,
+    слово на стыке)].
+
+    Слитый — потерянный uid, чей текст по всем редакциям продолжает текст предыдущего по
+    el.xml фрагмента: склейка через перенос страницы (слово на стыке — ''), склейка с
+    потерянным словом на стыке (bridge_word) или слова обоих вперемешку (interleaved, слово
+    — '')."""
     node_by_uid = {uid: node for node, uid in uids.items()}
     order = list(old)
     found = []
@@ -223,12 +265,56 @@ def merged_uids(uids, new, old, lost):
         node = node_by_uid.get(previous)
         if node is None:
             continue
-        texts = old[uid]
-        if all(
-            key in old[previous] and new[node].get(key) in joined(old[previous][key], texts[key])
-            for key in texts
-        ):
-            found.append((previous, uid))
+        words = set()
+        for key, text in old[uid].items():
+            first = old[previous].get(key)
+            whole = new[node].get(key)
+            if first is None:
+                break
+            if whole in joined(first, text) or interleaved(first, text, whole):
+                words.add('')
+                continue
+            word = bridge_word(first, text, whole)
+            if word is None:
+                break
+            words.add(word)
+        else:
+            if len(words) == 1:
+                found.append((previous, uid, words.pop()))
+    return found
+
+
+def merged_uids(uids, new, old, lost):
+    """Фрагменты, слитые новым разбором с предыдущим текстом: [(uid предыдущего, uid слитого)]
+    (см. continued_uids).
+
+    Абзац, разорванный переносом страницы, прежний разбор делил на два фрагмента; новый
+    склеивает их."""
+    return [(previous, uid) for previous, uid, _ in continued_uids(uids, new, old, lost)]
+
+
+def rehomed_uids(uids, new, old, nums, lost):
+    """Потерянный uid, чей текст есть у фрагмента с новым uid, переходит к нему; пары — по
+    порядку документа. follow_texts такой uid не переносит, когда одинаковый текст у
+    нескольких свободных uid на равном удалении по eid («0%» в Τέταρτο Παράρτημα
+    91(Ι)/2004 после склейки оговорки выше). Меняет uids; возвращает перенесённые uid."""
+    fresh = [node for node, uid in uids.items() if uid not in old and new[node]]
+    lost = set(lost)
+    used = set()
+    found = []
+    for uid in [uid for uid in old if uid in lost]:
+        node = next(
+            (
+                node for node in fresh
+                if node not in used and same_text(old[uid], new[node], nums[node])
+            ),
+            None,
+        )
+        if node is None:
+            continue
+        used.add(node)
+        uids[node] = uid
+        found.append(uid)
     return found
 
 
@@ -259,12 +345,8 @@ def headed_uids(uids, headings, old, lost):
     return found
 
 
-def move_to_headings(folder, triples):
-    """Перевод фрагмента, ставшего заголовком, — в атрибут heading записи нового фрагмента.
-
-    Текст записи (абзацы без разметки) становится заголовком; запись потерянного убирается,
-    её примечания переходят в запись нового. Запись нового создаётся, если её нет."""
-    moves = {(uid, key): target for uid, target, key in triples}
+def translation_files(folder):
+    """Файлы переводов папки акта: (путь, текст, {(uid, редакция): запись})."""
     for path in sorted(folder.glob('*.xml')):
         if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
             continue
@@ -273,6 +355,16 @@ def move_to_headings(folder, triples):
             (match.group('uid'), match.group('key')): match
             for match in TEXT_BLOCK_RE.finditer(source)
         }
+        yield path, source, blocks
+
+
+def move_to_headings(folder, triples):
+    """Перевод фрагмента, ставшего заголовком, — в атрибут heading записи нового фрагмента.
+
+    Текст записи (абзацы без разметки) становится заголовком; запись потерянного убирается,
+    её примечания переходят в запись нового. Запись нового создаётся, если её нет."""
+    moves = {(uid, key): target for uid, target, key in triples}
+    for path, source, blocks in translation_files(folder):
         headings = {}
         drop = {}
         for (uid, key), target in moves.items():
@@ -323,23 +415,21 @@ def merge_translations(folder, pairs):
     """Перевод слитого фрагмента дописывается к переводу предыдущего: первый абзац — в конец
     последнего абзаца через пробел, прочее — следом. Запись слитого убирается.
 
-    Перевод не меняется, только соединяется так же, как el; записи без пары остаются."""
-    into = dict((child, parent) for parent, child in pairs)
-    for path in sorted(folder.glob('*.xml')):
-        if path.name in ('act.xml', 'el.xml', 'collect.xml', 'cylaw-notes.xml'):
-            continue
-        source = path.read_text(encoding='utf-8')
-        blocks = {
-            (match.group('uid'), match.group('key')): match
-            for match in TEXT_BLOCK_RE.finditer(source)
-        }
+    Перевод не меняется, только соединяется так же, как el; записи без пары остаются. Пара
+    может нести третьим слово на стыке (continued_uids): оно встаёт между абзацами."""
+    into = {}
+    words = {}
+    for parent, child, *word in pairs:
+        into[child] = parent
+        words[child] = word[0] if word else ''
+    for path, source, blocks in translation_files(folder):
         tails = {}
         drop = set()
         for (uid, key), match in blocks.items():
             parent = into.get(uid)
             if parent is None or (parent, key) not in blocks:
                 continue
-            tails.setdefault((parent, key), []).append(match.group('body'))
+            tails.setdefault((parent, key), []).append((match.group('body'), words[uid]))
             drop.add((uid, key))
         if not drop:
             continue
@@ -349,8 +439,8 @@ def merge_translations(folder, pairs):
             if key in drop:
                 return ''
             body = match.group('body')
-            for tail in tails.get(key, []):
-                body = join_bodies(body, tail)
+            for tail, word in tails.get(key, []):
+                body = join_bodies(body, tail, word)
             start = match.start('body') - match.start()
             end = match.end('body') - match.start()
             text = match.group(0)
@@ -359,18 +449,26 @@ def merge_translations(folder, pairs):
         path.write_text(TEXT_BLOCK_RE.sub(rewrite, source), encoding='utf-8')
 
 
-def join_bodies(body, tail):
-    """Строки записи перевода: первый <p> хвоста — в конец последнего <p> тела."""
+def join_bodies(body, tail, word=''):
+    """Строки записи перевода: первый <p> хвоста — в конец последнего <p> тела через пробел
+    (и слово на стыке, если оно есть); примечания тела после этого <p> остаются за ним."""
     lines = body.splitlines(keepends=True)
     rest = tail.splitlines(keepends=True)
+    last = next(
+        (index for index in range(len(lines) - 1, -1, -1) if lines[index].startswith('    <p>')),
+        None,
+    )
+    notes_after = last is not None and all(
+        line.startswith('    <note') for line in lines[last + 1:]
+    )
     if (
-        lines and rest
-        and lines[-1].rstrip('\n').endswith('</p>')
+        notes_after and rest
+        and lines[last].rstrip('\n').endswith('</p>')
         and rest[0].startswith('    <p>')
     ):
-        last = lines[-1].rstrip('\n')[:-len('</p>')]
+        end = lines[last].rstrip('\n')[:-len('</p>')]
         first = rest[0][len('    <p>'):]
-        lines[-1] = last + ' ' + first
+        lines[last] = end + ' ' + (word + ' ' if word else '') + first
         rest = rest[1:]
     return ''.join(lines + rest)
 
@@ -397,6 +495,35 @@ def foreign_parts(path, lang):
         if element.tag not in OWN_TAGS or element.tag == 'expression':
             kept.append(ET.tostring(element, encoding='unicode').strip())
     return own_extra, kept
+
+
+def amendment_line(amendment, with_marker=False):
+    """Строка <amendment> act.xml; marker есть только у изменений актов ЕС."""
+    fields = [
+        ('key', amendment.key),
+        ('provision', amendment.provision),
+        ('kind', amendment.kind),
+        ('published-on', amendment.published_on),
+        ('in-force-from', amendment.in_force_from),
+        ('applies-from', amendment.applies_from),
+    ]
+    if with_marker:
+        fields.append(('marker', amendment.marker))
+    return '  <amendment %s>%s</amendment>' % (attrs(fields), escape(amendment.note))
+
+
+def version_line(version, num, heading):
+    """Строка <version> act.xml; номер и заголовок передаёт вызывающий."""
+    return '    <version %s />' % attrs([
+        ('key', version.key),
+        ('num', num),
+        ('heading', heading),
+        ('amendment', version.amendment),
+        ('state', '' if version.state == 'active' else version.state),
+        ('valid-from', version.valid_from),
+        ('applies-from', version.applies_from),
+        ('known-from', version.known_from),
+    ])
 
 
 def write_act(path, info, versions, uids):
@@ -427,42 +554,38 @@ def write_act(path, info, versions, uids):
     names = {name for name, _ in own}
     own += [(name, value) for name, value in own_extra.items() if name not in names]
     lines.append('  <expression %s />' % attrs(own))
+    finish_act(path, lines, kept, info, versions.items(), uids, node_num_heading)
+
+
+def node_num_heading(node, version):
+    """Номер и заголовок редакции: свои у версии, иначе — узла."""
+    return (
+        node.num if version.num is None else version.num,
+        node.heading if version.heading is None else version.heading,
+    )
+
+
+def finish_act(path, lines, kept, info, fragments, uids, num_heading, with_marker=False):
+    """Хвост act.xml после <expression> и запись файла.
+
+    fragments — пары (фрагмент, версии); num_heading(фрагмент, версия) → (номер, заголовок)."""
     for element in kept:
         lines.append('  ' + element)
     for kind, target in info.relations:
         lines.append('  <relation %s />' % attrs([('kind', kind), ('to', target)]))
     for amendment in info.amendments:
-        lines.append('  <amendment %s>%s</amendment>' % (
-            attrs([
-                ('key', amendment.key),
-                ('provision', amendment.provision),
-                ('kind', amendment.kind),
-                ('published-on', amendment.published_on),
-                ('in-force-from', amendment.in_force_from),
-                ('applies-from', amendment.applies_from),
-            ]),
-            escape(amendment.note),
-        ))
+        lines.append(amendment_line(amendment, with_marker=with_marker))
     lines.append('')
-    for node, node_versions in versions.items():
+    for fragment, fragment_versions in fragments:
         lines.append('  <fragment %s>' % attrs([
-            ('uid', uids[node]),
-            ('kind', node.kind),
-            ('eid', node.eid),
-            ('parent', node.parent_eid),
-            ('order-key', node.order_key),
+            ('uid', uids[fragment]),
+            ('kind', fragment.kind),
+            ('eid', fragment.eid),
+            ('parent', fragment.parent_eid),
+            ('order-key', fragment.order_key),
         ]))
-        for version in node_versions:
-            lines.append('    <version %s />' % attrs([
-                ('key', version.key),
-                ('num', node.num if version.num is None else version.num),
-                ('heading', node.heading if version.heading is None else version.heading),
-                ('amendment', version.amendment),
-                ('state', '' if version.state == 'active' else version.state),
-                ('valid-from', version.valid_from),
-                ('applies-from', version.applies_from),
-                ('known-from', version.known_from),
-            ]))
+        for version in fragment_versions:
+            lines.append(version_line(version, *num_heading(fragment, version)))
         lines.append('  </fragment>')
     lines.append('</act>')
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -518,6 +641,14 @@ def write_notes(path, info, notes, inline=()):
 
 def escape(text):
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def act_paths(root):
+    """Все act.xml папки текстов по порядку, кроме копий источников (папки sources)."""
+    return sorted(
+        path for path in root.rglob('act.xml')
+        if 'sources' not in path.relative_to(root).parts
+    )
 
 
 def read_act(path):
