@@ -21,8 +21,8 @@ from nomos.acts.models import (
 from nomos.translate.models import Note
 
 from .cylaw import (
-    acts, columns, consolidated, customs, gazette, history, layout, leginet, numbering,
-    rate_table, refs, texts_xml,
+    acts, columns, consolidated, customs, gazette, gazette_law, history, layout, leginet,
+    numbering, rate_table, refs, texts_xml,
 )
 from .management.commands import collect_cylaw
 from .cylaw.tree import Node
@@ -984,6 +984,75 @@ class GazetteTests(SimpleTestCase):
             root.children[2].paragraphs,
             ['(1) Οι έρευνες δεν δημοσιεύονται.', '(2)(α) Η διαδικασία είναι κατάλληλη.'],
         )
+
+
+class GazetteLawTests(SimpleTestCase):
+    """Базовый закон из газеты без сводки (151(Ι)/2024) → раскладка сводки CyLaw."""
+
+    LONG = ' — текст статьи достаточно длинный, чтобы задать колонку страницы.'
+
+    def parse(self, *pages):
+        lines = gazette_law.convert([gazette_lines(*page) for page in pages])
+        return consolidated.Parser('cy/law/2024/151_I', ()).parse(lines)
+
+    def test_articles_headings_and_parts(self):
+        root = self.parse((
+            ('Προοίμιο.', 'Για σκοπούς εναρμόνισης με την πράξη της Ευρωπαϊκής Ένωσης,'),
+            ('', ''),
+            ('', '   Η Βουλή των Αντιπροσώπων ψηφίζει ως ακολούθως:'),
+            ('', ''),
+            ('Συνοπτικός', '1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος' + self.LONG),
+            ('τίτλος.', ''),
+            ('', ''),
+            ('', '                    ΜΕΡΟΣ Ι'),
+            ('', '               ΕΙΣΑΓΩΓΙΚΕΣ ΔΙΑΤΑΞΕΙΣ'),
+            ('', ''),
+            ('Πεδίο', '2.-(1) Ο παρών Νόμος εφαρμόζεται στις οντότητες' + self.LONG),
+            ('εφαρμογής.', ''),
+            ('64(Ι) του 2004.', ''),
+            ('', ''),
+            ('', '   (2) Αρμόδια αρχή είναι ο Έφορος Φορολογίας' + self.LONG),
+        ))
+        nodes = {node.eid: node for node in root.walk()}
+        self.assertEqual(nodes['art_1'].heading, 'Συνοπτικός τίτλος')
+        self.assertEqual(nodes['art_2'].heading, 'Πεδίο εφαρμογής')
+        self.assertEqual(nodes['art_2'].parent.eid, 'prt_I')
+        self.assertIn('art_2.par_2', nodes)
+        # формула «Η Βουλή … ψηφίζει» — абзац преамбулы, не отдельный узел у корня
+        self.assertEqual(nodes['sub_1'].parent.eid, 'cit_1')
+
+    def test_heading_continues_on_next_page(self):
+        root = self.parse(
+            (
+                ('Προοίμιο.', 'Η Βουλή των Αντιπροσώπων ψηφίζει ως ακολούθως:' + self.LONG),
+                ('', ''),
+                ('Προσδιορισμός', '1. Όταν μια συνιστώσα οντότητα είναι επενδυτική' + self.LONG),
+                ('του πραγματικού', 'οντότητα, ο πραγματικός φορολογικός συντελεστής' + self.LONG),
+            ),
+            (
+                ('συντελεστή.', 'υπολογίζεται χωριστά για κάθε δικαιοδοσία' + self.LONG),
+            ),
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_1')
+        self.assertEqual(article.heading, 'Προσδιορισμός του πραγματικού συντελεστή')
+
+    def test_label_raised_to_first_line(self):
+        """pdftotext ставит метку в середину абзаца — она переносится в его первую строку."""
+        lines = [
+            '',
+            '       μεταγενέστερα έγγραφα που δημοσιεύονται από τον ΟΟΣΑ,',
+            '       σχετικά με τις φορολογικές προκλήσεις που προκύπτουν',
+            ' (ι)   κανόνες κατά της διάβρωσης της φορολογικής βάσης,',
+            '       όπως αυτά ορίζονται με διάταγμα που εκδίδεται',
+            '       από τον Υπουργό.',
+            '',
+            ' (α)   πρώτος πόντος δύο γραμμών,',
+            '       συνέχεια του πρώτου.',
+        ]
+        raised = gazette_law.raise_labels(lines)
+        self.assertEqual(raised[1], ' (ι)   μεταγενέστερα έγγραφα που δημοσιεύονται από τον ΟΟΣΑ,')
+        self.assertEqual(raised[3], '       κανόνες κατά της διάβρωσης της φορολογικής βάσης,')
+        self.assertEqual(raised[7:], lines[7:])
 
 
 class OrderKeyTests(SimpleTestCase):
@@ -3085,6 +3154,32 @@ class CapitalGainsLawTests(CollectedTextsTests):
         self.assertIn('(€30.000)', self.text(eid, datetime.date(2026, 1, 1)))
         self.assertIsNone(self.version('art_5.par_3A', datetime.date(2025, 12, 31)))
         self.assertIsNone(self.version('art_5B', datetime.date(2025, 4, 24)))
+
+
+PILLAR_TWO_LAW = 'cy/law/2024/151_I'
+
+
+@skipUnless(
+    (TEXTS_DIR / PILLAR_TWO_LAW / 'collect.xml').exists(), 'нет Nomos-texts с законом 151(Ι)/2024',
+)
+class PillarTwoLawTests(CollectedTextsTests):
+    """151(Ι)/2024: сводки нет, базовый закон собран из газеты (layout="gazette-law")."""
+
+    collected = (PILLAR_TWO_LAW,)
+    main_uid = PILLAR_TWO_LAW
+
+    def test_rebuild_keeps_files(self):
+        self.assertEqual(self.differing(PILLAR_TWO_LAW), [])
+
+    def test_structure(self):
+        date = datetime.date(2024, 12, 18)
+        self.assertIn('Ο παρών Νόμος θα αναφέρεται', self.text('art_1', date))
+        self.assertIn('ΟΟΣΑ', self.text('art_60.pnt_b', date))
+        self.assertIsNotNone(self.version('art_2.def_kateythynthries_grammes_toy_oosa.pnt_i', date))
+        # нумерация частей в газете: второй «ΜΕΡΟΣ VII» и «ΜΕΡΟΣ XΙ» — правки источника
+        self.assertIsNotNone(self.version('prt_VIII', date))
+        self.assertIsNotNone(self.version('prt_X', date))
+        self.assertIn('правка источника prt_VII_2 → prt_VIII', self.report)
 
 
 COLLECTION_LAW = 'cy/law/1962/31'

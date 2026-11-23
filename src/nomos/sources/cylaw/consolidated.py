@@ -9,7 +9,7 @@
 
 import re
 
-from . import columns, customs, layout, leginet, numbering, rate_table
+from . import columns, customs, gazette_law, layout, leginet, numbering, rate_table
 from .tree import Node
 
 HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
@@ -994,7 +994,8 @@ def mark_definitions(article):
 
 def parse(path, act_uid, source='cylaw', splits=()):
     """`source` — откуда сводка: 'cylaw', 'leginet' или 'cy-customs' (Τμήμα Τελωνείων);
-    у них разная раскладка PDF.
+    у них разная раскладка PDF. 'cy-gazette-law' — сводки нет, базовый закон из газеты
+    (151(Ι)/2024): строки переводятся в раскладку сводки CyLaw (gazette_law).
 
     `splits` — правки манифеста `<split before="…">` (см. split_blocks)."""
     parser = Parser(act_uid, splits, lone_schedule=source == 'cy-customs')
@@ -1002,6 +1003,8 @@ def parse(path, act_uid, source='cylaw', splits=()):
         lines = leginet.pdf_lines(path)
     elif source == 'cy-customs':
         lines, parser.rate_lines = customs.pdf_layout(path)
+    elif source == 'cy-gazette-law':
+        lines = gazette_law.consolidated_lines(path)
     else:
         lines = layout.pdf_lines(path)
     if act_uid in RATE_TABLE_ACTS:

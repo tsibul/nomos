@@ -330,7 +330,8 @@ class Command(BaseCommand):
         tree, _, notes = consolidated.parse(
             root_dir / manifest['file'],
             info.uid,
-            manifest['source'],
+            # layout="gazette-law": сводки нет, базовый закон разбирается из газеты
+            'cy-gazette-law' if manifest.get('layout') == 'gazette-law' else manifest['source'],
             history.read_splits(folder / 'collect.xml'),
         )
         history.apply_source_fixes(
