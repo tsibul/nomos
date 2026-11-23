@@ -3285,7 +3285,7 @@ class OverdueContributionsLawTests(CollectedTextsTests):
         date = datetime.date(2024, 1, 1)
         self.assertIn('Γενικού Σχεδίου Υγείας', self.text('art_2.def_koinwnikh_eisfora', date))
         self.assertIn('Υποβολή αίτησης', self.version('art_5', date).heading)
-        self.assertIn('πέντε (5) μήνες', self.text('art_7.par_3.sub_2', date))
+        self.assertIn('δεκατρείς (13) μήνες', self.text('art_7.par_3.sub_2', date))
 
     def test_window_versions(self):
         self.assertIn('Ιουλίου 2024', self.text('art_12.sub_1', datetime.date(2024, 6, 30)))
