@@ -961,13 +961,19 @@ def mark_definitions(article):
     owner.children = []
     current = None
     closing = None
+    used = {}
     for node in paragraphs:
         text = node.text()
         match = match_term(text)
         if match:
             node.kind = 'def'
             node.unnumbered = False
-            node.token = 'def_' + numbering.slug(match.group('term'))
+            token = 'def_' + numbering.slug(match.group('term'))
+            # один термин дважды (205(Ι)/2012: «διασυνοριακή συναλλαγή» DAC6 и DAC9) — `_2`
+            used[token] = used.get(token, 0) + 1
+            if used[token] > 1:
+                token += '_' + str(used[token])
+            node.token = token
             owner.add(node)
             current = node
             # оговорки после нового определения — его, а не абзаца после прежнего перечня
