@@ -70,8 +70,12 @@ SCHEDULE_RE = re.compile(
     r'^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ|[ΣΙ] ΠΙΝΑΞ)$'
 )
 # «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже;
-# единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера
-ROMAN_SCHEDULE_RE = re.compile(r'^ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?$')
+# единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера;
+# «ΠΑΡΑΡΤΗΜΑ ΙΙ» (205(Ι)/2012) — только с номером
+ROMAN_SCHEDULE_RE = re.compile(
+    r'^(ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?'
+    r'|ΠΑΡΑΡΤΗΜΑ (?P<annex>[IVXΙΧ]+))$'
+)
 LONE_SCHEDULE = 'ΠΑΡΑΡΤΗΜΑ'
 # «ΜΕΡΟΣ ΠΡΩΤΟ ΕΙΣΑΓΩΓΗ» (69(Ι)/1992): номер Μέρους словом — порядковое числительное
 PART_ORDINALS = {
@@ -97,7 +101,13 @@ def part_number(match):
     return PART_ORDINALS.get(num, num)
 
 
-SECTION_RE = re.compile(r'^Τμήμα\s+(?P<num>\d+)\s*(?P<rest>.*)$')
+# «ΠΑΡΑΡΤΗΜΑ V - ΔΙΑΔΙΚΑΣΙΕΣ …» слева над «ΠΑΡΑΡΤΗΜΑ V» по центру (205(Ι)/2012) — оглавление
+# страницы CyLaw, не текст закона
+ANNEX_ANCHOR_RE = re.compile(r'^ΠΑΡΑΡΤΗΜΑ [IVXΙΧ]+ - ')
+# «ΤΜΗΜΑ IV», «Τμήμα Χ» — римский номер (приложения 205(Ι)/2012)
+SECTION_RE = re.compile(
+    r'^(Τμήμα|ΤΜΗΜΑ)\s+(?P<num>\d+|[IVXΙΧ]+\b)\s*(?P<rest>.*)$'
+)
 TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
 REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
 # «(9A). 1.- …» — номер статьи в скобках, εδάφιο через точку (118(Ι)/2002, ст. 9Α)
@@ -137,9 +147,15 @@ def roman_schedule(block):
     match = ROMAN_SCHEDULE_RE.match(block.text)
     if match is None or block.indent < 25:
         return None
-    if match.group('num') is None:
+    num = match.group('num') or match.group('annex')
+    if num is None:
         return 1
-    return numbering.roman_value(match.group('num').replace('Ι', 'I').replace('Χ', 'X'))
+    return numbering.roman_value(latin_roman(num))
+
+
+def latin_roman(num):
+    """Римский номер латиницей: в сводках встречаются греческие «Ι» и «Χ»."""
+    return num.replace('Ι', 'I').replace('Χ', 'X')
 
 
 def schedules_start(lines):
@@ -482,6 +498,8 @@ class Parser:
         if text == 'ΠΑΡΑΡΤΗΜΑΤΑ':
             self.in_schedules = True
             return
+        if self.in_schedules and block.indent < 25 and ANNEX_ANCHOR_RE.match(text):
+            return
         if roman_schedule(block) or self.is_lone_schedule(block):
             self.in_schedules = True
         if self.in_schedules and self.feed_schedule_heading(text, block):
@@ -544,7 +562,7 @@ class Parser:
         section = SECTION_RE.match(text)
         if section and block.indent >= 14:
             parent = self.nearest('prt') or self.schedule
-            node = Node('sct', num=section.group('num'), heading=text)
+            node = Node('sct', num=latin_roman(section.group('num')), heading=text)
             self.open_container(node, parent)
             return True
         table = TABLE_RE.match(text)
@@ -943,13 +961,19 @@ def mark_definitions(article):
     owner.children = []
     current = None
     closing = None
+    used = {}
     for node in paragraphs:
         text = node.text()
         match = match_term(text)
         if match:
             node.kind = 'def'
             node.unnumbered = False
-            node.token = 'def_' + numbering.slug(match.group('term'))
+            token = 'def_' + numbering.slug(match.group('term'))
+            # один термин дважды (205(Ι)/2012: «διασυνοριακή συναλλαγή» DAC6 и DAC9) — `_2`
+            used[token] = used.get(token, 0) + 1
+            if used[token] > 1:
+                token += '_' + str(used[token])
+            node.token = token
             owner.add(node)
             current = node
             # оговорки после нового определения — его, а не абзаца после прежнего перечня

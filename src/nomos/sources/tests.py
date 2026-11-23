@@ -569,6 +569,44 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(schedule.paragraphs, ['Μήνες εισφορών — Ημερομηνία'])
         self.assertEqual(schedule.children[0].heading, '')
 
+    def test_annex_roman_with_sections(self):
+        """«ΠΑΡΑΡΤΗΜΑ V» и «ΤΜΗΜΑ ΙΙ» (205(Ι)/2012): sch_5.sct_II; строка-якорь слева — не текст."""
+        lines = [
+            'Προοίμιο',
+            '',
+            '      Η Βουλή των Αντιπροσώπων ψηφίζει ως ακολούθως:',
+            '',
+            'Ερμηνεία.',
+            '',
+            '      2.-(1) Στον παρόντα Νόμο «Νόμος» σημαίνει τον Νόμο.',
+            '',
+            'ΠΑΡΑΡΤΗΜΑ V - ΔΙΑΔΙΚΑΣΙΕΣ ΔΕΟΥΣΑΣ ΕΠΙΜΕΛΕΙΑΣ',
+            '',
+            '                                   ΠΑΡΑΡΤΗΜΑ V',
+            '',
+            '                                   ΤΜΗΜΑ ΙΙ',
+            '',
+            '      1. Κείμενο του Τμήματος.',
+        ]
+        root = consolidated.Parser('x').parse(lines)
+        schedule = root.children[-1]
+        self.assertEqual(schedule.token, 'sch_5')
+        self.assertEqual(schedule.paragraphs, [])
+        self.assertEqual(schedule.children[0].token, 'sct_II')
+
+    def test_definition_repeated_term(self):
+        """Один термин дважды (205(Ι)/2012, DAC6 и DAC9): второй — `def_<slug>_2`."""
+        root = parse_body(
+            '2. Στον παρόντα Νόμο, εκτός αν από το κείμενο προκύπτει διαφορετική έννοια-',
+            '«Οργανισμός» σημαίνει πρώτη έννοια·',
+            '«Οργανισμός» σημαίνει δεύτερη έννοια.',
+            '3. Άλλο.',
+        )
+        article = next(node for node in root.walk() if node.eid == 'art_2')
+        consolidated.mark_definitions(article)
+        eids = [node.eid for node in root.walk() if node.eid.startswith('art_2')]
+        self.assertEqual(eids, ['art_2', 'art_2.def_organismos', 'art_2.def_organismos_2'])
+
     def test_history_with_heading(self):
         self.assertTrue(consolidated.is_history('Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018'))
         self.assertTrue(consolidated.is_history('95(I)/2000 10(I)/2024'))
