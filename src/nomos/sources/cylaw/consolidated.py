@@ -977,7 +977,7 @@ def parse(path, act_uid, source='cylaw', splits=()):
     if source == 'leginet':
         lines = leginet.pdf_lines(path)
     elif source == 'cy-customs':
-        lines = customs.pdf_lines(path)
+        lines, parser.rate_lines = customs.pdf_layout(path)
     else:
         lines = layout.pdf_lines(path)
     if act_uid in RATE_TABLE_ACTS:

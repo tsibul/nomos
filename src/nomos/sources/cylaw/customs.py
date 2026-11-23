@@ -40,6 +40,16 @@ RATE_HEADER = 'Συντελεστής'
 RATE_RE = re.compile(r'^(€|\d+(,\d+)?%|Ατελώς)')
 RATE_GAP = 8
 RATE_REACH = 30
+# оговорка в столбце товаров («Νοείται ότι, από την 8η Μαρτίου … ισχύει ο συντελεστής …»)
+PROVISO_RE = re.compile(r'^Νοείται\s')
+# метка строки ставки в раскладке: снимается в pdf_layout, номер строки уходит парсеру
+RATE_MARK = ''
+# цифра: ссылка на закон «N. 140(I)/2018» — не заголовок
+DIGIT_RE = re.compile(r'\d')
+# ссылка на изменяющий закон под ставкой
+LAW_REF_RE = re.compile(r'^N\. \d+\(I\)/\d{4}$')
+# пункт «(β) …» в столбце ставок
+POINT_RE = re.compile(r'^\([α-ω]{1,2}\)\s')
 # пункт приложения «1) Προϊόντα …» — как «1. Προϊόντα …»
 ITEM_PAREN_RE = re.compile(r'^(\d+)\)\s')
 # заголовок Μέρους перед статьёй 1 — не дальше стольких строк
@@ -363,8 +373,10 @@ def split_rate(parts, left):
     первого слова у столбца ставок или со ставки после просвета чуть левее его (короткое
     «Ατελώς.» в 91(Ι)/2004, Τέταρτο Παράρτημα)."""
     text = ' '.join(word for _, _, word in parts)
-    if text.replace('(', '').replace(')', '').isupper():
-        # заголовок Μέρους таблицы по центру
+    capitals = text.replace('(', '').replace(')', '').isupper()
+    if capitals and (parts[0][0] < left or not DIGIT_RE.search(text)):
+        # заголовок Μέρους таблицы по центру, и его вторая строка «(ΛΟΙΠΑ)»; ссылка
+        # «N. 140(I)/2018» в столбце ставок — тоже заглавными, но у столбца и с цифрами
         return parts, []
     for index, (x0, _, word) in enumerate(parts):
         previous = parts[index - 1] if index else None
@@ -395,33 +407,94 @@ def schedule_rows(pages, columns):
                 gap = ''
             previous = y
             if gap is not None:
-                result.extend(table_rows(block, columns))
+                result.extend(table_rows(block, columns, in_table))
                 block = []
             product, rate = split_rate(parts, left) if in_table else (parts, [])
             block.append((gap, product, rate))
-        result.extend(table_rows(block, columns))
+        result.extend(table_rows(block, columns, in_table))
     return result
 
 
-def table_rows(block, columns):
-    """Ряд таблицы (или абзац вне её) → строки: сначала столбец товаров, затем ставки."""
-    rows = []
-    gap = block[0][0] if block else None
+def table_rows(block, columns, in_table=True):
+    """Ряд таблицы (или абзац вне её) → строки: столбец товаров, затем ставки.
+
+    Оговорка «Νοείται …» в столбце товаров таблицы — свой абзац. Если ряд начинается
+    ставкой («€429,00 …»), оговорки под товаром идут после ставки: они меняют ставку и
+    продолжаются на следующей странице, не перемешиваясь с ней (Πρώτο Παράρτημα
+    91(Ι)/2004); такая ставка помечена RATE_MARK (см. pdf_layout). Ссылка «N. 140(I)/2018»
+    под ставкой — в конце текста товара: текст ставки, уже переведённый, не меняется. Вне
+    таблицы (`in_table` ложно) абзац не делится."""
+    rates = [' '.join(word for _, _, word in rate) for _, _, rate in block if rate]
+    references = [body for body in rates if LAW_REF_RE.match(body)]
+    rates = [body for body in rates if body not in references]
+    with_rate = in_table and bool(rates) and bool(RATE_RE.match(rates[0]))
+    # строки — (текст, отступ, начало абзаца)
+    products = []
+    provisos = []
     for _, product, _ in block:
-        if product:
-            _, body, left = leginet.split(product, columns)
-            body = ITEM_PAREN_RE.sub(r'\1. ', body)
-            rows.append(('', body, leginet.indent_of(left, columns), gap))
-            gap = None
-    rates = [rate for _, _, rate in block if rate]
-    for index, rate in enumerate(rates):
-        body = ' '.join(word for _, _, word in rate)
-        rows.append(('', body, TEXT_INDENT, gap if not rows else ('' if not index else None)))
-        gap = None
+        if not product:
+            continue
+        _, body, left = leginet.split(product, columns)
+        body = ITEM_PAREN_RE.sub(r'\1. ', body)
+        indent = leginet.indent_of(left, columns)
+        if in_table and PROVISO_RE.match(body):
+            provisos.append((body, indent, True))
+        elif provisos:
+            provisos.append((body, indent, False))
+        else:
+            products.append((body, indent, False))
+    products.extend((body, TEXT_INDENT, False) for body in references)
+    marked = []
+    for index, body in enumerate(rates):
+        if not index and with_rate:
+            body += RATE_MARK
+        # «(β) €6,00 …» под «(α) …» в столбце ставок (Μπύρα, Δεύτερο Παράρτημα)
+        marked.append((body, TEXT_INDENT, not index or bool(POINT_RE.match(body))))
+    if with_rate:
+        lines = products + marked + provisos
+    else:
+        lines = products + provisos + marked
+    gap = block[0][0] if block else None
+    rows = []
+    if gap == leginet.PAGE_BREAK and provisos and lines[0] is provisos[0]:
+        # оговорка вверху страницы — новый абзац, не продолжение ставки на прошлой
+        rows.append(('', '', TEXT_INDENT, gap))
+        gap = ''
+    for body, indent, starts in lines:
+        rows.append(('', body, indent, gap if not rows else ('' if starts else None)))
     return rows
 
 
 def pdf_lines(path):
+    return pdf_layout(path)[0]
+
+
+def pdf_layout(path):
+    """Строки раскладки и номера (с единицы, как у layout.blocks) строк ставок таблиц
+    приложений, за которыми идёт пункт «N. …»: ставка — абзац своего пункта, не заголовок
+    следующего (consolidated Parser.rate_lines)."""
+    lines = []
+    marked = []
+    for line in marked_lines(path):
+        if line.endswith(RATE_MARK):
+            marked.append(len(lines))
+            line = line[:-len(RATE_MARK)]
+        lines.append(line)
+    rate_lines = {index + 1 for index in marked if before_item(lines, index)}
+    return lines, rate_lines
+
+
+def before_item(lines, index):
+    """За абзацем, который начинается строкой index, следует пункт «N. …»."""
+    index += 1
+    while index < len(lines) and lines[index].strip():
+        index += 1
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    return index < len(lines) and bool(ARTICLE_RE.match(lines[index].strip()))
+
+
+def marked_lines(path):
     pages = [attach_punctuation(words) for words in leginet.pdf_words(path)]
     columns = columns_of(pages)
     body_pages, schedule_pages = split_schedule(pages, columns)

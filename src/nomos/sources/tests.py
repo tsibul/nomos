@@ -2383,6 +2383,12 @@ class ExciseLayoutTests(SimpleTestCase):
         self.assertEqual(customs.split_rate(short, 408), (short[:1], short[1:]))
         heading = [(250, 300, 'ΜΕΡΟΣ'), (305, 320, 'Α')]
         self.assertEqual(customs.split_rate(heading, 280), (heading, []))
+        # вторая строка заголовка Μέρους — заголовок, хоть и правее столбца
+        others = [(300, 350, '(ΛΟΙΠΑ)')]
+        self.assertEqual(customs.split_rate(others, 280), (others, []))
+        # ссылка на закон заглавными у столбца ставок — не заголовок
+        reference = [(410, 420, 'N.'), (422, 470, '140(I)/2018')]
+        self.assertEqual(customs.split_rate(reference, 408), ([], reference))
 
     def test_split_schedules(self):
         """Каждое «… ΠΑΡΑΡΤΗΜΑ» начинает своё приложение; страница без него — продолжение."""
@@ -2991,12 +2997,20 @@ class TaxRecoveryLawTests(CollectedTextsTests):
             self.assertEqual(changed, [], uid)
 
     def test_all_ops_applied(self):
+        """Все изменения сняты; правка источника (шапка формы sub_2.sub_16) — не изменение."""
         problems = [
             line.strip()
             for line in self.report.splitlines()
-            if '→' in line or 'не найдена' in line or 'положения нет' in line
+            if ('→' in line and 'правка источника' not in line)
+            or 'не найдена' in line
+            or 'положения нет' in line
         ]
         self.assertEqual(problems, [])
+
+    def test_form_header_by_source_fix(self):
+        text = self.text('sub_2.sub_16', datetime.date(2024, 1, 1))
+        self.assertIn('Αναφορά εις την Φορολογίαν (Αρ., Χωρίον, Έτος) —', text)
+        self.assertIn('— Διαμονή —', text)
 
     def test_restructuring_term_by_laws_163_2024_and_217_2025(self):
         eid = 'art_2.def_anadiarthrwsh'
