@@ -14,17 +14,20 @@ uv, Python 3.14, Django, MariaDB (localhost). Vite + django-vite, SCSS + БЭМ,
   копия — приватный GitHub `nomos-texts`. Открытый `nomos` — только код.
 - Сайт пока только локальный, публикация — потом. Публичная часть — только разрешённые
   тексты; личная — всё, под паролем.
+- Открытый сайт (`NOMOS_PUBLIC_ONLY=1`) загружает только акты с полным русским переводом;
+  проверка — `manage.py check_translations`.
 
 ## Структура
-`src/manage.py`, `src/nomos/{acts,sources,translate,site}/`; фронтенд — `site/frontend/`,
-сборка — `site/static/dist/` (не в git); `docs/research/`, `docs/design/`; `raw/` — не в git.
+`src/manage.py`, `src/nomos/{acts,sources,translate,site}/`; фронтенд —
+`src/nomos/site/frontend/`, сборка — `src/nomos/site/static/dist/` (не в git);
+`docs/research/`, `docs/design/`; `raw/` — не в git.
 
 ## Правила кода
 - Моделей Django нет, пока не утверждён проект из `docs/design/`.
 - Одна модель на файл (пакет `models/`), методы модели — в её файле.
 - HTML без табличных тегов, только grid и flexbox. Mobile-first, проверка на Pixel 7.
 - Цвета: Primary, Secondary, Neutral, оттенки 50/500/900; только эти токены, один файл
-  (`site/frontend/scss/_tokens.scss`).
+  (`src/nomos/site/frontend/scss/_tokens.scss`).
 - Код читаемый, не сжатый; оформление — по глобальному CLAUDE.md.
 
 ## Git
