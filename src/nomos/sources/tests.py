@@ -3065,8 +3065,8 @@ class CapitalGainsLawTests(CollectedTextsTests):
         self.assertIn('2025', self.text('art_32.pnt_a', datetime.date(2025, 1, 1)))
         self.assertIn('правка источника art_64A → art_32', self.report)
 
-    def test_law_218_2025_without_text(self):
-        """218(Ι)/2025: акта в PDF нет, изменения — по манифесту."""
+    def test_law_218_2025(self):
+        """218(Ι)/2025: изменения по Ε.Ε. 5066, текст акта собран."""
         eid = 'art_2.par_1.def_anadiarthrwsh'
         self.assertIn('εννέα (9)', self.text(eid, datetime.date(2024, 12, 30)))
         self.assertIn('δέκα (10)', self.text(eid, datetime.date(2024, 12, 31)))
@@ -3074,7 +3074,7 @@ class CapitalGainsLawTests(CollectedTextsTests):
         eid = 'art_32.pnt_a'
         self.assertIn('31η Δεκεμβρίου 2025', self.text(eid, datetime.date(2025, 12, 11)))
         self.assertIn('31η Δεκεμβρίου 2026', self.text(eid, datetime.date(2025, 12, 12)))
-        self.assertIn('cy/law/2025/218_I: текста акта нет', self.report)
+        self.assertNotIn('cy/law/2025/218_I: текста акта нет', self.report)
 
     def test_thresholds_by_law_242_2025(self):
         eid = 'art_5.par_1'
