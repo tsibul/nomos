@@ -899,6 +899,29 @@ class ViewerTests(TestCase):
         self.assertContains(response, 'href="/about/"')
         self.assertNotContains(self.client.get("/cy/"), 'class="hero"')
 
+    def test_home_says_who_and_what(self):
+        response = self.client.get("/")
+        self.assertContains(response, "прежде всего Кипра")
+        self.assertContains(response, "ссылка на официальный текст")
+        self.assertContains(response, "Перевод сделан ИИ и не выверен")
+        self.assertContains(response, "Источники: CyLaw, EUR-Lex, OJ")
+        self.assertRegex(
+            response.content.decode(),
+            r'class="hero__sources"\s+href="/about/"',
+        )
+        self.assertContains(response, 'class="acts__section"')
+
+    def test_about_counts_only_sources_with_texts(self):
+        Source.objects.create(code="empty", name="Пустой источник")
+        response = self.client.get("/about/")
+        self.assertNotContains(response, "Пустой источник")
+        self.assertNotContains(response, "(текстов: 0)")
+        count = Source.objects.get(code="test").expressions.count()
+        self.assertContains(response, f"(текстов: {count})")
+        self.assertContains(response, "Для кого этот сайт")
+        self.assertContains(response, "Сообщество")
+        self.assertContains(response, "законодательство Кипра и акты ЕС")
+
     def test_russian_is_default_where_translated(self):
         # без русского текста адрес без языка — греческий, /ru/ — явный выбор
         self.assertContains(self.client.get(ACT_URL), 'lang="el"')
@@ -1230,6 +1253,13 @@ class PublicOnlyTests(TestCase):
 
     setUpTestData = ViewerTests.__dict__["setUpTestData"]
     add_version = ViewerTests.__dict__["add_version"]
+
+    def test_about_hides_sources_without_public_texts(self):
+        response = self.client.get("/about/")
+        self.assertNotContains(response, "(текстов: 0)")
+        self.assertContains(response, "Источников в базе нет.")
+        self.add_public_ru()
+        self.assertContains(self.client.get("/about/"), "(текстов: 1)")
 
     def add_public_ru(self, with_text=True):
         ru = Expression.objects.create(

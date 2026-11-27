@@ -186,6 +186,8 @@ def about(request):
             "name"
         )
     ]
+    # источник без видимых текстов не показывается
+    sources = [entry for entry in sources if entry["count"]]
     context = {
         "sources": sources,
         # ссылка внутри переводимой фразы: в каталоге — только место {{ link }}

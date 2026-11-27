@@ -8,18 +8,27 @@
   {% if is_home %}
     <section class="hero">
       <p class="hero__text">
-        {% if public_only %}
-          {% blocktranslate trimmed %}
-            Акты ЕС об НДС и VIES для тех, кто читает по-русски: русский перевод,
-            редакции на любую дату с 01.01.2024, ссылка на официальный текст.
-          {% endblocktranslate %}
-        {% else %}
-          {% blocktranslate trimmed %}
-            Законы Кипра об НДС для тех, кто читает по-русски: официальный греческий текст,
-            русский перевод, редакции на любую дату с 01.01.2024, оригинал рядом.
-          {% endblocktranslate %}
-        {% endif %}
+        {% blocktranslate trimmed %}
+          Право Кипра и ЕС для русскоязычных жителей ЕС и ЕЭЗ, прежде всего Кипра:
+          русский перевод, редакции на любую дату с 01.01.2024, ссылка на официальный текст.
+        {% endblocktranslate %}
       </p>
+
+      <p class="hero__note">
+        {% blocktranslate trimmed %}
+          Перевод сделан ИИ и не выверен; юридическую силу имеет оригинал.
+        {% endblocktranslate %}
+      </p>
+
+      <p class="hero__note">
+        <a
+          class="hero__sources"
+          href="{% url 'site:about' %}{{ lang_query }}"
+        >
+          {% translate 'Источники: CyLaw, EUR-Lex, OJ' %}
+        </a>
+      </p>
+
       <div class="hero__actions">
         {% if first %}
           <a
