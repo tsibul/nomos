@@ -1,9 +1,13 @@
-"""Таблицы в несколько столбцов в приложениях сводки CyLaw (59(Ι)/2010, Πίνακες 4 и 5;
+"""Таблицы в несколько столбцов в приложениях сводки CyLaw (59(Ι)/2010, Πίνακες
+4 и 5;
 118(Ι)/2002, Παράρτημα 2 — таблицы ставок, разбор `stacked`).
 
-pdftotext -layout ставит столбцы рядом в одной строке («Βασικό … Συμπληρωματικό»), и
-обычный разбор склеивал их построчно. Здесь таблица находится по строке шапки, столбцы
-делятся по координате x, а таблица в строках заменяется строкой-меткой: парсер ставит на
+pdftotext -layout ставит столбцы рядом в одной строке («Βασικό …
+Συμπληρωματικό»), и
+обычный разбор склеивал их построчно. Здесь таблица находится по строке шапки,
+столбцы
+делятся по координате x, а таблица в строках заменяется строкой-меткой: парсер
+ставит на
 её место фрагмент `tbl` с ячейками `cel` (адрес ячейки — см. Cell.token).
 """
 
@@ -13,12 +17,13 @@ from dataclasses import dataclass, field
 from . import layout
 
 # метка таблицы в строках: символ из частной области Unicode и номер таблицы
-MARK = ''
+MARK = ""
 MARK_INDENT = 30
 # отрезок строки: слова, между которыми не больше двух пробелов
-SEGMENT_RE = re.compile(r'\S+(?: {1,2}\S+)*')
-# строка во всю ширину бывает выровнена по ширине: между словами до пяти пробелов
-WIDE_SEGMENT_RE = re.compile(r'\S+(?: {1,5}\S+)*')
+SEGMENT_RE = re.compile(r"\S+(?: {1,2}\S+)*")
+# строка во всю ширину бывает выровнена по ширине: между словами до пяти
+# пробелов
+WIDE_SEGMENT_RE = re.compile(r"\S+(?: {1,5}\S+)*")
 HEADER_GAP = 8
 HEADER_WORDS = 3
 HEADER_INDENT = 15
@@ -26,10 +31,11 @@ CAPTION_INDENT = 25
 CAPTION_WORDS = 8
 # ряды основной части таблицы разделены не меньше чем двумя пустыми строками
 ROW_GAP = 2
-# поиск пробела для разреза строки, в которой слова столбцов сошлись без промежутка
+# поиск пробела для разреза строки, в которой слова столбцов сошлись без
+# промежутка
 CUT_REACH = 12
-ITEM_START_RE = re.compile(r'^(\([0-9α-ωivxν]{1,5}\)|\d+\.)\s')
-PHRASE_END_RE = re.compile(r'([.:;∙·˙-]|\sκαι|\sή)$')
+ITEM_START_RE = re.compile(r"^(\([0-9α-ωivxν]{1,5}\)|\d+\.)\s")
+PHRASE_END_RE = re.compile(r"([.:;∙·˙-]|\sκαι|\sή)$")
 # шапка `stacked`: не больше трёх строк, между ними — не больше одной пустой
 STACKED_HEADER_LINES = 3
 # названия одного столбца в строках шапки `stacked`: центры не дальше этого
@@ -49,32 +55,34 @@ class Segment:
 
 @dataclass
 class Cell:
-    """Ячейка: ряд шапки `h1`, `h2` или ряд основной части `1`, `2`, …; столбец с 1.
+    """Ячейка: ряд шапки `h1`, `h2` или ряд основной части `1`, `2`, …; столбец
+    с 1.
 
-    Объединённые ячейки — диапазоном: `cel_h1-2_1` (два ряда шапки), `cel_h1_2-3`."""
+    Объединённые ячейки — диапазоном: `cel_h1-2_1` (два ряда шапки),
+    `cel_h1_2-3`."""
 
     row: str
     col: int
-    last_row: str = ''
+    last_row: str = ""
     last_col: int = 0
     header: bool = False
-    text: str = ''
+    text: str = ""
     blocks: list = field(default_factory=list)
 
     @property
     def token(self):
         row = self.row
         if self.last_row and self.last_row != self.row:
-            row = '%s-%s' % (row, self.last_row.lstrip('h'))
+            row = "%s-%s" % (row, self.last_row.lstrip("h"))
         col = str(self.col)
         if self.last_col and self.last_col != self.col:
-            col = '%s-%d' % (col, self.last_col)
-        return 'cel_%s_%s' % (row, col)
+            col = "%s-%d" % (col, self.last_col)
+        return "cel_%s_%s" % (row, col)
 
 
 @dataclass
 class Table:
-    caption: str = ''
+    caption: str = ""
     cells: list = field(default_factory=list)
 
 
@@ -86,7 +94,8 @@ def segments(line, pattern=SEGMENT_RE):
 
 
 def header_segments(line):
-    """Строка шапки: 2–4 коротких названия столбцов, далеко друг от друга, без цифр."""
+    """Строка шапки: 2–4 коротких названия столбцов, далеко друг от друга, без
+    цифр."""
     found = segments(line)
     if not 2 <= len(found) <= 4 or found[0].start < HEADER_INDENT:
         return None
@@ -96,14 +105,18 @@ def header_segments(line):
     for segment in found:
         if len(segment.text.split()) > HEADER_WORDS:
             return None
-        if not segment.text[0].isupper() or re.search(r'[\d.,:;()]', segment.text):
+        if not segment.text[0].isupper() or re.search(
+            r"[\d.,:;()]", segment.text
+        ):
             return None
     return found
 
 
 def header_at(lines, index, skip):
-    """Шапка таблицы в строке `index`. Шапка, у которой рядом короткие строки («Αύξων»,
-    «Αρ.», «%»: названия столбцов в несколько строк, 59(Ι), Έκτος Πίνακας), — не та."""
+    """Шапка таблицы в строке `index`. Шапка, у которой рядом короткие строки
+    («Αύξων»,
+    «Αρ.», «%»: названия столбцов в несколько строк, 59(Ι), Έκτος Πίνακας), —
+    не та."""
     if skip(lines[index]):
         return None
     found = header_segments(lines[index])
@@ -127,7 +140,7 @@ def caption_of(line):
     if len(found) != 1 or found[0].start < CAPTION_INDENT:
         return None
     text = found[0].text
-    if len(text.split()) > CAPTION_WORDS or text[-1] in '.:;,':
+    if len(text.split()) > CAPTION_WORDS or text[-1] in ".:;,":
         return None
     return text
 
@@ -135,9 +148,12 @@ def caption_of(line):
 def extract(lines, start, skip, stops, stacked=False):
     """Таблицы с шапкой после строки `start` → (строки с метками, [Table]).
 
-    `skip(line)` — колонтитулы; `stops(text)` — заголовок части или приложения: на нём
-    таблица кончается. `stacked` — таблицы ставок 118(Ι): название столбца в нескольких
-    строках через пустую, ряд — одна строка, таблица кончается пустой строкой."""
+    `skip(line)` — колонтитулы; `stops(text)` — заголовок части или приложения:
+    на нём
+    таблица кончается. `stacked` — таблицы ставок 118(Ι): название столбца в
+    нескольких
+    строках через пустую, ряд — одна строка, таблица кончается пустой
+    строкой."""
     result = list(lines[:start])
     tables = []
     index = start
@@ -158,27 +174,36 @@ def extract(lines, start, skip, stops, stacked=False):
         if caption is not None and not stops(caption):
             result.pop()
         else:
-            caption = ''
+            caption = ""
         table.caption = caption
         tables.append(table)
-        result.extend(['', ' ' * MARK_INDENT + '%s%d' % (MARK, len(tables)), ''])
+        result.extend(
+            ["", " " * MARK_INDENT + "%s%d" % (MARK, len(tables)), ""]
+        )
     return result, tables
 
 
 def read_table(lines, index, header, skip, stops):
-    """Шапка в строке `index` (и, если есть, в следующей) → (Table, индекс после неё).
+    """Шапка в строке `index` (и, если есть, в следующей) → (Table, индекс
+    после неё).
 
-    Строка, похожая на шапку, под которой нет текста в её столбцах, — не таблица: (None, …)."""
-    lower = header_segments(lines[index + 1]) if index + 1 < len(lines) else None
+    Строка, похожая на шапку, под которой нет текста в её столбцах, — не
+    таблица: (None, …)."""
+    lower = (
+        header_segments(lines[index + 1]) if index + 1 < len(lines) else None
+    )
     table = Table()
     if lower is None:
         leaves = header
         for number, segment in enumerate(leaves, 1):
-            table.cells.append(Cell('h1', number, header=True, text=segment.text))
+            table.cells.append(
+                Cell("h1", number, header=True, text=segment.text)
+            )
         index += 1
     else:
         leaves = sorted(
-            [segment for segment in header if segment.end < lower[0].start] + lower,
+            [segment for segment in header if segment.end < lower[0].start]
+            + lower,
             key=lambda segment: segment.start,
         )
         top_cells(table, header, lower, leaves)
@@ -196,7 +221,9 @@ def read_table(lines, index, header, skip, stops):
         for column, parts in enumerate(columns, 1):
             blocks = cell_blocks(parts)
             if blocks:
-                table.cells.append(Cell(str(row_number), column, blocks=blocks))
+                table.cells.append(
+                    Cell(str(row_number), column, blocks=blocks)
+                )
     return table, index
 
 
@@ -205,14 +232,16 @@ def header_words(segment):
     return (
         len(text.split()) <= HEADER_WORDS
         and text[0].isupper()
-        and not re.search(r'[\d.,:;()]', text)
+        and not re.search(r"[\d.,:;()]", text)
     )
 
 
 def stacked_header(lines, index, skip, stops):
-    """Шапка `stacked` с строки `index` → (столбцы [[Segment]], индекс после неё) или None.
+    """Шапка `stacked` с строки `index` → (столбцы [[Segment]], индекс после
+    неё) или None.
 
-    Строки шапки — только короткие названия; столбцы — отрезки, близкие по центру."""
+    Строки шапки — только короткие названия; столбцы — отрезки, близкие по
+    центру."""
     header_lines = []
     blank = 0
     while index < len(lines) and len(header_lines) < STACKED_HEADER_LINES:
@@ -227,7 +256,9 @@ def stacked_header(lines, index, skip, stops):
             index += 1
             continue
         found = segments(line)
-        if stops(line.strip()) or not all(header_words(segment) for segment in found):
+        if stops(line.strip()) or not all(
+            header_words(segment) for segment in found
+        ):
             break
         header_lines.append(found)
         blank = 0
@@ -238,8 +269,10 @@ def stacked_header(lines, index, skip, stops):
     for found in header_lines:
         for segment in found:
             near = [
-                column for column in columns
-                if abs(column[0].center - segment.center) <= STACKED_COLUMN_REACH
+                column
+                for column in columns
+                if abs(column[0].center - segment.center)
+                <= STACKED_COLUMN_REACH
             ]
             if near:
                 near[0].append(segment)
@@ -251,7 +284,8 @@ def stacked_header(lines, index, skip, stops):
 
 
 def read_stacked(lines, index, skip, stops):
-    """Таблица `stacked` с строки `index` → (Table, индекс после неё) или (None, index)."""
+    """Таблица `stacked` с строки `index` → (Table, индекс после неё) или
+    (None, index)."""
     found = stacked_header(lines, index, skip, stops)
     if found is None:
         return None, index
@@ -260,7 +294,7 @@ def read_stacked(lines, index, skip, stops):
         Segment(
             min(segment.start for segment in column),
             max(segment.end for segment in column),
-            ' '.join(segment.text for segment in column),
+            " ".join(segment.text for segment in column),
         )
         for column in columns
     ]
@@ -279,21 +313,22 @@ def read_stacked(lines, index, skip, stops):
         return None, index
     table = Table()
     for number, leaf in enumerate(leaves, 1):
-        table.cells.append(Cell('h1', number, header=True, text=leaf.text))
+        table.cells.append(Cell("h1", number, header=True, text=leaf.text))
     for row_number, line in enumerate(body, 1):
         for column, part in enumerate(cut(line, cuts), 1):
             blocks = cell_blocks([part])
             if blocks:
-                table.cells.append(Cell(str(row_number), column, blocks=blocks))
+                table.cells.append(
+                    Cell(str(row_number), column, blocks=blocks)
+                )
     return table, after
 
 
 def top_cells(table, header, lower, leaves):
-    """Шапка в два ряда: названия слева от нижнего ряда — на оба ряда, остальные —
+    """Шапка в два ряда: названия слева от нижнего ряда — на оба ряда,
+    остальные —
     над столбцами нижнего ряда, ближайшими по центру."""
-    owners = [
-        segment for segment in header if segment not in leaves
-    ]
+    owners = [segment for segment in header if segment not in leaves]
     spans = {id(segment): [] for segment in owners}
     for segment in lower:
         owner = min(owners, key=lambda top: abs(top.center - segment.center))
@@ -302,24 +337,29 @@ def top_cells(table, header, lower, leaves):
         if segment in leaves:
             number = leaves.index(segment) + 1
             table.cells.append(
-                Cell('h1', number, last_row='h2', header=True, text=segment.text)
+                Cell(
+                    "h1", number, last_row="h2", header=True, text=segment.text
+                )
             )
         else:
             columns = spans[id(segment)]
-            table.cells.append(Cell(
-                'h1',
-                min(columns),
-                last_col=max(columns),
-                header=True,
-                text=segment.text,
-            ))
+            table.cells.append(
+                Cell(
+                    "h1",
+                    min(columns),
+                    last_col=max(columns),
+                    header=True,
+                    text=segment.text,
+                )
+            )
     for segment in lower:
         number = leaves.index(segment) + 1
-        table.cells.append(Cell('h2', number, header=True, text=segment.text))
+        table.cells.append(Cell("h2", number, header=True, text=segment.text))
 
 
 def spans_columns(line, leaves):
-    """Строка во всю ширину: один отрезок от первого столбца за начало последнего."""
+    """Строка во всю ширину: один отрезок от первого столбца за начало
+    последнего."""
     return any(
         segment.start < leaves[0].end and segment.end > leaves[-1].start
         for segment in segments(line, WIDE_SEGMENT_RE)
@@ -327,8 +367,10 @@ def spans_columns(line, leaves):
 
 
 def read_body(lines, index, leaves, skip, stops):
-    """Строки таблицы до заголовка, новой шапки или двух строк подряд во всю ширину
-    (одна такая строка бывает и внутри таблицы, когда столбцы сошлись без промежутка:
+    """Строки таблицы до заголовка, новой шапки или двух строк подряд во всю
+    ширину
+    (одна такая строка бывает и внутри таблицы, когда столбцы сошлись без
+    промежутка:
     тогда следующая строка — снова в два столбца)."""
     body = []
     while index < len(lines):
@@ -365,7 +407,8 @@ def next_text(lines, index, skip):
 
 
 def boundaries(body, leaves):
-    """Начало каждого столбца, кроме первого: самый левый отрезок правее названия
+    """Начало каждого столбца, кроме первого: самый левый отрезок правее
+    названия
     предыдущего столбца в шапке."""
     cuts = []
     for previous in leaves[:-1]:
@@ -383,19 +426,24 @@ def boundaries(body, leaves):
 
 
 def cut(line, cuts):
-    """Строка → части по столбцам; разрез внутри слова сдвигается к ближайшему пробелу."""
+    """Строка → части по столбцам; разрез внутри слова сдвигается к ближайшему
+    пробелу."""
     parts = []
     position = 0
     for boundary in cuts:
         boundary = max(boundary, position)
-        if 0 < boundary < len(line) and line[boundary - 1] != ' ' and line[boundary] != ' ':
+        if (
+            0 < boundary < len(line)
+            and line[boundary - 1] != " "
+            and line[boundary] != " "
+        ):
             spaces = [
                 index + 1
                 for index in range(
                     max(position, boundary - CUT_REACH),
                     min(len(line), boundary + CUT_REACH),
                 )
-                if line[index] == ' '
+                if line[index] == " "
             ]
             if spaces:
                 boundary = min(spaces, key=lambda space: abs(space - boundary))
@@ -420,7 +468,8 @@ def split_rows(body):
 
 
 def cell_blocks(parts):
-    """Строки ячейки → абзацы. Пустые строки в столбце — межстрочный интервал PDF, не
+    """Строки ячейки → абзацы. Пустые строки в столбце — межстрочный интервал
+    PDF, не
     граница абзаца; абзац начинает номер пункта после законченной фразы."""
     lines = [part.rstrip() for part in parts if part.strip()]
     groups = []
@@ -432,7 +481,7 @@ def cell_blocks(parts):
             groups.append([line])
     if not groups:
         return []
-    indent = min(len(line) - len(line.lstrip(' ')) for line in lines)
+    indent = min(len(line) - len(line.lstrip(" ")) for line in lines)
     return [
         layout.make_block(0, [line[indent:] for line in group])
         for group in groups

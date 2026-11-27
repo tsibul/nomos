@@ -1,0 +1,87 @@
+{% extends 'site/base.html' %}
+
+{% load i18n %}
+
+{% block title %}
+  {% translate 'Было — стало:' %} {{ title }} — Nomos
+{% endblock %}
+
+{% block main %}
+  <nav class="crumbs">
+    <a
+      class="crumbs__link"
+      href="{{ analytics_url }}{{ lang_query }}"
+    >
+      {% translate 'Аналитика' %}
+    </a>
+    <a
+      class="crumbs__link"
+      href="{{ changes_url }}{{ lang_query }}"
+    >
+      {% translate 'Что меняется' %} {{ on|date:'j E Y' }}
+    </a>
+  </nav>
+
+  <h1
+    class="page__title"
+    lang="{{ title.lang }}"
+  >
+    {{ title }}
+  </h1>
+
+  <p class="compare__info">
+    <a
+      class="compare__act"
+      href="{{ act.url }}"
+      lang="{{ act.short.lang }}"
+    >
+      {{ act.short }}
+    </a>
+    <span class="compare__kind">
+      {{ kind }}
+    </span>
+    <span class="compare__source">
+      {% include 'site/parts/amending_ref.html' with ref=introduced link_class='compare__source-link' %}
+    </span>
+  </p>
+
+  <div class="compare">
+    <section class="compare__side compare__side--old">
+      <h2 class="compare__heading">
+        {% translate 'Было' %}
+        {% if old_url %}
+          <a
+            class="compare__date"
+            href="{{ old_url }}"
+          >
+            {{ before|date:'d.m.Y' }}
+          </a>
+        {% else %}
+          <span class="compare__date">
+            {{ before|date:'d.m.Y' }}
+          </span>
+        {% endif %}
+      </h2>
+      {% include 'site/parts/compare_text.html' with paragraphs=old mark='compare__removed' %}
+    </section>
+
+    <section class="compare__side compare__side--new">
+      <h2 class="compare__heading">
+        {% translate 'Стало' %}
+        {% if new_url %}
+          <a
+            class="compare__date"
+            href="{{ new_url }}"
+          >
+            {{ on|date:'d.m.Y' }}
+          </a>
+        {% else %}
+          <span class="compare__date">
+            {{ on|date:'d.m.Y' }}
+          </span>
+        {% endif %}
+      </h2>
+      {% include 'site/parts/compare_text.html' with paragraphs=new mark='compare__added' %}
+    </section>
+  </div>
+{% endblock %}
