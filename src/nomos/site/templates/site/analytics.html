@@ -1,0 +1,30 @@
+{% extends 'site/base.html' %}
+
+{% load i18n %}
+
+{% block title %}{{ section|default:_('Аналитика') }} — Nomos{% endblock %}
+
+{% block main %}
+  <h1 class="page__title">
+    {{ section|default:_('Аналитика') }}
+  </h1>
+
+  {% if pages %}
+    <ul class="changes__pages">
+      {% for page in pages %}
+        <li class="changes__page">
+          <a
+            class="changes__page-link"
+            href="{{ page.url }}{{ lang_query }}"
+          >
+            {% translate 'Что меняется' %} {{ page.on|date:'j E Y' }}
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="changes__empty">
+      {% translate 'Страниц пока нет.' %}
+    </p>
+  {% endif %}
+{% endblock %}

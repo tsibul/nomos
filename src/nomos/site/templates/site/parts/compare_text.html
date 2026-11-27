@@ -1,0 +1,24 @@
+{% comment %}
+  Текст стороны сравнения: абзацы из отрезков, изменённые отрезки — с классом mark.
+{% endcomment %}
+
+{% load i18n %}
+
+{% for paragraph in paragraphs %}
+  <p
+    class="compare__text"
+    lang="{{ lang }}"
+  >
+    {% for segment in paragraph %}
+      {% if segment.changed %}
+        <span class="{{ mark }}">{{ segment.text }}</span>
+      {% else %}
+        {{ segment.text }}
+      {% endif %}
+    {% endfor %}
+  </p>
+{% empty %}
+  <p class="compare__none">
+    {% translate 'Текста нет.' %}
+  </p>
+{% endfor %}

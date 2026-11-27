@@ -1,0 +1,79 @@
+// «Что меняется 1 января»: законы, их акты, изменённые фрагменты
+.changes {
+  margin: 0 0 1.5rem;
+}
+
+.changes__law {
+  margin: 0 0 0.5rem;
+  font-size: 1.25rem;
+}
+
+.changes__act {
+  margin: 0 0 1rem;
+}
+
+.changes__act-link {
+  display: inline-block;
+  margin: 0 0 0.5rem;
+  font-weight: 600;
+}
+
+.changes__act--main .changes__act-link {
+  font-size: 1.125rem;
+}
+
+.changes__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.changes__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--color-primary-500);
+}
+
+.changes__item--insert {
+  border-left-color: var(--color-secondary-500);
+}
+
+.changes__item--delete {
+  border-left-color: var(--color-neutral-500);
+}
+
+.changes__title {
+  font-weight: 600;
+}
+
+.changes__kind,
+.changes__source {
+  font-size: 0.875rem;
+  color: var(--color-neutral-500);
+}
+
+.changes__note,
+.changes__empty {
+  margin: 0 0 1rem;
+  color: var(--color-neutral-500);
+}
+
+// Список страниц раздела «Аналитика»
+.changes__pages {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.changes__page-link {
+  display: block;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-primary-500);
+  border-left-width: 3px;
+  border-radius: 0.375rem;
+  background: var(--color-primary-50);
+  font-weight: 600;
+  text-decoration: none;
+}

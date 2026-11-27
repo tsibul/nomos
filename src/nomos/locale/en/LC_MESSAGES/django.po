@@ -186,3 +186,45 @@ msgstr "Amending acts"
 
 msgid "не загружен"
 msgstr "not loaded"
+
+msgid "заменён"
+msgstr "replaced"
+
+msgid "вставлен"
+msgstr "inserted"
+
+msgid "перенумерован"
+msgstr "renumbered"
+
+msgid "исправлен"
+msgstr "corrected"
+
+msgid "Что меняется"
+msgstr "What changes on"
+
+msgid "Страниц пока нет."
+msgstr "No pages yet."
+
+msgid "Дата впереди: в списке — уже принятые изменения."
+msgstr "This date is ahead: the list shows changes already adopted."
+
+msgid "вложенных изменений:"
+msgstr "nested changes:"
+
+msgid "На эту дату изменений нет."
+msgstr "No changes on this date."
+
+msgid "Было — стало:"
+msgstr "Before — after:"
+
+msgid "Было"
+msgstr "Before"
+
+msgid "Стало"
+msgstr "After"
+
+msgid "Текста нет."
+msgstr "No text."
+
+msgid "исключён"
+msgstr "repealed"

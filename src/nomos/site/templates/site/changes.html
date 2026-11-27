@@ -1,0 +1,75 @@
+{% extends 'site/base.html' %}
+
+{% load i18n %}
+
+{% block title %}
+  {% translate 'Что меняется' %} {{ on|date:'j E Y' }} — Nomos
+{% endblock %}
+
+{% block main %}
+  <nav class="crumbs">
+    <a
+      class="crumbs__link"
+      href="{{ analytics_url }}{{ lang_query }}"
+    >
+      {% translate 'Аналитика' %}
+    </a>
+  </nav>
+
+  <h1 class="page__title">
+    {% translate 'Что меняется' %} {{ on|date:'j E Y' }}
+  </h1>
+
+  {% if future %}
+    <p class="changes__note">
+      {% translate 'Дата впереди: в списке — уже принятые изменения.' %}
+    </p>
+  {% endif %}
+
+  {% for group in groups %}
+    <section class="changes">
+      <h2 class="changes__law">
+        {{ group.label }}
+      </h2>
+
+      {% for part in group.parts %}
+        <div class="changes__act{% if part.main %} changes__act--main{% endif %}">
+          <a
+            class="changes__act-link"
+            href="{{ part.act.url }}"
+            lang="{{ part.act.short.lang }}"
+          >
+            {{ part.act.short }}
+          </a>
+
+          <ul class="changes__list">
+            {% for entry in part.entries %}
+              <li class="changes__item changes__item--{{ entry.modifier }}">
+                <a
+                  class="changes__title"
+                  href="{{ entry.url }}{{ lang_query }}"
+                  lang="{{ entry.title.lang }}"
+                >
+                  {{ entry.title }}
+                </a>
+                <span class="changes__kind">
+                  {{ entry.kind }}
+                  {% if entry.nested %}
+                    · {% translate 'вложенных изменений:' %} {{ entry.nested }}
+                  {% endif %}
+                </span>
+                <span class="changes__source">
+                  {% include 'site/parts/amending_ref.html' with ref=entry.introduced link_class='changes__source-link' %}
+                </span>
+              </li>
+            {% endfor %}
+          </ul>
+        </div>
+      {% endfor %}
+    </section>
+  {% empty %}
+    <p class="changes__empty">
+      {% translate 'На эту дату изменений нет.' %}
+    </p>
+  {% endfor %}
+{% endblock %}

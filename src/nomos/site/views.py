@@ -75,7 +75,7 @@ def section_groups(tree, node):
     """Разделы с пунктами актов внутри node (и сам node), по порядку меню."""
     found = []
     kids = tree.kids(node)
-    if node is not None and any(not kid.is_section for kid in kids):
+    if node is not None and any(kid.is_item for kid in kids):
         found.append(node)
     for kid in kids:
         if kid.is_section:

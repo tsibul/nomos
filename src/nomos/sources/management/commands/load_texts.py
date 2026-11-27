@@ -289,11 +289,14 @@ class Loader:
             self.stdout.write("  %s" % act.uid)
 
     def load_nav_node(self, element, parent):
-        # <changes> раздела «Аналитика» — страницы на дату, пока не делаются
-        if element.tag not in ("section", "item"):
+        if element.tag not in ("section", "item", "changes"):
             return
         self.nav_order += 1
         uid = element.get("act", "")
+        # <changes> раздела «Аналитика» — страница «Что меняется» на дату
+        changes_on = None
+        if element.tag == "changes":
+            changes_on = datetime.date.fromisoformat(element.get("date"))
         node = NavNode.objects.create(
             parent=parent,
             key=element.get("key", ""),
@@ -301,6 +304,8 @@ class Loader:
             order=self.nav_order,
             act_uid=uid,
             act=self.acts.get(uid),
+            changes_on=changes_on,
+            scope=element.get("scope", ""),
         )
         for child in element:
             self.load_nav_node(child, node)
