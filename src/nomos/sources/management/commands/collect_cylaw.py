@@ -237,16 +237,22 @@ def write(folder, info, versions, notes=(), marker=None):
     nums = {node: node.num for node in versions}
     eids = {uid: eid for eid, uid in texts_xml.existing_uids(act_path).items()}
     uids = texts_xml.follow_texts(info, uids, current, previous, nums, eids)
+    headings = {
+        node: {version.key: version.heading or node.heading for version in node_versions}
+        for node, node_versions in versions.items()
+    }
+    sections = {
+        uid: heading
+        for uid, heading in texts_xml.old_headings(act_path).items()
+        if uid not in previous
+    }
+    uids = texts_xml.follow_headings(info, uids, current, headings, sections)
     lost = texts_xml.lost_uids(folder, uids)
     rehomed = set(texts_xml.rehomed_uids(uids, current, previous, nums, [uid for _, uid in lost]))
     lost = [(eid, uid) for eid, uid in lost if uid not in rehomed]
     merged = texts_xml.continued_uids(uids, current, previous, [uid for _, uid in lost])
     joined = {uid for _, uid, _ in merged}
     lost = [(eid, uid) for eid, uid in lost if uid not in joined]
-    headings = {
-        node: {version.key: version.heading or node.heading for version in node_versions}
-        for node, node_versions in versions.items()
-    }
     headed = texts_xml.headed_uids(uids, headings, previous, [uid for _, uid in lost])
     moved = {uid for uid, _, _ in headed}
     lost = [(eid, uid) for eid, uid in lost if uid not in moved]
@@ -255,7 +261,11 @@ def write(folder, info, versions, notes=(), marker=None):
             info.uid, ', '.join('%s (%s)' % item for item in lost),
         ))
     texts_xml.merge_translations(folder, merged)
+    emptied = texts_xml.emptied_uids(uids, current, headings, previous)
     texts_xml.move_to_headings(folder, headed)
+    texts_xml.move_to_headings(
+        folder, emptied, kept={uid for uid, _, _ in emptied},
+    )
     texts_xml.write_act(act_path, info, versions, uids)
     inline = []
     for node, node_versions in versions.items():

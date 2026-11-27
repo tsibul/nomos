@@ -1751,6 +1751,60 @@ class FollowTextsTests(SimpleTestCase):
         )
         self.assertEqual(uids[node], 'aaaaaaaaaa')
 
+    def test_section_uid_follows_heading(self):
+        """Новый раздел впереди: uid прежних разделов идут за заголовком."""
+        first = Place('prt_I.sct_1')
+        second = Place('prt_I.sct_2')
+        uids = {first: 'aaaaaaaaaa', second: 'bbbbbbbbbb'}
+        new = {first: {}, second: {}}
+        headings = {
+            first: {'base': 'Νέο τμήμα'},
+            second: {'base': 'Παλαιό τμήμα'},
+        }
+        old = {'aaaaaaaaaa': {'base': 'Παλαιό τμήμα'}}
+        texts_xml.follow_headings(self.info, uids, new, headings, old)
+        self.assertEqual(uids[second], 'aaaaaaaaaa')
+        self.assertNotIn(uids[first], ('aaaaaaaaaa', 'bbbbbbbbbb'))
+
+    def test_part_text_becomes_section_heading(self):
+        """«ΚΕΦΑΛΑΙΟ Α» был текстом части, стал заголовком раздела:
+        перевод — в заголовок раздела, у части остаётся свой."""
+        part = Place('prt_V')
+        section = Place('prt_V.sct_1')
+        uids = {part: 'aaaaaaaaaa', section: 'bbbbbbbbbb'}
+        new = {part: {}, section: {}}
+        headings = {
+            part: {'base': 'ΜΕΡΟΣ V'},
+            section: {'base': 'ΚΕΦΑΛΑΙΟ Α'},
+        }
+        old = {'aaaaaaaaaa': {'base': 'ΚΕΦΑΛΑΙΟ Α'}}
+        emptied = texts_xml.emptied_uids(uids, new, headings, old)
+        self.assertEqual(emptied, [('aaaaaaaaaa', 'bbbbbbbbbb', 'base')])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / 'ru.xml').write_text(
+                '<texts>\n'
+                '  <text fragment="aaaaaaaaaa" version="base" '
+                'heading="ЧАСТЬ V" review="draft">\n'
+                '    <p>ГЛАВА А</p>\n'
+                '  </text>\n'
+                '</texts>\n',
+                encoding='utf-8',
+            )
+            texts_xml.move_to_headings(root, emptied, kept={'aaaaaaaaaa'})
+            result = (root / 'ru.xml').read_text(encoding='utf-8')
+        self.assertEqual(
+            result,
+            '<texts>\n'
+            '  <text fragment="aaaaaaaaaa" version="base" '
+            'heading="ЧАСТЬ V" review="draft">\n'
+            '  </text>\n'
+            '  <text fragment="bbbbbbbbbb" version="base" '
+            'heading="ГЛАВА А" review="draft">\n'
+            '  </text>\n'
+            '</texts>\n',
+        )
+
     def test_page_break_merge_joins_translation(self):
         """Абзац, разорванный переносом страницы, склеен: перевод хвоста — в конец абзаца."""
         parent = Place('art_38.par_2')
