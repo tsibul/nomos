@@ -98,7 +98,9 @@ def nav_item(item, relations, main_ids, lang):
     """Пункт меню: карточка акта с его блоками; нет акта — «не загружен» (без
     входа — ничего)."""
     act = item.act
-    if access.is_restricted() and (act is None or not access.act_visible(act)):
+    if act is None and access.is_restricted():
+        return None
+    if act is not None and not access.act_visible(act):
         return None
     if act is None:
         return {"entry": None, "label": menu.label(item) or item.act_uid}
@@ -178,13 +180,13 @@ def about(request):
                 [
                     expression
                     for expression in source.expressions.all()
-                    if expression.public or not access.is_restricted()
+                    if access.expression_visible(expression, expression.act)
                 ]
             ),
         }
-        for source in Source.objects.prefetch_related("expressions").order_by(
-            "name"
-        )
+        for source in Source.objects.prefetch_related(
+            "expressions__act"
+        ).order_by("name")
     ]
     context = {
         "sources": sources,
