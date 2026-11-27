@@ -22,7 +22,7 @@ from nomos.acts.models import (
 from nomos.translate.models import Note
 
 from .cylaw import (
-    acts, columns, consolidated, customs, gazette, gazette_law, history, layout, leginet,
+    acts, columns, consolidated, customs, forward, gazette, gazette_law, history, layout, leginet,
     numbering, rate_table, refs, texts_xml,
 )
 from .management.commands import collect_cylaw
@@ -3257,6 +3257,121 @@ class PillarTwoLawTests(CollectedTextsTests):
         self.assertIsNotNone(self.version('prt_VIII', date))
         self.assertIsNotNone(self.version('prt_X', date))
         self.assertIn('правка источника prt_VII_2 → prt_VIII', self.report)
+
+
+FORWARD_BASE = [
+    '      Προοίμιο',
+    '',
+    '            3. Οι διατάξεις ισχύουν έως το 2017.',
+    '',
+    '            4.-(1) Πρώτο εδάφιο.',
+    '',
+    '                    (2) Δεύτερο εδάφιο.',
+]
+
+
+class ForwardTests(SimpleTestCase):
+    """Прямое наложение изменений на базовый текст (forward, layout="text")."""
+
+    def setUp(self):
+        self.root = consolidated.Parser('cy/law/2016/76_I').parse(list(FORWARD_BASE))
+        self.report = []
+
+    def nodes(self):
+        return {node.eid: node for node in self.root.walk() if node.kind != 'act'}
+
+    def apply(self, *ops):
+        acts = []
+        for op in ops:
+            op.act.ops.append(op)
+            acts.append(op.act)
+        return forward.apply(self.root, acts, 'cy/law/2016/76_I', self.report)
+
+    def test_before_window_folded(self):
+        act = make_act('cy/law/2018/63_I', datetime.date(2018, 6, 29))
+        result = self.apply(make_op(act, 'replace', 'art_3', old='2017', new='2018'))
+        self.assertEqual(result, [])
+        self.assertEqual(self.nodes()['art_3'].paragraphs, ['Οι διατάξεις ισχύουν έως το 2018.'])
+        self.assertIn('влито в базовую редакцию', self.report[0])
+
+    def test_window_replace_keeps_before(self):
+        act = make_act('cy/law/2024/155_I', datetime.date(2024, 12, 30))
+        [amending] = self.apply(make_op(act, 'replace', 'art_3', old='2017', new='2025'))
+        [op] = amending.ops
+        self.assertEqual((op.kind, op.target), ('replace', 'art_3'))
+        self.assertEqual(op.before, {'art_3': ['Οι διατάξεις ισχύουν έως το 2017.']})
+        self.assertEqual(self.nodes()['art_3'].paragraphs, ['Οι διατάξεις ισχύουν έως το 2025.'])
+
+    def test_ambiguous_old_not_applied(self):
+        act = make_act('cy/law/2018/63_I', datetime.date(2018, 6, 29))
+        self.apply(make_op(act, 'replace', 'art_3', old='ι', new='x'))
+        self.assertIn('встречается', self.report[0])
+
+    def test_window_layout_merges_by_fragment(self):
+        act = make_act('cy/law/2026/79_I', datetime.date(2026, 4, 21))
+        op = make_op(act, 'replace', 'art_4', layout=[
+            '            4.-(1) Νέο πρώτο εδάφιο.',
+            '',
+            '                    (3) Τρίτο εδάφιο.',
+        ])
+        [amending] = self.apply(op)
+        derived = {(item.kind, item.target) for item in amending.ops}
+        self.assertEqual(derived, {
+            ('replace', 'art_4.par_1'),
+            ('delete', 'art_4.par_2'),
+            ('insert', 'art_4.par_3'),
+        })
+        self.assertEqual({item.key for item in amending.ops}, {'art_2:replace'})
+        deleted = next(item for item in amending.ops if item.kind == 'delete')
+        self.assertEqual(deleted.before, {'art_4.par_2': ['Δεύτερο εδάφιο.']})
+        # отменённый фрагмент остаётся на своём месте
+        self.assertEqual(
+            [child.eid for child in self.nodes()['art_4'].children],
+            ['art_4.par_1', 'art_4.par_2', 'art_4.par_3'],
+        )
+
+    def test_layout_before_window_replaces_children(self):
+        act = make_act('cy/law/2021/102_I', datetime.date(2021, 5, 11))
+        self.apply(make_op(act, 'replace', 'art_4', layout=[
+            '            4.-(1) Νέο πρώτο εδάφιο.',
+        ]))
+        node = self.nodes()['art_4']
+        self.assertEqual([child.eid for child in node.children], ['art_4.par_1'])
+        self.assertEqual(node.children[0].paragraphs, ['Νέο πρώτο εδάφιο.'])
+
+
+SOCIAL_CONTRIBUTIONS_LAW = 'cy/law/2016/76_I'
+
+
+@skipUnless(
+    (TEXTS_DIR / SOCIAL_CONTRIBUTIONS_LAW / 'collect.xml').exists(),
+    'нет Nomos-texts с законом 76(Ι)/2016',
+)
+class OverdueContributionsLawTests(CollectedTextsTests):
+    """76(Ι)/2016: сводки нет, изменения наложены на базовый текст (layout="text")."""
+
+    collected = (SOCIAL_CONTRIBUTIONS_LAW,)
+    main_uid = SOCIAL_CONTRIBUTIONS_LAW
+
+    def test_rebuild_keeps_files(self):
+        self.assertEqual(self.differing(SOCIAL_CONTRIBUTIONS_LAW), [])
+        self.assertEqual(self.differing('cy/law/2026/79_I'), [])
+
+    def test_folded_before_window(self):
+        date = datetime.date(2024, 1, 1)
+        self.assertIn('Γενικού Σχεδίου Υγείας', self.text('art_2.def_koinwnikh_eisfora', date))
+        self.assertIn('Υποβολή αίτησης', self.version('art_5', date).heading)
+        self.assertIn('δεκατρείς (13) μήνες', self.text('art_7.par_3.sub_2', date))
+
+    def test_window_versions(self):
+        self.assertIn('Ιουλίου 2024', self.text('art_12.sub_1', datetime.date(2024, 6, 30)))
+        self.assertIn('Ιουλίου 2025', self.text('art_12.sub_1', datetime.date(2024, 7, 1)))
+        before = datetime.date(2026, 4, 20)
+        after = datetime.date(2026, 4, 21)
+        self.assertIsNone(self.version('art_3.sub_1', before))
+        self.assertIn('συγκεκριμένες οφειλές', self.text('art_3.sub_1', after))
+        self.assertIn('Ελάχιστου', self.text('art_5.par_2.sub_1.pnt_b', before))
+        self.assertIsNone(self.version('art_5.par_2.sub_1.pnt_b', after))
 
 
 COLLECTION_LAW = 'cy/law/1962/31'
