@@ -2801,6 +2801,22 @@ class IncomeTaxParsingTests(SimpleTestCase):
         self.assertEqual(article.parent.kind, 'sct')
         self.assertEqual(article.parent.heading, heading)
 
+    def test_wrapped_proviso_is_not_group_heading(self):
+        """«Νοείται ότι, … (ii) και» по центру — оговорка, не раздел."""
+        rows = [
+            'Προοίμιο',
+            '',
+            PAD + 'Επειδή.',
+            '',
+            PAD + '201Β. Κείμενο:',
+            '',
+            ' ' * 33 + 'Νοείται ότι, η πληροφορία δεν απαιτείται (ii) και',
+            '',
+            PAD + '202. Άλλο.',
+        ]
+        root = consolidated.Parser('cy/law/1978/4').parse(rows)
+        self.assertFalse(any(node.kind == 'sct' for node in root.walk()))
+
     def test_reference_with_subsection_is_not_article(self):
         """«4(1) του …» без буквы в номере — не начало статьи."""
         root = parse_body('3. Κείμενο που συνεχίζεται.', '4(1) του Νόμου ισχύει.')

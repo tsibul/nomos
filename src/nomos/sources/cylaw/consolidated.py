@@ -633,11 +633,16 @@ class Parser:
         ст. 141) начинается левее: за ним сразу заголовок статьи на полях."""
         if not is_group_heading(block.text):
             return False
+        text = block.text
+        # оговорка «Νοείται ότι, … (ii) και», перенесённая на новую строку,
+        # — не заголовок (Κεφ. 113, ст. 201Β)
+        if text.startswith('Νοείται') or LIST_END_RE.search(text):
+            return False
         if block.indent >= 25:
             return True
         return (
             block.indent > MARGIN
-            and len(block.text) > GROUP_LONG
+            and len(text) > GROUP_LONG
             and following is not None
             and following.indent <= MARGIN
         )
