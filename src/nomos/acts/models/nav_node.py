@@ -2,8 +2,8 @@ from django.db import models
 
 
 class NavNode(models.Model):
-    """Узел меню из Nomos-texts/nav.xml: раздел (ключ, без акта) или пункт
-    основного акта.
+    """Узел меню из Nomos-texts/nav.xml: раздел (ключ, без акта), пункт
+    основного акта или страница «Что меняется» на дату (`<changes>`).
 
     Пункт хранит uid акта и тогда, когда акта нет в базе: пункт стоит на своём
     месте
@@ -28,6 +28,9 @@ class NavNode(models.Model):
         on_delete=models.SET_NULL,
         related_name="nav_nodes",
     )
+    # <changes date="…" scope="cy/taxes">: дата страницы и путь ключей раздела
+    changes_on = models.DateField(null=True, blank=True)
+    scope = models.CharField(max_length=100, blank=True)
 
     class Meta:
         ordering = ["order"]
@@ -37,7 +40,11 @@ class NavNode(models.Model):
 
     @property
     def is_section(self):
-        return not self.act_uid
+        return not self.act_uid and self.changes_on is None
+
+    @property
+    def is_item(self):
+        return bool(self.act_uid)
 
     def keys(self):
         """Ключи разделов от верхнего до этого: ['cy', 'taxes']."""

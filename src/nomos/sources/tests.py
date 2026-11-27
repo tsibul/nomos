@@ -5246,9 +5246,11 @@ class NavLoadTests(TestCase):
         )
         missing = NavNode.objects.get(act_uid="cy/law/2002/118_I")
         self.assertIsNone(missing.act)
-        # <changes> пока не загружается
-        self.assertFalse(
-            NavNode.objects.filter(parent__key="analytics").exists()
+        # <changes> — страница «Что меняется» на дату по разделу
+        changes = NavNode.objects.get(parent__key="analytics")
+        self.assertEqual(
+            (changes.changes_on, changes.scope, changes.is_section),
+            (datetime.date(2026, 1, 1), "cy/taxes", False),
         )
         self.assertIn("в меню, но не загружен: cy/law/2002/118_I", self.output)
 

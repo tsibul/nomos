@@ -1,7 +1,7 @@
 from django.contrib.auth import views as auth_views
 from django.urls import path, re_path
 
-from . import views
+from . import analytics, views
 
 app_name = "site"
 
@@ -18,6 +18,22 @@ urlpatterns = [
         name="login",
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("analytics/", analytics.index, name="analytics"),
+    path(
+        "analytics/changes/<str:on>/",
+        analytics.changes,
+        name="changes",
+    ),
+    path(
+        "analytics/changes/<str:on>/<str:uid>/",
+        analytics.compare,
+        name="compare",
+    ),
+    path(
+        "analytics/changes/<str:on>/<str:uid>/<str:lang>/",
+        analytics.compare,
+        name="compare_lang",
+    ),
     path("<str:jurisdiction>/", views.act_list, name="section"),
     path(
         "<str:jurisdiction>/<str:subsection>/",

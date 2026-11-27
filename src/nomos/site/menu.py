@@ -79,7 +79,18 @@ class Tree:
         for kid in self.kids(node):
             if kid.is_section:
                 found.extend(self.items(kid))
-            else:
+            elif kid.is_item:
+                found.append(kid)
+        return found
+
+    def changes(self, node=None):
+        """Страницы «Что меняется» внутри node (по умолчанию — во всём меню),
+        по порядку файла."""
+        found = []
+        for kid in self.kids(node):
+            if kid.is_section:
+                found.extend(self.changes(kid))
+            elif kid.changes_on is not None:
                 found.append(kid)
         return found
 
@@ -92,6 +103,10 @@ class Tree:
         return None
 
     def has_visible(self, node):
+        """Есть ли что открыть: видимый загруженный акт или страница
+        «Что меняется»."""
+        if self.changes(node):
+            return True
         return any(
             item.act is not None and access.act_visible(item.act)
             for item in self.items(node)

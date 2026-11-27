@@ -27,5 +27,7 @@
 @use 'blocks/chain-start';
 @use 'blocks/history';
 @use 'blocks/repealed';
+@use 'blocks/changes';
+@use 'blocks/compare';
 @use 'blocks/pager';
 @use 'blocks/footer';

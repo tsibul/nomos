@@ -1,0 +1,72 @@
+@use '../base';
+
+// «Было — стало»: на узком экране редакции одна под другой, на широком — рядом
+.compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: base.$break-tablet) {
+  .compare {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.compare__info {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.compare__act {
+  font-weight: 600;
+}
+
+.compare__kind,
+.compare__source {
+  color: var(--color-neutral-500);
+}
+
+.compare__side {
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--color-neutral-500);
+  overflow-wrap: anywhere;
+}
+
+.compare__side--new {
+  border-left-color: var(--color-primary-500);
+}
+
+.compare__heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+  font-size: 1.125rem;
+}
+
+.compare__date {
+  font-weight: 400;
+}
+
+.compare__text {
+  margin: 0 0 0.75rem;
+}
+
+.compare__none {
+  color: var(--color-neutral-500);
+}
+
+.compare__removed {
+  background: var(--color-secondary-50);
+  color: var(--color-secondary-900);
+  text-decoration: line-through;
+}
+
+.compare__added {
+  background: var(--color-primary-50);
+  color: var(--color-primary-900);
+  font-weight: 600;
+}
