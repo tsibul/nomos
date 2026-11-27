@@ -103,6 +103,10 @@ class Op:
     before: dict = field(default_factory=dict)
     # kind="correct": исправление (Διόρθωση) положения изменяющего акта
     correction: Correction = None
+    # <text>: новый фрагмент целиком, строки в раскладке сводки (forward)
+    layout: list = field(default_factory=list)
+    # вид исходного изменения, если это изменение одного фрагмента из него (forward)
+    origin: str = ''
 
     @property
     def known_from(self):
@@ -112,9 +116,8 @@ class Op:
 
     @property
     def key(self):
-        """Ключ изменения внутри изменяющего акта: положение, вид, своя
-        дата."""
-        key = "%s:%s" % (self.provision, self.kind)
+        """Ключ изменения внутри изменяющего акта: положение, вид, своя дата."""
+        key = '%s:%s' % (self.provision, self.origin or self.kind)
         if self.valid_from != self.act.in_force_from:
             key += "@" + self.valid_from.isoformat()
         return key
@@ -338,6 +341,7 @@ def make_op(act, item):
         old_num=item.get("old-num"),
         texts=op_texts(item),
         before=op_before(item),
+        layout=op_layout(item),
     )
 
 
@@ -353,6 +357,14 @@ def op_texts(item):
         eid = paragraph.get("for", item.get("target"))
         texts.setdefault(eid, []).append(" ".join(paragraph.text.split()))
     return texts
+
+
+def op_layout(item):
+    """<text>: строки как есть, без пустых в начале и в конце."""
+    text = item.findtext('text')
+    if text is None:
+        return []
+    return [line.rstrip() for line in text.strip('\n').split('\n')]
 
 
 def op_before(item):
