@@ -86,6 +86,9 @@ class Language:
     amended_own: str = r'(?!)'
     # изменяющий акт: «в её пункте (2)» — пункт изменяемой статьи
     amended_before: str = r'(?!)'
+    # слово «пункт» перед номером статьи («пункта 20(1)»): в приложении это пункт
+    # самого приложения («пункта 4(2)» Первого приложения), статья не размечается
+    article_paragraph_word: str = r'(?!)'
 
     def __post_init__(self):
         self.article_re = re.compile(self.article_word)
@@ -108,6 +111,7 @@ class Language:
         self.insert_before_re = re.compile(self.insert_before)
         self.amended_own_re = re.compile(self.amended_own)
         self.amended_before_re = re.compile(self.amended_before)
+        self.article_paragraph_word_re = re.compile(self.article_paragraph_word)
 
 
 # пункт в перечислении внутри приложения: «1(1)(α)», «(β)», «(2)(α)»
@@ -212,11 +216,14 @@ RU = Language(
     # организации из 2+ букв («HIO», «NPE»)
     bare_qualified=(
         r'^\s*(?:(?:,\s*)?стат(?:ьи|ей|ье|ья)(?![\wё])|(?![A-Z]{2,}(?![\wё]))[A-ZΑ-Ω]'
+        # «пункта (4) Десятого приложения» — пункт приложения
+        r'|(?:%s)\w*\s+[Пп]риложени'
         r'|(?:Закона|Законов|Директивы|Регламента|Кодекса|Правил'
         # «пунктом (1) Правила 3 …» — другой акт; «пункта (7) Правила могут» — нет
         r'|Правил(?:а|у|ом|е)(?=\s+\d)|Постановления|Указа'
         r'|Конвенции|закона|кодекса|директивы|регламента|указа|постановления'
         r'|упомянутого|указанного|этого|данного|его|её|их|той\s+же|того\s+же)(?![\wё]))'
+        % ordinal_pattern(RU_ORDINALS)
     ),
     base=(
         r'^\s*(?:(?:базового|основного)\s+[Зз]акона|к\s+(?:базовому|основному)\s+[Зз]акону'
@@ -230,6 +237,7 @@ RU = Language(
     ),
     amended_own=r'^\s+(?:его|её)(?![\wё])',
     amended_before=r'(?<![\wё])(?:его|её)\s+$',
+    article_paragraph_word=r'[Пп]ункт',
     # «статьи 5 Части…» — другое; «статьи 33 Генеральный директор» — свой закон
     capital=r'^\s+[А-ЯЁ]',
     bare_law=r'^\s+[Зз]акона(?=\s*[,;:.)]|\s+(?:как|в\s+редакции)(?![\wё]))',
@@ -403,7 +411,7 @@ class Marker:
             (self.mentions.spans(text, self.agreed) if self.mentions is not None else [])
             + self.paragraph_spans(text)
             + self.schedule_spans(text)
-            + self.article_spans(text)
+            + self.article_spans(text, own)
             + self.inner_spans(text, own)
         )
         taken = []
@@ -633,11 +641,14 @@ class Marker:
             spans.append(self.checked(reason, top, subs, match.start(), match.end()))
         return spans
 
-    def article_spans(self, text):
+    def article_spans(self, text, own):
         """Статьи с перечислениями: «άρθρα 8 και 9», «άρθρο 9(4), (5) ή (10)»."""
         spans = []
         language = self.language
+        in_schedule = (own or '').startswith('sch_')
         for word in language.article_re.finditer(text):
+            if in_schedule and language.article_paragraph_word_re.match(word.group()):
+                continue
             items = []
             position = word.end()
             start = word.start()
