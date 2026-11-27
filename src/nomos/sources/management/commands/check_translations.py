@@ -1,6 +1,7 @@
 """Полнота русского перевода актов по XML Nomos-texts, без БД.
 
-Правило полноты — nomos.sources.translation_check. Неполные акты выводятся списком;
+Правило полноты — nomos.sources.translation_check. Неполные акты выводятся
+списком;
 если они есть, команда завершается с кодом 1.
 Акты без ru не ошибка: они только считаются.
 """
@@ -14,7 +15,7 @@ from .load_texts import add_texts_dir, texts_root
 
 
 class Command(BaseCommand):
-    help = 'Список актов с неполным русским переводом (по XML Nomos-texts)'
+    help = "Список актов с неполным русским переводом (по XML Nomos-texts)"
 
     requires_system_checks = []
 
@@ -33,11 +34,14 @@ class Command(BaseCommand):
                 without += 1
             elif reasons:
                 incomplete += 1
-                self.stdout.write('%s: %s' % (element.get('uid'), '; '.join(reasons)))
+                self.stdout.write(
+                    "%s: %s" % (element.get("uid"), "; ".join(reasons))
+                )
             else:
                 complete += 1
         self.stdout.write(
-            'ru полный: %d, неполный: %d, без ru: %d' % (complete, incomplete, without)
+            "ru полный: %d, неполный: %d, без ru: %d"
+            % (complete, incomplete, without)
         )
         if incomplete:
-            raise CommandError('неполный русский перевод: %d' % incomplete)
+            raise CommandError("неполный русский перевод: %d" % incomplete)

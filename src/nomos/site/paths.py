@@ -1,4 +1,5 @@
-"""Адреса сайта с учётом подпути (`NOMOS_URL_PREFIX`, например `/resources/nomos`).
+"""Адреса сайта с учётом подпути (`NOMOS_URL_PREFIX`, например
+`/resources/nomos`).
 
 Пути внутри приложения пишутся от корня сайта (`/about/`); наружу, в ссылки и
 перенаправления, они выходят с подпутём. Пустой подпуть — сайт в корне домена.
@@ -17,6 +18,6 @@ def local(address):
     prefix = settings.NOMOS_URL_PREFIX
     if not prefix:
         return address
-    if address.startswith(prefix + '/'):
+    if address.startswith(prefix + "/"):
         return address.removeprefix(prefix)
     return None

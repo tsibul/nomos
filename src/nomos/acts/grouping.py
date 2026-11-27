@@ -1,7 +1,10 @@
-"""Акты у основного акта меню: блоки по связям (docs/design/site-navigation.md, 3.2).
+"""Акты у основного акта меню: блоки по связям (docs/design/site-navigation.md,
+3.2).
 
-Основной акт — пункт nav.xml. Неосновной акт стоит у основного акта, к которому ведёт его
-связь; связь к неосновному акту (ΚΔΠ, изменяющая ΚΔΠ) ведёт дальше по цепочке, и акт
+Основной акт — пункт nav.xml. Неосновной акт стоит у основного акта, к которому
+ведёт его
+связь; связь к неосновному акту (ΚΔΠ, изменяющая ΚΔΠ) ведёт дальше по цепочке,
+и акт
 попадает в блок, где стоит промежуточный акт.
 """
 
@@ -10,17 +13,18 @@ from collections import defaultdict
 
 from .models import Act, ActRelation, NavNode
 
-AMENDING = 'amending'
-SUBSIDIARY = 'subsidiary'
-FORMS = 'forms'
-EU = 'eu'
-OTHER = 'other'
+AMENDING = "amending"
+SUBSIDIARY = "subsidiary"
+FORMS = "forms"
+EU = "eu"
+OTHER = "other"
 
-# порядок блоков на странице (пункты 2–7 проекта; справочной информации пока нет)
+# порядок блоков на странице (пункты 2–7 проекта; справочной информации пока
+# нет)
 BLOCKS = (AMENDING, SUBSIDIARY, FORMS, EU, OTHER)
 
 # 'order' — приказы: вида в Act.Kind ещё нет
-SUBSIDIARY_KINDS = {Act.Kind.REGULATION_BY_LAW, 'order'}
+SUBSIDIARY_KINDS = {Act.Kind.REGULATION_BY_LAW, "order"}
 FORM_KINDS = {Act.Kind.FORM, Act.Kind.INSTRUCTION}
 
 
@@ -39,7 +43,9 @@ def relation_block(kind, act):
 def main_act_ids():
     """id актов — пунктов меню, загруженных в базу."""
     return set(
-        NavNode.objects.filter(act__isnull=False).values_list('act_id', flat=True)
+        NavNode.objects.filter(act__isnull=False).values_list(
+            "act_id", flat=True
+        )
     )
 
 
@@ -48,12 +54,15 @@ def sort_key(act):
 
 
 class Relations:
-    """Все связи базы, загруженные один раз: входящие и исходящие по id акта."""
+    """Все связи базы, загруженные один раз: входящие и исходящие по id
+    акта."""
 
     def __init__(self):
         self.incoming = defaultdict(list)
         self.outgoing = defaultdict(list)
-        for relation in ActRelation.objects.select_related('from_act', 'to_act'):
+        for relation in ActRelation.objects.select_related(
+            "from_act", "to_act"
+        ):
             self.incoming[relation.to_act_id].append(relation)
             self.outgoing[relation.from_act_id].append(relation)
 
@@ -67,7 +76,10 @@ class Relations:
             for relation in self.incoming[target]:
                 other = relation.from_act
                 # «связанный акт» виден только у акта, от которого идёт связь
-                if relation.kind == ActRelation.Kind.RELATED or other.id in seen:
+                if (
+                    relation.kind == ActRelation.Kind.RELATED
+                    or other.id in seen
+                ):
                     continue
                 seen.add(other.id)
                 block = inherited or relation_block(relation.kind, other)
@@ -76,7 +88,10 @@ class Relations:
                 if other.id not in main_ids:
                     queue.append((other.id, block))
         for relation in self.outgoing[act.id]:
-            if relation.kind != ActRelation.Kind.RELATED or relation.to_act_id in seen:
+            if (
+                relation.kind != ActRelation.Kind.RELATED
+                or relation.to_act_id in seen
+            ):
                 continue
             other = relation.to_act
             seen.add(other.id)
@@ -85,15 +100,19 @@ class Relations:
         grouped = defaultdict(list)
         for block, other in found.values():
             grouped[block].append(other)
-        return {block: sorted(acts, key=sort_key) for block, acts in grouped.items()}
+        return {
+            block: sorted(acts, key=sort_key)
+            for block, acts in grouped.items()
+        }
 
 
 def unattached():
-    """Акты, которые не попадают в меню: не основные и без связи к основному акту."""
+    """Акты, которые не попадают в меню: не основные и без связи к основному
+    акту."""
     main_ids = main_act_ids()
     relations = Relations()
     attached = set(main_ids)
     for act in Act.objects.filter(id__in=main_ids):
         for acts in relations.blocks(act, main_ids).values():
             attached.update(other.id for other in acts)
-    return list(Act.objects.exclude(id__in=attached).order_by('uid'))
+    return list(Act.objects.exclude(id__in=attached).order_by("uid"))

@@ -1,10 +1,15 @@
-"""Таблица ставок Πρώτο Παράρτημα 19/1963 (Ο περί Χαρτοσήμων Νόμος) в сводке CyLaw.
+"""Таблица ставок Πρώτο Παράρτημα 19/1963 (Ο περί Χαρτοσήμων Νόμος) в сводке
+CyLaw.
 
 Три столбца: «Στοιχείο» (номер позиции), «Είδος Εγγράφου», «Αξία Χαρτοσήμου». В
-`pdftotext -layout` столбцы перемешаны: номер и ставка стоят по высоте посередине своей
-строки таблицы, между строками соседних столбцов. Здесь таблица собирается по координатам
-слов (`pdftotext -bbox`) и заменяет свои строки раскладки: позиция — «N. текст», ставка —
-абзацем после строки таблицы, к которой она относится (как в таблицах ставок акцизов).
+`pdftotext -layout` столбцы перемешаны: номер и ставка стоят по высоте
+посередине своей
+строки таблицы, между строками соседних столбцов. Здесь таблица собирается по
+координатам
+слов (`pdftotext -bbox`) и заменяет свои строки раскладки: позиция — «N.
+текст», ставка —
+абзацем после строки таблицы, к которой она относится (как в таблицах ставок
+акцизов).
 """
 
 import re
@@ -13,11 +18,12 @@ from dataclasses import dataclass, field
 from . import leginet
 from .layout import fix_lookalikes
 
-TITLE = 'ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ'
-HEADER_LAST = 'Χαρτοσήμου'
-END = 'ΔΕΥΤΕΡΟ ΠΑΡΑΡΤΗΜΑ'
-HEADER = 'Στοιχείο Είδος Εγγράφου Αξία Χαρτοσήμου'
-# левые края столбцов, pt: номер правее не кончается, ставка не левее начинается
+TITLE = "ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ"
+HEADER_LAST = "Χαρτοσήμου"
+END = "ΔΕΥΤΕΡΟ ΠΑΡΑΡΤΗΜΑ"
+HEADER = "Στοιχείο Είδος Εγγράφου Αξία Χαρτοσήμου"
+# левые края столбцов, pt: номер правее не кончается, ставка не левее
+# начинается
 NUMBER_RIGHT = 80
 RATE_LEFT = 444
 # левый край текста, pt, и ширина знака раскладки
@@ -36,11 +42,11 @@ TIE = 1
 TOP_MARGIN = 30
 BOTTOM_MARGIN = 770
 
-MARKER_RE = re.compile(r'^(\([^)\s]{1,4}\)|[ΑΒ]\.)\s')
-LETTER_RE = re.compile(r'^[ΑΒ]\.\s')
-SENTENCE_END = '.:;)'
-EXCEPTION_PREFIX = 'Εξαιρ'
-PROVISO_PREFIX = 'Νοείται'
+MARKER_RE = re.compile(r"^(\([^)\s]{1,4}\)|[ΑΒ]\.)\s")
+LETTER_RE = re.compile(r"^[ΑΒ]\.\s")
+SENTENCE_END = ".:;)"
+EXCEPTION_PREFIX = "Εξαιρ"
+PROVISO_PREFIX = "Νοείται"
 
 
 @dataclass
@@ -56,54 +62,71 @@ class Row:
     """Строка столбца «Είδος Εγγράφου»: пункт, абзац или заголовок перечня."""
 
     lines: list
-    number: str = ''
+    number: str = ""
     rates: list = field(default_factory=list)
 
     @property
     def text(self):
-        return ' '.join(line.text for line in self.lines)
+        return " ".join(line.text for line in self.lines)
 
     def distance(self, page, y):
-        """Расстояние по высоте от `y` до строки на странице `page`; на другой — бесконечно."""
+        """Расстояние по высоте от `y` до строки на странице `page`; на другой
+        — бесконечно."""
         ys = [line.y for line in self.lines if line.page == page]
         if not ys:
-            return float('inf')
+            return float("inf")
         if min(ys) <= y <= max(ys):
             return 0
         return min(abs(y - min(ys)), abs(y - max(ys)))
 
 
 def table_lines(pages):
-    """Строки таблицы → три списка Line: номера, текст, ставки (сверху вниз по страницам)."""
+    """Строки таблицы → три списка Line: номера, текст, ставки (сверху вниз по
+    страницам)."""
     numbers, texts, rates = [], [], []
-    state = 'before'
+    state = "before"
     for page_number, words in enumerate(pages):
         for y, parts in leginet.page_lines(words):
-            line = ' '.join(word for _, _, word in parts)
-            if state == 'before':
-                state = 'title' if line.strip() == TITLE else state
+            line = " ".join(word for _, _, word in parts)
+            if state == "before":
+                state = "title" if line.strip() == TITLE else state
                 continue
-            if state == 'title':
-                state = 'table' if line.strip().endswith(HEADER_LAST) else state
+            if state == "title":
+                state = (
+                    "table" if line.strip().endswith(HEADER_LAST) else state
+                )
                 continue
             if line.strip() == END:
                 return numbers, texts, rates
             if y < TOP_MARGIN or y > BOTTOM_MARGIN:
                 continue
             number = [part for part in parts if part[1] < NUMBER_RIGHT]
-            text = [part for part in parts if part[1] >= NUMBER_RIGHT and part[0] < RATE_LEFT]
+            text = [
+                part
+                for part in parts
+                if part[1] >= NUMBER_RIGHT and part[0] < RATE_LEFT
+            ]
             rate = [part for part in parts if part[0] >= RATE_LEFT]
-            for target, words_of in ((numbers, number), (texts, text), (rates, rate)):
+            for target, words_of in (
+                (numbers, number),
+                (texts, text),
+                (rates, rate),
+            ):
                 if words_of:
-                    text = fix_lookalikes(' '.join(word for _, _, word in words_of))
+                    text = fix_lookalikes(
+                        " ".join(word for _, _, word in words_of)
+                    )
                     target.append(Line(page_number, y, words_of[0][0], text))
-    raise ValueError('таблица %s не найдена' % TITLE)
+    raise ValueError("таблица %s не найдена" % TITLE)
 
 
 def text_rows(lines):
-    """Строки столбца текста → строки таблицы. Новая строка — с пункта («(1)», «(α)», «Α.»)
-    или с заглавной буквы после конца фразы либо просвета; со строчной — продолжение, в том
-    числе после просвета (строка с номером или ставкой посередине) и переноса страницы."""
+    """Строки столбца текста → строки таблицы. Новая строка — с пункта («(1)»,
+    «(α)», «Α.»)
+    или с заглавной буквы после конца фразы либо просвета; со строчной —
+    продолжение, в том
+    числе после просвета (строка с номером или ставкой посередине) и переноса
+    страницы."""
     rows = []
     for line in lines:
         if not rows or MARKER_RE.match(line.text):
@@ -123,7 +146,8 @@ def text_rows(lines):
 
 
 def rate_cells(lines):
-    """Строки столбца ставок → ячейки: новая ячейка — с заглавной буквы или после просвета
+    """Строки столбца ставок → ячейки: новая ячейка — с заглавной буквы или
+    после просвета
     (у ставок с другой страницы — только с заглавной)."""
     cells = []
     for line in lines:
@@ -137,7 +161,8 @@ def rate_cells(lines):
 
 
 def nearest(rows, page, y, later):
-    """Индекс строки таблицы, ближайшей по высоте к `y`; при равных — поздней или ранней."""
+    """Индекс строки таблицы, ближайшей по высоте к `y`; при равных — поздней
+    или ранней."""
     best = None
     for index, row in enumerate(rows):
         distance = row.distance(page, y)
@@ -157,8 +182,10 @@ def starts_inside(row):
 
 
 def place_numbers(rows, numbers):
-    """Номер позиции → её первая строка таблицы: в строке с номером или ближайшая к нему.
-    Пункт «(1)» и оговорка «Νοείται» позицию не начинают — она в строке перед ними."""
+    """Номер позиции → её первая строка таблицы: в строке с номером или
+    ближайшая к нему.
+    Пункт «(1)» и оговорка «Νοείται» позицию не начинают — она в строке перед
+    ними."""
     heads = []
     for number in numbers:
         index = nearest(rows, number.page, number.y, later=False)
@@ -171,8 +198,10 @@ def place_numbers(rows, numbers):
 
 
 def eligible(rows, heads):
-    """Строки, к которым может относиться ставка: не оговорка «Νοείται» и не изъятие
-    («Εξαιρούνται:» и его перечень — до следующей позиции или пункта «Α.», «Β.»)."""
+    """Строки, к которым может относиться ставка: не оговорка «Νοείται» и не
+    изъятие
+    («Εξαιρούνται:» и его перечень — до следующей позиции или пункта «Α.»,
+    «Β.»)."""
     result = []
     exception = False
     for index, row in enumerate(rows):
@@ -185,13 +214,16 @@ def eligible(rows, heads):
 
 
 def item_end(heads, index, count):
-    """Конец позиции, в которой строка `index`: индекс первой строки следующей позиции."""
+    """Конец позиции, в которой строка `index`: индекс первой строки следующей
+    позиции."""
     return next((head for head in heads if head > index), count)
 
 
 def place_rates(rows, cells, heads):
-    """Ставка → строка таблицы: ближайшая к середине ячейки. Строка-заголовок перечня
-    («Σύμβαση:») передаёт ставку следующей строке позиции; оговорка и изъятие — предыдущей
+    """Ставка → строка таблицы: ближайшая к середине ячейки. Строка-заголовок
+    перечня
+    («Σύμβαση:») передаёт ставку следующей строке позиции; оговорка и изъятие —
+    предыдущей
     строке, к которой ставка может относиться."""
     allowed = eligible(rows, heads)
     for cell in cells:
@@ -202,12 +234,12 @@ def place_rates(rows, cells, heads):
             index -= 1
         following = index + 1
         if (
-            rows[index].text.endswith(':')
+            rows[index].text.endswith(":")
             and following < item_end(heads, index, len(rows))
             and allowed[following]
         ):
             index = following
-        rows[index].rates.append(' '.join(line.text for line in cell))
+        rows[index].rates.append(" ".join(line.text for line in cell))
 
 
 def indent_of(line):
@@ -215,7 +247,8 @@ def indent_of(line):
 
 
 def row_indent(row):
-    """Отступ первой строки: позиция — у поля; «Α.», «Β.» — левее текста позиции, чтобы
+    """Отступ первой строки: позиция — у поля; «Α.», «Β.» — левее текста
+    позиции, чтобы
     закрыть изъятие предыдущего пункта («Εξαιρούνται:» после «Α.»)."""
     if row.number:
         return TOP_INDENT
@@ -225,28 +258,32 @@ def row_indent(row):
 
 
 def layout_lines(rows):
-    """Строки таблицы → строки раскладки; второе и третье — индексы первых строк абзацев
+    """Строки таблицы → строки раскладки; второе и третье — индексы первых
+    строк абзацев
     таблицы и строк ставок."""
-    output = [' ' * HEADER_INDENT + HEADER, '']
+    output = [" " * HEADER_INDENT + HEADER, ""]
     starts = set()
     rates = set()
     for row in rows:
         starts.add(len(output))
         for position, line in enumerate(row.lines):
             if position == 0 and row.number:
-                output.append(' ' * TOP_INDENT + '%s. %s' % (row.number, line.text))
+                output.append(
+                    " " * TOP_INDENT + "%s. %s" % (row.number, line.text)
+                )
             elif position == 0:
-                output.append(' ' * row_indent(row) + line.text)
+                output.append(" " * row_indent(row) + line.text)
             else:
-                output.append(' ' * indent_of(line) + line.text)
-        output.append('')
-        # ставка глубже своей строки: продолжает её пункт, а не открывает соседний
+                output.append(" " * indent_of(line) + line.text)
+        output.append("")
+        # ставка глубже своей строки: продолжает её пункт, а не открывает
+        # соседний
         indent = row_indent(row) + RATE_SHIFT
         for rate in row.rates:
             starts.add(len(output))
             rates.add(len(output))
-            output.append(' ' * indent + rate)
-            output.append('')
+            output.append(" " * indent + rate)
+            output.append("")
     return output, starts, rates
 
 
@@ -260,21 +297,23 @@ def rows_of(pages):
 
 
 def rewrite(lines, path):
-    """Строки раскладки сводки → те же строки с таблицей, собранной по столбцам;
-    второе — номера первых строк абзацев таблицы: это текст позиций, не заголовки, хоть
+    """Строки раскладки сводки → те же строки с таблицей, собранной по
+    столбцам;
+    второе — номера первых строк абзацев таблицы: это текст позиций, не
+    заголовки, хоть
     ставка и коротка перед следующей позицией; третье — номера строк ставок."""
     stripped = [line.strip() for line in lines]
     title = stripped.index(TITLE)
     start = next(
         index
         for index in range(title, len(lines))
-        if stripped[index] == 'Αξία'
+        if stripped[index] == "Αξία"
     )
     end = stripped.index(END, start)
     table, starts, rates = layout_lines(rows_of(leginet.pdf_words(path)))
     # номера строк у layout.blocks — с единицы
     return (
-        lines[:start] + table + [''] + lines[end:],
+        lines[:start] + table + [""] + lines[end:],
         {start + index + 1 for index in starts},
         {start + index + 1 for index in rates},
     )

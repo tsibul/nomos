@@ -1,153 +1,185 @@
-"""Разбор сводного текста кипрского закона с cylaw.org (PDF страницы full.html).
+"""Разбор сводного текста кипрского закона с cylaw.org (PDF страницы
+full.html).
 
-Иерархия строится по виду номера, а не по отступу: отступы в приложениях непостоянны.
+Иерархия строится по виду номера, а не по отступу: отступы в приложениях
+непостоянны.
 Тело закона: статья `N.` → εδάφιο `(N)` = par → `(α)` = pnt → `(i)` = pnt.
 Приложение: пункт `N.` = par → `(N)` = sub → `(α)` = pnt → `(i)` = pnt.
-Абзац без номера после нумерованных детей — отдельный фрагмент `sub_K` (2.2 модели),
+Абзац без номера после нумерованных детей — отдельный фрагмент `sub_K` (2.2
+модели),
 до детей — часть текста родителя.
 """
 
 import re
 from pathlib import Path
 
-from . import columns, customs, gazette_law, layout, leginet, numbering, rate_table
+from . import (
+    columns,
+    customs,
+    gazette_law,
+    layout,
+    leginet,
+    numbering,
+    rate_table,
+)
 from .tree import Node
 
-HEADER_RE = re.compile(r'^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)')
-# номер в истории на полях: «95(I)/2000» или закон колониального свода «ΚΕΦ.219» (Κεφ. 219)
-LAW_NUMBER_RE = re.compile(r'^(\d+(\([IΙ]\))?/\d{4}|ΚΕΦ\.\d+[Α-Ω]?)$')
-CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
+HEADER_RE = re.compile(
+    r"^\s*(https://www\.cylaw\.org/|\d+/\d+/\d+, \d+:\d+ [AP]M)"
+)
+# номер в истории на полях: «95(I)/2000» или закон колониального свода
+# «ΚΕΦ.219» (Κεφ. 219)
+LAW_NUMBER_RE = re.compile(r"^(\d+(\([IΙ]\))?/\d{4}|ΚΕΦ\.\d+[Α-Ω]?)$")
+CORRIGENDUM_RE = re.compile(r"ΔΙΟΡΘ\.[^0-9]*\d+")
 # «244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075» (118(Ι)/2002, ст. 14Β)
-CORRIGENDUM_FULL_RE = re.compile(r'ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+')
+CORRIGENDUM_FULL_RE = re.compile(
+    r"ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+"
+)
 
 # «126 Α.» — буква через пробел (Κεφ. 113)
 TOP_RE = re.compile(
-    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,4}|\([Α-Ω]\)| [Α-Ω](?=\.)))'
-    r'\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
-    r'(?:\((?P<sub>\d+[Α-ΩA-Z]{0,3})\)\s*)?(?P<rest>.*)$'
+    r"^(?P<num>\d+(?:[Α-ΩA-Z]{0,4}|\([Α-Ω]\)| [Α-Ω](?=\.)))"
+    r"\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())"
+    r"(?:\((?P<sub>\d+[Α-ΩA-Z]{0,3})\)\s*)?(?P<rest>.*)$"
 )
 ITEM_RES = [
-    ('arabic', re.compile(r'^\((?P<num>\d+[Α-ΩA-Z]{0,3})\)\s*(?P<rest>.*)$')),
-    ('greek', re.compile(r'^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$')),
-    ('roman', re.compile(r'^\((?P<num>[ivxν]{1,5})\)\s*(?P<rest>.*)$')),
+    ("arabic", re.compile(r"^\((?P<num>\d+[Α-ΩA-Z]{0,3})\)\s*(?P<rest>.*)$")),
+    ("greek", re.compile(r"^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$")),
+    ("roman", re.compile(r"^\((?P<num>[ivxν]{1,5})\)\s*(?P<rest>.*)$")),
 ]
 LEVELS = {
-    'top': 0,
-    'arabic': 1,
-    'greek': 2,
-    'roman': 3,
+    "top": 0,
+    "arabic": 1,
+    "greek": 2,
+    "roman": 3,
 }
 BODY_KINDS = {
-    'top': 'art',
-    'arabic': 'par',
-    'greek': 'pnt',
-    'roman': 'pnt',
+    "top": "art",
+    "arabic": "par",
+    "greek": "pnt",
+    "roman": "pnt",
 }
 SCHEDULE_KINDS = {
-    'top': 'par',
-    'arabic': 'sub',
-    'greek': 'pnt',
-    'roman': 'pnt',
+    "top": "par",
+    "arabic": "sub",
+    "greek": "pnt",
+    "roman": "pnt",
 }
 
 SCHEDULE_ORDINALS = [
-    'ΠΡΩΤΟ',
-    'ΔΕΥΤΕΡΟ',
-    'ΤΡΙΤΟ',
-    'ΤΕΤΑΡΤΟ',
-    'ΠΕΜΠΤΟ',
-    'ΕΚΤΟ',
-    'ΕΒΔΟΜΟ',
-    'ΟΓΔΟΟ',
-    'ΕΝΑΤΟ',
-    'ΔΕΚΑΤΟ',
-    'ΕΝΔΕΚΑΤΟ',
-    'ΔΩΔΕΚΑΤΟ',
-    'ΔΕΚΑΤΟ ΤΡΙΤΟ',
-    'ΔΕΚΑΤΟ ΤΕΤΑΡΤΟ',
-    'ΔΕΚΑΤΟ ΠΕΜΠΤΟ',
+    "ΠΡΩΤΟ",
+    "ΔΕΥΤΕΡΟ",
+    "ΤΡΙΤΟ",
+    "ΤΕΤΑΡΤΟ",
+    "ΠΕΜΠΤΟ",
+    "ΕΚΤΟ",
+    "ΕΒΔΟΜΟ",
+    "ΟΓΔΟΟ",
+    "ΕΝΑΤΟ",
+    "ΔΕΚΑΤΟ",
+    "ΕΝΔΕΚΑΤΟ",
+    "ΔΩΔΕΚΑΤΟ",
+    "ΔΕΚΑΤΟ ΤΡΙΤΟ",
+    "ΔΕΚΑΤΟ ΤΕΤΑΡΤΟ",
+    "ΔΕΚΑΤΟ ΠΕΜΠΤΟ",
 ]
-# «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010): мужской род — с «Σ» на конце;
-# старая форма «ΔΕΥΤΕΡΟΣ ΠΙΝΑΞ» (24/1967), там же опечатка сводки «ΠΡΩΤΟΙ ΠΙΝΑΞ»
+# «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010): мужской род — с «Σ» на
+# конце;
+# старая форма «ΔΕΥΤΕΡΟΣ ΠΙΝΑΞ» (24/1967), там же опечатка сводки «ΠΡΩΤΟΙ
+# ΠΙΝΑΞ»
 SCHEDULE_RE = re.compile(
-    r'^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ|[ΣΙ] ΠΙΝΑΞ)$'
+    r"^(?P<ord>(ΔΕΚΑΤΟ )?[Α-Ω]+?)( ΠΑΡΑ[Ρ]?Τ[Η]?ΜΑ|Σ ΠΙΝΑΚΑΣ|[ΣΙ] ΠΙΝΑΞ)$"
 )
-# «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ» тоже;
+# «ΠΙΝΑΚΑΣ Ι», «ΠΙΝΑΚΑΣ ΙΙ» (ΚΔΠ 289/2010): римский номер, греческие «Ι» и «Χ»
+# тоже;
 # единственный «ΠΙΝΑΚΑΣ (Αρθρο 3(2))» (125(Ι)/1999) — без номера;
 # «ΠΑΡΑΡΤΗΜΑ ΙΙ» (205(Ι)/2012) — только с номером
 ROMAN_SCHEDULE_RE = re.compile(
-    r'^(ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?'
-    r'|ΠΑΡΑΡΤΗΜΑ (?P<annex>[IVXΙΧ]+))$'
+    r"^(ΠΙΝΑΚΑΣ( (?P<num>[IVXΙΧ]+))?( \([ΆΑA]ρθρ.*\))?"
+    r"|ΠΑΡΑΡΤΗΜΑ (?P<annex>[IVXΙΧ]+))$"
 )
-LONE_SCHEDULE = 'ΠΑΡΑΡΤΗΜΑ'
-# «ΜΕΡΟΣ ΠΡΩΤΟ ΕΙΣΑΓΩΓΗ» (69(Ι)/1992): номер Μέρους словом — порядковое числительное
+LONE_SCHEDULE = "ΠΑΡΑΡΤΗΜΑ"
+# «ΜΕΡΟΣ ΠΡΩΤΟ ΕΙΣΑΓΩΓΗ» (69(Ι)/1992): номер Μέρους словом — порядковое
+# числительное
 PART_ORDINALS = {
-    'ΠΡΩΤΟ': '1',
-    'ΔΕΥΤΕΡΟ': '2',
-    'ΤΡΙΤΟ': '3',
-    'ΤΕΤΑΡΤΟ': '4',
-    'ΠΕΜΠΤΟ': '5',
-    'ΕΚΤΟ': '6',
-    'ΕΒΔΟΜΟ': '7',
-    'ΟΓΔΟΟ': '8',
-    'ΕΝΑΤΟ': '9',
-    'ΔΕΚΑΤΟ': '10',
+    "ΠΡΩΤΟ": "1",
+    "ΔΕΥΤΕΡΟ": "2",
+    "ΤΡΙΤΟ": "3",
+    "ΤΕΤΑΡΤΟ": "4",
+    "ΠΕΜΠΤΟ": "5",
+    "ΕΚΤΟ": "6",
+    "ΕΒΔΟΜΟ": "7",
+    "ΟΓΔΟΟ": "8",
+    "ΕΝΑΤΟ": "9",
+    "ΔΕΚΑΤΟ": "10",
 }
 PART_RE = re.compile(
-    r'^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>(?:%s)\b|[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$'
-    % '|'.join(PART_ORDINALS)
+    r"^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>(?:%s)\b|[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$"
+    % "|".join(PART_ORDINALS)
 )
 
 
 def part_number(match):
-    num = match.group('num')
+    num = match.group("num")
     return PART_ORDINALS.get(num, num)
 
 
-# «ΠΑΡΑΡΤΗΜΑ V - ΔΙΑΔΙΚΑΣΙΕΣ …» слева над «ΠΑΡΑΡΤΗΜΑ V» по центру (205(Ι)/2012) — оглавление
+# «ΠΑΡΑΡΤΗΜΑ V - ΔΙΑΔΙΚΑΣΙΕΣ …» слева над «ΠΑΡΑΡΤΗΜΑ V» по центру (205(Ι)/2012)
+# — оглавление
 # страницы CyLaw, не текст закона
-ANNEX_ANCHOR_RE = re.compile(r'^ΠΑΡΑΡΤΗΜΑ [IVXΙΧ]+ - ')
+ANNEX_ANCHOR_RE = re.compile(r"^ΠΑΡΑΡΤΗΜΑ [IVXΙΧ]+ - ")
 # «ΤΜΗΜΑ IV», «Τμήμα Χ» — римский номер (приложения 205(Ι)/2012)
 SECTION_RE = re.compile(
-    r'^(Τμήμα|ΤΜΗΜΑ)\s+(?P<num>\d+|[IVXΙΧ]+\b)\s*(?P<rest>.*)$'
+    r"^(Τμήμα|ΤΜΗΜΑ)\s+(?P<num>\d+|[IVXΙΧ]+\b)\s*(?P<rest>.*)$"
 )
-TABLE_RE = re.compile(r'^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$')
-REPEALED_RE = re.compile(r'^\[\s*Διαγράφηκε\s*\]\.?$')
-# «(9A). 1.- …» — номер статьи в скобках, εδάφιο через точку (118(Ι)/2002, ст. 9Α)
+TABLE_RE = re.compile(r"^Πίνακας\s+(?P<num>[Α-Ω])΄?\s*:\s*(?P<rest>.*)$")
+REPEALED_RE = re.compile(r"^\[\s*Διαγράφηκε\s*\]\.?$")
+# «(9A). 1.- …» — номер статьи в скобках, εδάφιο через точку (118(Ι)/2002, ст.
+# 9Α)
 BRACKETED_TOP_RE = re.compile(
-    r'^\((?P<num>\d+[Α-ΩA-Z]{1,3})\)\.\s*(?P<sub>\d+)\.\s*[-—–―]+\s*(?P<rest>.*)$'
+    r"^\((?P<num>\d+[Α-ΩA-Z]{1,3})\)\.\s*(?P<sub>\d+)\.\s*[-—–―]+\s*(?P<rest>.*)$"
 )
-# «9Β(1) Ανεξαρτήτως …» — без точки после номера (118(Ι)/2002); только с буквой в номере,
-# иначе спутается со ссылкой «4(1) του Ν. …»; «152Α(1)(α) Οι …» — пункт сразу
-# за εδάφιο, без пробела (Κεφ. 113)
+# «9Β(1) Ανεξαρτήτως …» — без точки после номера (118(Ι)/2002); только с буквой
+# в номере, иначе спутается со ссылкой «4(1) του Ν. …»; «152Α(1)(α) Οι …» —
+# пункт сразу за εδάφιο, без пробела (Κεφ. 113)
 UNDOTTED_TOP_RE = re.compile(
-    r'^(?P<num>\d+[Α-ΩA-Z]{1,4})\((?P<sub>\d+)\)(?:\s+|(?=\())(?P<rest>.*)$'
+    r"^(?P<num>\d+[Α-ΩA-Z]{1,4})\((?P<sub>\d+)\)"
+    r"(?:\s+|(?=\())(?P<rest>.*)$"
 )
-LATIN_TO_GREEK = str.maketrans('ABEZHIKMNOPTYX', 'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ')
+LATIN_TO_GREEK = str.maketrans("ABEZHIKMNOPTYX", "ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ")
 
-# акты, собранные до 118(Ι)/2002: правила, добавленные для него («39Α.-(1)» после
-# переноса страницы, «ΜΕΡΟΣ» левее середины, «(ν)» после «(iv)»), меняют их фрагменты,
+# акты, собранные до 118(Ι)/2002: правила, добавленные для него («39Α.-(1)»
+# после
+# переноса страницы, «ΜΕΡΟΣ» левее середины, «(ν)» после «(iv)»), меняют их
+# фрагменты,
 # к которым привязан перевод; для них не применяются
-BEFORE_118_ACTS = {'cy/law/2000/95_I', 'cy/law/2010/59_I'}
-# акты, собранные до правил оговорок для 117(Ι)/2002 и 118(Ι)/2002 (оговорка N — к пункту
-# оговорки N-1, «Νοείται … ότι,» открывает перечень): правила меняют их фрагменты с переводом
-PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {'cy/law/1978/4', 'cy/law/2001/89_I'}
+BEFORE_118_ACTS = {"cy/law/2000/95_I", "cy/law/2010/59_I"}
+# акты, собранные до правил оговорок для 117(Ι)/2002 и 118(Ι)/2002 (оговорка N
+# — к пункту
+# оговорки N-1, «Νοείται … ότι,» открывает перечень): правила меняют их
+# фрагменты с переводом
+PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {
+    "cy/law/1978/4",
+    "cy/law/2001/89_I",
+}
 # акты, где таблицы приложений разбираются по столбцам (columns.py)
-COLUMN_TABLE_ACTS = {'cy/law/2010/59_I', 'cy/law/2002/118_I'}
-# из них — таблицы ставок 118(Ι) Παράρτημα 2: шапка через пустую строку, ряд — строка
-STACKED_TABLE_ACTS = {'cy/law/2002/118_I'}
-# акты, где таблица ставок Πρώτο Παράρτημα собирается по координатам слов (rate_table.py)
-RATE_TABLE_ACTS = {'cy/law/1963/19'}
+COLUMN_TABLE_ACTS = {"cy/law/2010/59_I", "cy/law/2002/118_I"}
+# из них — таблицы ставок 118(Ι) Παράρτημα 2: шапка через пустую строку, ряд —
+# строка
+STACKED_TABLE_ACTS = {"cy/law/2002/118_I"}
+# акты, где таблица ставок Πρώτο Παράρτημα собирается по координатам слов
+# (rate_table.py)
+RATE_TABLE_ACTS = {"cy/law/1963/19"}
 
 HEADING_MAX = 110
 # длинный заголовок группы по центру начинается левее отступа 25
 GROUP_LONG = 60
 # «και», «… είτε» в конце строки — продолжение перечня, не заголовок
-LIST_WORD_RE = re.compile(r'(^|\s)(και|ή|είτε)$')
+LIST_WORD_RE = re.compile(r"(^|\s)(και|ή|είτε)$")
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
-COLUMN_SEPARATOR = ' — '
-HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
-EXCEPTION_START = 'Εξαιρούνται'
+COLUMN_SEPARATOR = " — "
+HISTORY_HEADING = "Ιστορικό Τροποποιήσεων"
+EXCEPTION_START = "Εξαιρούνται"
 # колонка заголовков на полях
 MARGIN = 8
 
@@ -157,7 +189,7 @@ def roman_schedule(block):
     match = ROMAN_SCHEDULE_RE.match(block.text)
     if match is None or block.indent < 25:
         return None
-    num = match.group('num') or match.group('annex')
+    num = match.group("num") or match.group("annex")
     if num is None:
         return 1
     return numbering.roman_value(latin_roman(num))
@@ -165,15 +197,15 @@ def roman_schedule(block):
 
 def latin_roman(num):
     """Римский номер латиницей: в сводках встречаются греческие «Ι» и «Χ»."""
-    return num.replace('Ι', 'I').replace('Χ', 'X')
+    return num.replace("Ι", "I").replace("Χ", "X")
 
 
 def schedules_start(lines):
     """Номер строки, с которой начинаются приложения, или None."""
     for index, line in enumerate(lines):
         text = line.strip()
-        indent = len(line) - len(line.lstrip(' '))
-        if text == 'ΠΑΡΑΡΤΗΜΑΤΑ' or SCHEDULE_RE.match(text):
+        indent = len(line) - len(line.lstrip(" "))
+        if text == "ΠΑΡΑΡΤΗΜΑΤΑ" or SCHEDULE_RE.match(text):
             return index
         if ROMAN_SCHEDULE_RE.match(text) and indent >= 25:
             return index
@@ -183,7 +215,7 @@ def schedules_start(lines):
 def ends_table(text):
     """Заголовок части или приложения: таблица в столбцах до него."""
     return bool(
-        text == 'ΠΑΡΑΡΤΗΜΑΤΑ'
+        text == "ΠΑΡΑΡΤΗΜΑΤΑ"
         or PART_RE.match(text)
         or SCHEDULE_RE.match(text)
         or ROMAN_SCHEDULE_RE.match(text)
@@ -196,28 +228,33 @@ def is_page_furniture(line):
 
 
 def normalize_top(block):
-    """«(9A). 1.- Δαπάνες …», «9Β(1) …» → «9Α.-(1) …»: обычный вид начала статьи."""
-    match = BRACKETED_TOP_RE.match(block.text) or UNDOTTED_TOP_RE.match(block.text)
+    """«(9A). 1.- Δαπάνες …», «9Β(1) …» → «9Α.-(1) …»: обычный вид начала
+    статьи."""
+    match = BRACKETED_TOP_RE.match(block.text) or UNDOTTED_TOP_RE.match(
+        block.text
+    )
     if match is None:
         return block
-    num = match.group('num').translate(LATIN_TO_GREEK)
-    text = '%s.-(%s) %s' % (num, match.group('sub'), match.group('rest'))
+    num = match.group("num").translate(LATIN_TO_GREEK)
+    text = "%s.-(%s) %s" % (num, match.group("sub"), match.group("rest"))
     return layout.Block(block.line, block.indent, text)
 
 
 def is_history(text):
-    """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»; у отменённой
+    """Список изменяющих законов на полях статьи: «95(I)/2000 … 10(I)/2024»; у
+    отменённой
     статьи — с подписью: «Ιστορικό Τροποποιήσεων 97(I)/2017 44(I)/2018»."""
-    cleaned = CORRIGENDUM_RE.sub('', text).replace('Παρ. Ι(Ι), Ε.Ε.', '')
-    cleaned = CORRIGENDUM_FULL_RE.sub('', cleaned)
-    if cleaned.startswith(HISTORY_HEADING + ' '):
-        cleaned = cleaned[len(HISTORY_HEADING):]
+    cleaned = CORRIGENDUM_RE.sub("", text).replace("Παρ. Ι(Ι), Ε.Ε.", "")
+    cleaned = CORRIGENDUM_FULL_RE.sub("", cleaned)
+    if cleaned.startswith(HISTORY_HEADING + " "):
+        cleaned = cleaned[len(HISTORY_HEADING) :]
     tokens = cleaned.split()
     return bool(tokens) and all(LAW_NUMBER_RE.match(token) for token in tokens)
 
 
 def split_history(block):
-    """«95(I)/2000 … 223(I)/2025 Έννοια του όρου επιχείρηση»: заголовок на полях следующей
+    """«95(I)/2000 … 223(I)/2025 Έννοια του όρου επιχείρηση»: заголовок на
+    полях следующей
     статьи, склеенный со списком изменяющих законов, — отдельный блок."""
     tokens = block.text.split()
     count = 0
@@ -226,42 +263,49 @@ def split_history(block):
     if count < 2 or count == len(tokens):
         return [block]
     return [
-        layout.Block(block.line, block.indent, ' '.join(tokens[:count])),
-        layout.Block(block.line, block.indent, ' '.join(tokens[count:])),
+        layout.Block(block.line, block.indent, " ".join(tokens[:count])),
+        layout.Block(block.line, block.indent, " ".join(tokens[count:])),
     ]
 
 
 def is_group_heading(text):
-    """Заголовок группы статей по центру: короткий, без конечной пунктуации; «ΚΕΦΑΛΑΙΟ Β …»
+    """Заголовок группы статей по центру: короткий, без конечной пунктуации;
+    «ΚΕΦΑΛΑΙΟ Β …»
     с названием заглавными бывает и длиннее (91(Ι)/2004)."""
-    long = len(text) > HEADING_MAX and not (text.startswith('ΚΕΦΑΛΑΙΟ ') and text.isupper())
-    if long or text[-1] in '.:;·∙˙,—-':
+    long = len(text) > HEADING_MAX and not (
+        text.startswith("ΚΕΦΑΛΑΙΟ ") and text.isupper()
+    )
+    if long or text[-1] in ".:;·∙˙,—-":
         return False
     return not TOP_RE.match(text) and not match_item(text)[0]
 
 
 def opens_list(node, provisos=False):
-    """Абзац, за которым следует его собственный список: кончается двоеточием или тире."""
-    text = layout.NOTE_RE.sub('', node.text()).rstrip(' .')
+    """Абзац, за которым следует его собственный список: кончается двоеточием
+    или тире."""
+    text = layout.NOTE_RE.sub("", node.text()).rstrip(" .")
     # «…τα ακόλουθα προϊόντα [Σ.Σ.: …].» — перечень без двоеточия
-    if text.endswith((':', '—', '–', '-')) or 'ακόλουθα' in text[-40:]:
+    if text.endswith((":", "—", "–", "-")) or "ακόλουθα" in text[-40:]:
         return True
-    # «Νοείται περαιτέρω ότι,» (117(Ι)/2002, ст. 3(1)(δ)) — за оговоркой её пункты (i), (ii)
-    return provisos and text.startswith('Νοείται') and text.endswith('ότι,')
+    # «Νοείται περαιτέρω ότι,» (117(Ι)/2002, ст. 3(1)(δ)) — за оговоркой её
+    # пункты (i), (ii)
+    return provisos and text.startswith("Νοείται") and text.endswith("ότι,")
 
 
 # «Νοείται ότι» — первая оговорка, «Νοείται περαιτέρω ότι» — вторая,
 # «Νοείται έτι περαιτέρω ότι» — третья, каждое «έτι» — ещё одна
-PROVISO_RE = re.compile(r'^Νοείται\s+(?P<eti>(?:έτι\s+)*)(?P<further>περαιτέρω\s+)?ότι')
+PROVISO_RE = re.compile(
+    r"^Νοείται\s+(?P<eti>(?:έτι\s+)*)(?P<further>περαιτέρω\s+)?ότι"
+)
 
 
 def proviso_ordinal(text):
     match = PROVISO_RE.match(text)
     if match is None:
         return None
-    if not match.group('further'):
-        return 1 if not match.group('eti') else None
-    return 2 + len(match.group('eti').split())
+    if not match.group("further"):
+        return 1 if not match.group("eti") else None
+    return 2 + len(match.group("eti").split())
 
 
 def match_item(text):
@@ -273,13 +317,14 @@ def match_item(text):
 
 
 def number_value(num):
-    """Порядковое значение номера пункта или None: «7Α» → 7, «ιβ» → 12, «iii» → 3."""
+    """Порядковое значение номера пункта или None: «7Α» → 7, «ιβ» → 12, «iii» →
+    3."""
     style = numbering.classify(num)
-    if style == 'arabic':
+    if style == "arabic":
         return int(numbering.ARABIC_RE.match(num).group(1))
-    if style == 'roman':
+    if style == "roman":
         return numbering.roman_value(num)
-    if style == 'greek':
+    if style == "greek":
         return numbering.greek_value(num)
     return None
 
@@ -291,54 +336,69 @@ def follows(previous, num):
         return False
     if is_doubled(num):
         # «(ββ)» после «(αα)»: по одной букве
-        return follows_value(number_value(previous.num_plain()[0]), number_value(num[0]))
-    return follows_value(number_value(previous.num_plain()), number_value(num), previous, num)
+        return follows_value(
+            number_value(previous.num_plain()[0]), number_value(num[0])
+        )
+    return follows_value(
+        number_value(previous.num_plain()), number_value(num), previous, num
+    )
 
 
-def follows_value(before, after, previous=None, num=''):
+def follows_value(before, after, previous=None, num=""):
     if before is None or after is None:
         return True
     if after == before:
         # «7Α» после «7» или «7Α»
-        return previous is not None and num != previous.num_plain() and not num.isdigit()
+        return (
+            previous is not None
+            and num != previous.num_plain()
+            and not num.isdigit()
+        )
     return after == before + 1
 
 
 def is_doubled(num):
     """«αα», «ββ»: удвоенная греческая буква — свой уровень нумерации."""
-    return len(num) == 2 and num[0] == num[1] and 'α' <= num[0] <= 'ω'
+    return len(num) == 2 and num[0] == num[1] and "α" <= num[0] <= "ω"
 
 
-ABBREVIATION_RE = re.compile(r'(?<![\wά-ώ])κ\.τ\.λ\.')
+ABBREVIATION_RE = re.compile(r"(?<![\wά-ώ])κ\.τ\.λ\.")
 
 
 def looks_like_heading(block, following):
-    """Короткая строка на полях (левее текста) перед статьёй или пунктом приложения.
+    """Короткая строка на полях (левее текста) перед статьёй или пунктом
+    приложения.
 
-    Точка в конце допустима: заголовки кончаются сокращениями («κ.τ.λ.», «Φ.Π.Α.»)."""
+    Точка в конце допустима: заголовки кончаются сокращениями («κ.τ.λ.»,
+    «Φ.Π.Α.»)."""
     text = block.text
-    if text[-1] in ':;·∙˙,—-' or text.startswith('Νοείται'):
+    if text[-1] in ":;·∙˙,—-" or text.startswith("Νοείται"):
         return False
     if COLUMN_SEPARATOR in text:
         # строка таблицы в расшифровке скана (шапка столбцов) — не заголовок
         return False
-    if following is not None and block.indent <= MARGIN and following.indent > MARGIN:
+    if (
+        following is not None
+        and block.indent <= MARGIN
+        and following.indent > MARGIN
+    ):
         return bool(TOP_RE.match(following.text))
     if len(text) > HEADING_MAX:
         return False
-    # с точкой — только если она после сокращения: «… αθλητικές κ.τ.λ. εκδηλώσεις.»
+    # с точкой — только если она после сокращения: «… αθλητικές κ.τ.λ.
+    # εκδηλώσεις.»
     # (95(Ι), прил. 13, п. 4); обычная фраза перед пунктом — не заголовок
-    if text[-1] == '.' and not ABBREVIATION_RE.search(text[:-1]):
+    if text[-1] == "." and not ABBREVIATION_RE.search(text[:-1]):
         return False
     if match_item(text)[0] or TOP_RE.match(text):
         return False
     return following is not None and bool(TOP_RE.match(following.text))
 
 
-EDITOR_NOTE_RE = re.compile(r'^Σημείωση\s+\S+\s+(του|της)\s')
+EDITOR_NOTE_RE = re.compile(r"^Σημείωση\s+\S+\s+(του|της)\s")
 # «Σημείωση» / «1Έναρξις ισχύος …» — номер слит с заголовком (4/1978);
 # «Σημείωση 3» без закона — номер на своей строке (Κεφ. 219)
-LONE_NOTE_RE = re.compile(r'^Σημείωση(\s+\d+(\D|$)|$)')
+LONE_NOTE_RE = re.compile(r"^Σημείωση(\s+\d+(\D|$)|$)")
 
 
 def is_editor_note(block):
@@ -350,7 +410,8 @@ def is_editor_note(block):
 
 
 def join_broken_headings(blocks):
-    """Заголовок на полях, разорванный переносом страницы («… της» / «Δημοκρατίας Νόμου»),
+    """Заголовок на полях, разорванный переносом страницы («… της» /
+    «Δημοκρατίας Νόμου»),
     — один блок, если за второй частью идёт статья."""
     result = []
     for index, block in enumerate(blocks):
@@ -363,41 +424,58 @@ def join_broken_headings(blocks):
             and block.indent <= MARGIN
             and following.indent > MARGIN
             and TOP_RE.match(following.text)
-            and previous.text[-1] not in '.:;·∙˙,—-»'
+            and previous.text[-1] not in ".:;·∙˙,—-»"
             and not is_history(previous.text)
             and not TOP_RE.match(previous.text)
             and not match_item(previous.text)[0]
             and len(previous.text) + len(block.text) <= 3 * HEADING_MAX
         ):
-            result[-1] = layout.Block(previous.line, previous.indent,
-                                      previous.text + ' ' + block.text)
+            result[-1] = layout.Block(
+                previous.line,
+                previous.indent,
+                previous.text + " " + block.text,
+            )
             continue
         result.append(block)
     return result
 
 
 def split_blocks(blocks, splits):
-    """Правка из манифеста `<split before="…">`: блок делится перед словами `before`.
+    """Правка из манифеста `<split before="…">`: блок делится перед словами
+    `before`.
 
-    Вторая часть — заключительные слова списка, в PDF слитые с последним пунктом без
-    разрыва строки («… δεν ικανοποιείται,και η παρουσία …», 95(Ι), ст. 25(10)(β)); её
-    отступ — отступ ближайшего блока выше с меньшим отступом (того, что открыл список)."""
+    Вторая часть — заключительные слова списка, в PDF слитые с последним
+    пунктом без
+    разрыва строки («… δεν ικανοποιείται,και η παρουσία …», 95(Ι), ст.
+    25(10)(β)); её
+    отступ — отступ ближайшего блока выше с меньшим отступом (того, что открыл
+    список)."""
     result = list(blocks)
     for before in splits:
-        found = [index for index, block in enumerate(result) if before in block.text]
+        found = [
+            index for index, block in enumerate(result) if before in block.text
+        ]
         if len(found) != 1:
-            raise ValueError('split: «%s» найдено в %d блоках' % (before, len(found)))
+            raise ValueError(
+                "split: «%s» найдено в %d блоках" % (before, len(found))
+            )
         index = found[0]
         block = result[index]
         position = block.text.index(before)
         if position == 0:
-            raise ValueError('split: «%s» — начало блока' % before)
+            raise ValueError("split: «%s» — начало блока" % before)
         owner = next(
-            (earlier for earlier in reversed(result[:index]) if earlier.indent < block.indent),
+            (
+                earlier
+                for earlier in reversed(result[:index])
+                if earlier.indent < block.indent
+            ),
             block,
         )
-        result[index:index + 1] = [
-            layout.Block(block.line, block.indent, block.text[:position].rstrip()),
+        result[index : index + 1] = [
+            layout.Block(
+                block.line, block.indent, block.text[:position].rstrip()
+            ),
             layout.Block(block.line, owner.indent, block.text[position:]),
         ]
     return result
@@ -405,14 +483,15 @@ def split_blocks(blocks, splits):
 
 class Parser:
     def __init__(self, act_uid, splits=(), lone_schedule=False):
-        """`lone_schedule` — единственное приложение озаглавлено просто «ΠΑΡΑΡΤΗΜΑ» по центру
+        """`lone_schedule` — единственное приложение озаглавлено просто
+        «ΠΑΡΑΡΤΗΜΑ» по центру
         (сводки Τμήμα Τελωνείων)."""
         self.act_uid = act_uid
         self.splits = list(splits)
         self.lone_schedule = lone_schedule
         self.earlier = act_uid in BEFORE_118_ACTS
         self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
-        self.root = Node('act', token=act_uid)
+        self.root = Node("act", token=act_uid)
         self.stack = []
         self.container = self.root
         self.pending_heading = []
@@ -420,17 +499,24 @@ class Parser:
         self.schedule = None
         self.history = {}
         self.dropped = []
-        # примечания CyLaw после приложений: «Σημείωση N του Ν. …Έναρξη Ισχύος …»
+        # примечания CyLaw после приложений: «Σημείωση N του Ν. …Έναρξη Ισχύος
+        # …»
         self.notes = []
-        # таблицы в столбцах из приложений (columns.Table); в строках — их метки
+        # таблицы в столбцах из приложений (columns.Table); в строках — их
+        # метки
         self.tables = []
-        # первые строки абзацев таблицы ставок (rate_table): текст позиций, не заголовки;
+        # первые строки абзацев таблицы ставок (rate_table): текст позиций, не
+        # заголовки;
         # из них — строки ставок
         self.table_lines = set()
         self.rate_lines = set()
 
     def parse(self, lines):
-        start = schedules_start(lines) if self.act_uid in COLUMN_TABLE_ACTS else None
+        start = (
+            schedules_start(lines)
+            if self.act_uid in COLUMN_TABLE_ACTS
+            else None
+        )
         if start is not None:
             lines, self.tables = columns.extract(
                 lines,
@@ -445,13 +531,14 @@ class Parser:
             dashed=not self.earlier,
         )
         texts = [block.text for block in all_blocks]
-        if 'Προοίμιο' in texts:
-            start = texts.index('Προοίμιο') + 1
-            preamble = Node('cit', token='cit_1', heading='Προοίμιο')
+        if "Προοίμιο" in texts:
+            start = texts.index("Προοίμιο") + 1
+            preamble = Node("cit", token="cit_1", heading="Προοίμιο")
             self.root.add(preamble)
             self.stack = [preamble]
         else:
-            # без преамбулы (4/1978): текст — после списка изменяющих законов под заголовком
+            # без преамбулы (4/1978): текст — после списка изменяющих законов
+            # под заголовком
             self.stack = [self.root]
             start = texts.index(HISTORY_HEADING) + 1
             while start < len(texts) and is_history(texts[start]):
@@ -463,36 +550,45 @@ class Parser:
         ]
         all_blocks = join_broken_headings(all_blocks)
         all_blocks = split_blocks(all_blocks, self.splits)
-        # приложения — после «ΠΑΡΑΡΤΗΜΑΤΑ» или сразу с «ΠΙΝΑΚΑΣ Ι» без общего заголовка
+        # приложения — после «ΠΑΡΑΡΤΗΜΑΤΑ» или сразу с «ΠΙΝΑΚΑΣ Ι» без общего
+        # заголовка
         self.has_schedules = any(
-            block.text == 'ΠΑΡΑΡΤΗΜΑΤΑ' or roman_schedule(block) for block in all_blocks
+            block.text == "ΠΑΡΑΡΤΗΜΑΤΑ" or roman_schedule(block)
+            for block in all_blocks
         )
         for index, block in enumerate(all_blocks):
-            if (self.in_schedules or not self.has_schedules) and is_editor_note(block):
+            if (
+                self.in_schedules or not self.has_schedules
+            ) and is_editor_note(block):
                 self.collect_notes(all_blocks[index:])
                 break
             following = next(
-                (later for later in all_blocks[index + 1:] if not is_history(later.text)),
+                (
+                    later
+                    for later in all_blocks[index + 1 :]
+                    if not is_history(later.text)
+                ),
                 None,
             )
             self.feed(block, following)
         return self.root
 
     def collect_notes(self, blocks):
-        """«Σημείωση N του Ν. …» и текст — одно примечание до следующей «Σημείωση»."""
+        """«Σημείωση N του Ν. …» и текст — одно примечание до следующей
+        «Σημείωση»."""
         for block in blocks:
-            if block.text.startswith('Cylaw.org'):
+            if block.text.startswith("Cylaw.org"):
                 break
             # «Σημείωση» бывает отделена от номера переносом страницы
-            if is_editor_note(block) or block.text == 'Σημείωση':
+            if is_editor_note(block) or block.text == "Σημείωση":
                 self.notes.append([])
             self.notes[-1].append(block.text)
-        self.notes = [' '.join(parts) for parts in self.notes if parts]
+        self.notes = [" ".join(parts) for parts in self.notes if parts]
 
     def feed(self, block, following):
         text = block.text
         if text.startswith(columns.MARK):
-            self.open_table(self.tables[int(text[len(columns.MARK):]) - 1])
+            self.open_table(self.tables[int(text[len(columns.MARK) :]) - 1])
             return
         if block.line in self.rate_lines:
             self.attach_rate(block)
@@ -505,10 +601,14 @@ class Parser:
             if article is not None:
                 self.history[article.eid] = text.split()
             return
-        if text == 'ΠΑΡΑΡΤΗΜΑΤΑ':
+        if text == "ΠΑΡΑΡΤΗΜΑΤΑ":
             self.in_schedules = True
             return
-        if self.in_schedules and block.indent < 25 and ANNEX_ANCHOR_RE.match(text):
+        if (
+            self.in_schedules
+            and block.indent < 25
+            and ANNEX_ANCHOR_RE.match(text)
+        ):
             return
         if roman_schedule(block) or self.is_lone_schedule(block):
             self.in_schedules = True
@@ -526,13 +626,16 @@ class Parser:
         self.feed_text(block)
 
     def open_table(self, table):
-        """Таблица в столбцах — фрагмент `tbl` у текущего пункта, ячейки — его `cel`;
+        """Таблица в столбцах — фрагмент `tbl` у текущего пункта, ячейки — его
+        `cel`;
         пункты внутри ячейки («(α)», «(i)») — её дети, как в обычном тексте."""
         owner = self.stack[-1]
-        count = sum(1 for child in owner.children if child.kind == 'tbl') + 1
-        node = owner.add(Node('tbl', token='tbl_%d' % count, heading=table.caption))
+        count = sum(1 for child in owner.children if child.kind == "tbl") + 1
+        node = owner.add(
+            Node("tbl", token="tbl_%d" % count, heading=table.caption)
+        )
         for cell in table.cells:
-            child = node.add(Node('cel', token=cell.token))
+            child = node.add(Node("cel", token=cell.token))
             if cell.header:
                 child.paragraphs.append(cell.text)
                 continue
@@ -545,16 +648,18 @@ class Parser:
 
     def feed_schedule_heading(self, text, block):
         schedule = SCHEDULE_RE.match(text)
-        number = roman_schedule(block) or (1 if self.is_lone_schedule(block) else None)
-        if schedule and schedule.group('ord') in SCHEDULE_ORDINALS:
-            number = SCHEDULE_ORDINALS.index(schedule.group('ord')) + 1
+        number = roman_schedule(block) or (
+            1 if self.is_lone_schedule(block) else None
+        )
+        if schedule and schedule.group("ord") in SCHEDULE_ORDINALS:
+            number = SCHEDULE_ORDINALS.index(schedule.group("ord")) + 1
         if number:
             if self.schedule is not None and self.schedule.num == str(number):
                 return True
             self.schedule = Node(
-                'sch',
+                "sch",
                 num=str(number),
-                token='sch_%d' % number,
+                token="sch_%d" % number,
                 heading=text,
             )
             self.root.add(self.schedule)
@@ -566,39 +671,45 @@ class Parser:
             return False
         part = PART_RE.match(text)
         if part and block.indent >= 14:
-            node = Node('prt', num=part_number(part), heading=text)
+            node = Node("prt", num=part_number(part), heading=text)
             self.open_container(node, self.schedule)
             return True
         section = SECTION_RE.match(text)
         if section and block.indent >= 14:
-            parent = self.nearest('prt') or self.schedule
-            node = Node('sct', num=latin_roman(section.group('num')), heading=text)
+            parent = self.nearest("prt") or self.schedule
+            node = Node(
+                "sct", num=latin_roman(section.group("num")), heading=text
+            )
             self.open_container(node, parent)
             return True
         table = TABLE_RE.match(text)
         if table:
-            node = Node('tbl', num=table.group('num'), heading=text)
+            node = Node("tbl", num=table.group("num"), heading=text)
             self.open_container(node, self.schedule)
             return True
         if block.indent < 25 or TOP_RE.match(text) or match_item(text)[0]:
             # глубокий отступ бывает и у пунктов четвёртого уровня («(ια) …·»)
             return False
         if not self.container_has_items() and not self.is_item_heading(text):
-            self.container.heading = '%s %s' % (self.container.heading, text)
+            self.container.heading = "%s %s" % (self.container.heading, text)
             return True
-        if len(text) <= HEADING_MAX and text[-1] not in ':;·∙˙,—-':
+        if len(text) <= HEADING_MAX and text[-1] not in ":;·∙˙,—-":
             self.pending_heading.append(text)
             return True
         return False
 
     def is_item_heading(self, text):
-        """Строчная строка после заглавного названия контейнера — заголовок пункта
+        """Строчная строка после заглавного названия контейнера — заголовок
+        пункта
         («Τμήμα 1 / ΕΓΓΡΑΦΗ … / Υποχρέωση προς εγγραφή»)."""
-        title = ' '.join(self.container.heading.split()[2:])
+        title = " ".join(self.container.heading.split()[2:])
         return title.isupper() and not text.isupper()
 
     def container_has_items(self):
-        return any(child.kind not in ('prt', 'sct', 'tbl') for child in self.container.children)
+        return any(
+            child.kind not in ("prt", "sct", "tbl")
+            for child in self.container.children
+        )
 
     def open_container(self, node, parent):
         parent.add(node)
@@ -607,10 +718,13 @@ class Parser:
         self.pending_heading = []
 
     def is_lone_schedule(self, block):
-        """«ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» по центру без общего «ΠΑΡΑΡΤΗΜΑΤΑ» (сводки
+        """«ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» по центру без общего «ΠΑΡΑΡΤΗΜΑΤΑ»
+        (сводки
         Τμήμα Τελωνείων)."""
         schedule = SCHEDULE_RE.match(block.text)
-        ordinal = schedule is not None and schedule.group('ord') in SCHEDULE_ORDINALS
+        ordinal = (
+            schedule is not None and schedule.group("ord") in SCHEDULE_ORDINALS
+        )
         return (
             self.lone_schedule
             and (block.text == LONE_SCHEDULE or ordinal)
@@ -618,7 +732,8 @@ class Parser:
         )
 
     def is_part(self, block):
-        """«ΜΕΡΟΣ IX …» по центру; длинное заглавное название, перенесённое на несколько
+        """«ΜΕΡΟΣ IX …» по центру; длинное заглавное название, перенесённое на
+        несколько
         строк, начинается левее (118(Ι)/2002)."""
         if not PART_RE.match(block.text):
             return False
@@ -628,7 +743,7 @@ class Parser:
 
     def open_part(self, text):
         part = PART_RE.match(text)
-        node = Node('prt', num=part_number(part), heading=text)
+        node = Node("prt", num=part_number(part), heading=text)
         self.root.add(node)
         self.container = node
         self.stack = [node]
@@ -641,7 +756,7 @@ class Parser:
         text = block.text
         # оговорка «Νοείται ότι, … (ii) και», перенесённая на новую строку,
         # — не заголовок (Κεφ. 113, ст. 201Β)
-        if text.startswith('Νοείται') or LIST_END_RE.search(text):
+        if text.startswith("Νοείται") or LIST_END_RE.search(text):
             return False
         # отдельное «και», «(ίι) … είτε» и вставка в кавычках «"(3Α) …"» на
         # глубоком отступе — части пункта (Κεφ. 113, ст. 202ΚΖ, 350, 394)
@@ -657,9 +772,9 @@ class Parser:
         )
 
     def open_group(self, text):
-        part = self.nearest_in_root('prt')
+        part = self.nearest_in_root("prt")
         parent = part or self.root
-        node = Node('sct', unnumbered=True, heading=text)
+        node = Node("sct", unnumbered=True, heading=text)
         parent.add(node)
         self.container = node
         self.stack = [node]
@@ -680,7 +795,7 @@ class Parser:
 
     def current_top(self):
         for node in reversed(self.stack):
-            if node.kind == 'art':
+            if node.kind == "art":
                 return node
         return None
 
@@ -691,77 +806,89 @@ class Parser:
         text = block.text
         top = TOP_RE.match(text)
         if top and block.indent <= 14:
-            num = top.group('num').replace(' ', '')
-            node = self.open_item('top', num, block)
-            rest = top.group('rest')
-            if top.group('sub'):
-                node = self.open_item('arabic', '(%s)' % top.group('sub'), block)
+            num = top.group("num").replace(" ", "")
+            node = self.open_item("top", num, block)
+            rest = top.group("rest")
+            if top.group("sub"):
+                node = self.open_item(
+                    "arabic", "(%s)" % top.group("sub"), block
+                )
                 # «42.—(1)(α)»: и пункт в той же строке
                 inner_name, inner = match_item(rest)
-                if inner_name and LEVELS[inner_name] > LEVELS['arabic']:
-                    node = self.open_item(inner_name, '(%s)' % inner.group('num'), block)
-                    rest = inner.group('rest')
+                if inner_name and LEVELS[inner_name] > LEVELS["arabic"]:
+                    node = self.open_item(
+                        inner_name, "(%s)" % inner.group("num"), block
+                    )
+                    rest = inner.group("rest")
             self.set_text(node, rest)
             return
-        if text.startswith('[Σ.Σ.') and len(self.stack) > 1:
-            # отдельный абзац примечания источника относится к последнему пункту
+        if text.startswith("[Σ.Σ.") and len(self.stack) > 1:
+            # отдельный абзац примечания источника относится к последнему
+            # пункту
             self.stack[-1].paragraphs.append(text)
             return
         name, match = match_item(text)
-        if name == 'arabic' and self.continues_schedule_numbering(match.group('num')):
-            # «(25)» вместо «25.» в Έκτο Παράρτημα: продолжение нумерации пунктов
-            node = self.open_item('top', match.group('num'), block)
-            rest = match.group('rest')
+        if name == "arabic" and self.continues_schedule_numbering(
+            match.group("num")
+        ):
+            # «(25)» вместо «25.» в Έκτο Παράρτημα: продолжение нумерации
+            # пунктов
+            node = self.open_item("top", match.group("num"), block)
+            rest = match.group("rest")
             name, match = match_item(rest)
             if name:
-                node = self.open_item(name, '(%s)' % match.group('num'), block)
-                rest = match.group('rest')
+                node = self.open_item(name, "(%s)" % match.group("num"), block)
+                rest = match.group("rest")
             self.set_text(node, rest)
             return
-        if name and self.is_continuation(name, match.group('num')):
-            self.stack[-1].paragraphs[-1] += ' ' + text
+        if name and self.is_continuation(name, match.group("num")):
+            self.stack[-1].paragraphs[-1] += " " + text
             return
         if name:
-            num = match.group('num')
-            if name == 'greek' and self.is_roman_in_greek(num):
-                name = 'roman'
-                num = num.replace('ι', 'i')
-            if name == 'greek' and self.is_roman_five(num):
-                name = 'roman'
-            if name == 'roman':
+            num = match.group("num")
+            if name == "greek" and self.is_roman_in_greek(num):
+                name = "roman"
+                num = num.replace("ι", "i")
+            if name == "greek" and self.is_roman_five(num):
+                name = "roman"
+            if name == "roman":
                 # «(νii)»: греческая ню вместо латинской «v»
-                num = num.replace('ν', 'v')
-            node = self.open_item(name, '(%s)' % num, block)
-            rest = match.group('rest')
+                num = num.replace("ν", "v")
+            node = self.open_item(name, "(%s)" % num, block)
+            rest = match.group("rest")
             # «10.(α)» и «(1)(α)»: сразу следующий уровень в той же строке
             inner_name, inner = match_item(rest)
             if inner_name and LEVELS[inner_name] > LEVELS[name]:
-                node = self.open_item(inner_name, '(%s)' % inner.group('num'), block)
-                rest = inner.group('rest')
+                node = self.open_item(
+                    inner_name, "(%s)" % inner.group("num"), block
+                )
+                rest = inner.group("rest")
             self.set_text(node, rest)
             return
         self.add_unnumbered(block)
 
     def is_roman_in_greek(self, num):
-        """«(ι)», «(ιι)» греческой йотой вместо латинской «i», если перед ним не было «(θ)»."""
-        if set(num) - set('ιvx'):
+        """«(ι)», «(ιι)» греческой йотой вместо латинской «i», если перед ним
+        не было «(θ)»."""
+        if set(num) - set("ιvx"):
             return False
         siblings = [node.num_plain() for node in self.stack[-1].children]
-        if len(self.stack) > 1 and self.stack[-1].level >= LEVELS['greek']:
+        if len(self.stack) > 1 and self.stack[-1].level >= LEVELS["greek"]:
             siblings = [node.num_plain() for node in self.stack[-2].children]
-        return 'θ' not in siblings
+        return "θ" not in siblings
 
     def is_roman_five(self, num):
-        """«(ν)» греческой ню после «(iv)» — римская «(v)» (118(Ι)/2002, ст. 2)."""
-        if self.earlier or num != 'ν':
+        """«(ν)» греческой ню после «(iv)» — римская «(v)» (118(Ι)/2002, ст.
+        2)."""
+        if self.earlier or num != "ν":
             return False
-        previous = self.same_style_node('roman')
-        return previous is not None and previous.num_plain() == 'iv'
+        previous = self.same_style_node("roman")
+        return previous is not None and previous.num_plain() == "iv"
 
     def continues_schedule_numbering(self, num):
         if not self.in_schedules or not num.isdigit():
             return False
-        tops = [node for node in self.container.children if node.kind == 'par']
+        tops = [node for node in self.container.children if node.kind == "par"]
         if not tops or tops[-1].num_plain() != str(int(num) - 1):
             return False
         previous = str(int(num) - 1)
@@ -771,10 +898,15 @@ class Parser:
         )
 
     def drop_shown_deletion(self, parent, node):
-        """Удалённый пункт, оставленный в сводном тексте с примечанием «Σ.Σ.: … διαγραφή»,
-        уступает номер новому пункту с тем же номером; его текст берётся из изменяющего акта."""
+        """Удалённый пункт, оставленный в сводном тексте с примечанием «Σ.Σ.: …
+        διαγραφή»,
+        уступает номер новому пункту с тем же номером; его текст берётся из
+        изменяющего акта."""
         for sibling in list(parent.children):
-            if sibling.num_plain() == node.num_plain() and sibling.text().startswith('Σ.Σ.'):
+            if (
+                sibling.num_plain() == node.num_plain()
+                and sibling.text().startswith("Σ.Σ.")
+            ):
                 parent.children.remove(sibling)
                 self.dropped.append(sibling)
 
@@ -786,30 +918,38 @@ class Parser:
         return None
 
     def item_level(self, name, num):
-        """Уровень пункта. Обычно — по виду номера; но «(ια)…(ιδ)» под «(iii) … σημαίνει -»
-        не продолжают «(α)…(δ)», а открывают свой, четвёртый уровень; так же и пункт
+        """Уровень пункта. Обычно — по виду номера; но «(ια)…(ιδ)» под «(iii) …
+        σημαίνει -»
+        не продолжают «(α)…(δ)», а открывают свой, четвёртый уровень; так же и
+        пункт
         под пунктом более глубокого вида, если тот открывает список."""
         level = LEVELS[name]
-        if name == 'top':
+        if name == "top":
             return level
         plain = numbering.normalize_number(num)
         previous = self.same_style_node(name)
         if previous is not None and follows(previous, plain):
             return previous.level
-        # «(iv) … να είναι:» + «(1) …»: новый список под пунктом, оканчивающимся «:»
+        # «(iv) … να είναι:» + «(1) …»: новый список под пунктом,
+        # оканчивающимся «:»
         last = self.stack[-1]
-        if len(self.stack) > 1 and last.level >= level and self.opens_list(last):
+        if (
+            len(self.stack) > 1
+            and last.level >= level
+            and self.opens_list(last)
+        ):
             return last.level + 1
         return level
 
     def is_continuation(self, name, num):
-        """«… στα εδάφια (1) και» + «(2) …»: ссылка, перенесённая на новую строку.
+        """«… στα εδάφια (1) και» + «(2) …»: ссылка, перенесённая на новую
+        строку.
 
         Номер не продолжает нумерацию, а предыдущий абзац оборван на слове."""
-        if name != 'arabic' or len(self.stack) < 2:
+        if name != "arabic" or len(self.stack) < 2:
             return False
         last = self.stack[-1]
-        if not last.paragraphs or last.paragraphs[-1][-1] in '.;:˙·∙]—–-':
+        if not last.paragraphs or last.paragraphs[-1][-1] in ".;:˙·∙]—–-":
             return False
         previous = self.same_style_node(name)
         return previous is not None and not follows(previous, num)
@@ -829,12 +969,14 @@ class Parser:
                 and self.opens_list(self.stack[-1])
                 and level > self.stack[-1].parent.level
             ):
-                # «Νοείται περαιτέρω ότι …:» и пункты под ним: список внутри абзаца;
-                # пункт уровня владельца абзаца или выше в этот список не входит
+                # «Νοείται περαιτέρω ότι …:» и пункты под ним: список внутри
+                # абзаца;
+                # пункт уровня владельца абзаца или выше в этот список не
+                # входит
                 break
             self.stack.pop()
         parent = self.stack[-1]
-        if name == 'top':
+        if name == "top":
             parent = self.container
             self.stack = [self.container]
         node = Node(
@@ -843,7 +985,7 @@ class Parser:
             indent=block.indent,
             level=level,
             style=name,
-            heading=' '.join(self.pending_heading) if name == 'top' else '',
+            heading=" ".join(self.pending_heading) if name == "top" else "",
         )
         self.pending_heading = []
         self.drop_shown_deletion(parent, node)
@@ -867,12 +1009,21 @@ class Parser:
 
     def attach_paragraph(self, text, indent):
         if self.starts_definition(text):
-            # «κηδεμόνας» после «κάτοικος … (β) …»: термины и пункты определения стоят
-            # с одним отступом; новое определение — снова у владельца определений
-            while len(self.stack) > 1 and not self.owns_definitions(self.stack[-1]):
+            # «κηδεμόνας» после «κάτοικος … (β) …»: термины и пункты
+            # определения стоят
+            # с одним отступом; новое определение — снова у владельца
+            # определений
+            while len(self.stack) > 1 and not self.owns_definitions(
+                self.stack[-1]
+            ):
                 self.stack.pop()
-        if self.in_schedules and text.startswith(EXCEPTION_START) and len(self.stack) > 1:
-            # каждая оговорка «Εξαιρούνται…» вводилась и истекала отдельно — свой фрагмент
+        if (
+            self.in_schedules
+            and text.startswith(EXCEPTION_START)
+            and len(self.stack) > 1
+        ):
+            # каждая оговорка «Εξαιρούνται…» вводилась и истекала отдельно —
+            # свой фрагмент
             del self.stack[2:]
             self.open_unnumbered(self.stack[1], text, indent)
             return
@@ -882,9 +1033,10 @@ class Parser:
             len(self.stack) > 1
             and self.stack[-1].unnumbered
             and not (
-                # перечень без номеров внутри оговорки приложения («Εξαιρούνται … τα ακόλουθα»)
+                # перечень без номеров внутри оговорки приложения («Εξαιρούνται
+                # … τα ακόλουθα»)
                 self.in_schedules
-                and not text.startswith('Νοείται')
+                and not text.startswith("Νοείται")
                 and not self.stack[-1].parent.unnumbered
                 and self.opens_list(self.stack[-1])
                 and all(child.unnumbered for child in self.stack[-1].children)
@@ -892,7 +1044,8 @@ class Parser:
         ):
             self.stack.pop()
         if self.closes_list(text):
-            # «Στην υπεύθυνη δήλωση επισυνάπτονται:» (i)…(vii) «… Νόμο.» + абзац:
+            # «Στην υπεύθυνη δήλωση επισυνάπτονται:» (i)…(vii) «… Νόμο.» +
+            # абзац:
             # перечень закончен, абзац — следующий у владельца вводного абзаца
             del self.stack[-2:]
         self.attach_proviso(text)
@@ -901,12 +1054,15 @@ class Parser:
             # вводный абзац — текст самого пункта
             owner.paragraphs.append(text)
             return
-        # каждый следующий абзац без номера — свой фрагмент (ответ координатора на вопрос 1)
+        # каждый следующий абзац без номера — свой фрагмент (ответ координатора
+        # на вопрос 1)
         self.open_unnumbered(owner, text, indent)
 
     def attach_rate(self, block):
-        """Ставка таблицы (rate_table) — свой абзац без номера у пункта своей строки таблицы
-        (после строки без номера — следующий за ней); перечень она не закрывает."""
+        """Ставка таблицы (rate_table) — свой абзац без номера у пункта своей
+        строки таблицы
+        (после строки без номера — следующий за ней); перечень она не
+        закрывает."""
         while len(self.stack) > 1 and (
             self.stack[-1].indent > block.indent or self.stack[-1].unnumbered
         ):
@@ -917,34 +1073,48 @@ class Parser:
         return opens_list(node, self.provisos)
 
     def attach_proviso(self, text):
-        """Оговорка N — к тому же пункту, что оговорка N-1, хотя бы и с бо́льшим отступом,
-        чем пункты предыдущей оговорки (118(Ι)/2002, ст. 10(2)(ια)(δ): «έτι» ×6 после (δ))."""
+        """Оговорка N — к тому же пункту, что оговорка N-1, хотя бы и с
+        бо́льшим отступом,
+        чем пункты предыдущей оговорки (118(Ι)/2002, ст. 10(2)(ια)(δ): «έτι» ×6
+        после (δ))."""
         ordinal = proviso_ordinal(text)
         if not self.provisos or ordinal is None or ordinal < 2:
             return
         for index in range(len(self.stack) - 1, 0, -1):
-            unnumbered = [child for child in self.stack[index].children if child.unnumbered]
-            if unnumbered and proviso_ordinal(unnumbered[-1].text()) == ordinal - 1:
-                del self.stack[index + 1:]
+            unnumbered = [
+                child
+                for child in self.stack[index].children
+                if child.unnumbered
+            ]
+            if (
+                unnumbered
+                and proviso_ordinal(unnumbered[-1].text()) == ordinal - 1
+            ):
+                del self.stack[index + 1 :]
                 return
 
     def starts_definition(self, text):
         article = self.current_top()
         if self.earlier or self.in_schedules or article is None:
             return False
-        if article.num_plain() != '2':
+        if article.num_plain() != "2":
             return False
         return bool(match_term(text)) and article is not self.stack[-1]
 
     def owns_definitions(self, node):
         """Ст. 2 или её εδάφιο (1): определения — их абзацы."""
-        if node.kind == 'art':
+        if node.kind == "art":
             return True
-        return node.kind == 'par' and node.parent.kind == 'art' and node.num_plain() == '1'
+        return (
+            node.kind == "par"
+            and node.parent.kind == "art"
+            and node.num_plain() == "1"
+        )
 
     def closes_list(self, text):
-        """Абзац после последнего пункта перечня, введённого абзацем без номера."""
-        if len(self.stack) < 4 or text.startswith('Νοείται'):
+        """Абзац после последнего пункта перечня, введённого абзацем без
+        номера."""
+        if len(self.stack) < 4 or text.startswith("Νοείται"):
             return False
         last = self.stack[-1]
         opener = self.stack[-2]
@@ -952,14 +1122,14 @@ class Parser:
             not last.unnumbered
             and not last.children
             and bool(last.paragraphs)
-            and last.paragraphs[-1].endswith('.')
+            and last.paragraphs[-1].endswith(".")
             and opener.unnumbered
             and self.opens_list(opener)
         )
 
     def open_unnumbered(self, owner, text, indent):
         node = Node(
-            'sub',
+            "sub",
             unnumbered=True,
             indent=indent,
             level=owner.level + 0.5,
@@ -978,13 +1148,16 @@ def match_term(text):
     return TERM_RE.match(text) or UNCLOSED_TERM_RE.match(text)
 
 
-LIST_END_RE = re.compile(r'(\sκαι|\sή)$')
+LIST_END_RE = re.compile(r"(\sκαι|\sή)$")
 
 
 def mark_definitions(article):
-    """Определения ст. 2(1) или ст. 2: абзац с термином — `def_<slug>`, оговорки и продолжения —
+    """Определения ст. 2(1) или ст. 2: абзац с термином — `def_<slug>`,
+    оговорки и продолжения —
     его потомки `sub_K`; абзацы после перечня — `sub_K` самого пункта."""
-    owner = next((node for node in article.children if node.token == 'par_1'), None)
+    owner = next(
+        (node for node in article.children if node.token == "par_1"), None
+    )
     if owner is None:
         # ст. 2 без εδαφίων (89(Ι)/2001): определения — абзацы самой статьи;
         # без них (приказ ΚΔΠ 392/2024) — определений нет
@@ -1000,53 +1173,64 @@ def mark_definitions(article):
         text = node.text()
         match = match_term(text)
         if match:
-            node.kind = 'def'
+            node.kind = "def"
             node.unnumbered = False
-            token = 'def_' + numbering.slug(match.group('term'))
-            # один термин дважды (205(Ι)/2012: «διασυνοριακή συναλλαγή» DAC6 и DAC9) — `_2`
+            token = "def_" + numbering.slug(match.group("term"))
+            # один термин дважды (205(Ι)/2012: «διασυνοριακή συναλλαγή» DAC6 и
+            # DAC9) — `_2`
             used[token] = used.get(token, 0) + 1
             if used[token] > 1:
-                token += '_' + str(used[token])
+                token += "_" + str(used[token])
             node.token = token
             owner.add(node)
             current = node
-            # оговорки после нового определения — его, а не абзаца после прежнего перечня
+            # оговорки после нового определения — его, а не абзаца после
+            # прежнего перечня
             closing = None
             continue
         if closing is not None and LIST_END_RE.search(closing.paragraphs[-1]):
-            # «… Μέρος ή» / «Παράρτημα …» — одно предложение, разорванное на две строки
-            closing.paragraphs[-1] += ' ' + text
+            # «… Μέρος ή» / «Παράρτημα …» — одно предложение, разорванное на
+            # две строки
+            closing.paragraphs[-1] += " " + text
             continue
-        after_list = current is not None and current.text().rstrip().endswith('και')
+        after_list = current is not None and current.text().rstrip().endswith(
+            "και"
+        )
         if current is None or after_list or closing is not None:
-            node.token = ''
+            node.token = ""
             closing = owner.add(node)
             continue
-        node.token = ''
+        node.token = ""
         current.add(node)
 
 
-def parse(path, act_uid, source='cylaw', splits=()):
-    """`source` — откуда сводка: 'cylaw', 'leginet' или 'cy-customs' (Τμήμα Τελωνείων);
-    у них разная раскладка PDF. 'cy-gazette-law' — сводки нет, базовый закон из газеты
-    (151(Ι)/2024): строки переводятся в раскладку сводки CyLaw (gazette_law). 'cy-text' —
-    базовый закон, переписанный вручную в раскладке сводки CyLaw (76(Ι)/2016, скан).
+def parse(path, act_uid, source="cylaw", splits=()):
+    """`source` — откуда сводка: 'cylaw', 'leginet' или 'cy-customs' (Τμήμα
+    Τελωνείων);
+    у них разная раскладка PDF. 'cy-gazette-law' — сводки нет, базовый закон из
+    газеты
+    (151(Ι)/2024): строки переводятся в раскладку сводки CyLaw (gazette_law).
+    'cy-text' —
+    базовый закон, переписанный вручную в раскладке сводки CyLaw (76(Ι)/2016,
+    скан).
 
     `splits` — правки манифеста `<split before="…">` (см. split_blocks)."""
-    parser = Parser(act_uid, splits, lone_schedule=source == 'cy-customs')
-    if source == 'leginet':
+    parser = Parser(act_uid, splits, lone_schedule=source == "cy-customs")
+    if source == "leginet":
         lines = leginet.pdf_lines(path)
-    elif source == 'cy-customs':
+    elif source == "cy-customs":
         lines, parser.rate_lines = customs.pdf_layout(path)
-    elif source == 'cy-gazette-law':
+    elif source == "cy-gazette-law":
         lines = gazette_law.consolidated_lines(path)
-    elif source == 'cy-text':
-        lines = Path(path).read_text(encoding='utf-8').split('\n')
+    elif source == "cy-text":
+        lines = Path(path).read_text(encoding="utf-8").split("\n")
     else:
         lines = layout.pdf_lines(path)
     if act_uid in RATE_TABLE_ACTS:
-        lines, parser.table_lines, parser.rate_lines = rate_table.rewrite(lines, path)
+        lines, parser.table_lines, parser.rate_lines = rate_table.rewrite(
+            lines, path
+        )
     root = parser.parse(lines)
-    article = next(node for node in root.walk() if node.eid == 'art_2')
+    article = next(node for node in root.walk() if node.eid == "art_2")
     mark_definitions(article)
     return root, parser.history, parser.notes
