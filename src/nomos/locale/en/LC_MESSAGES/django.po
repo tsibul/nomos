@@ -186,3 +186,6 @@ msgstr "Amending acts"
 
 msgid "не загружен"
 msgstr "not loaded"
+
+msgid "Источник:"
+msgstr "Source:"

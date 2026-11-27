@@ -381,6 +381,27 @@ def source_credit(act):
     return None
 
 
+# подпись ссылки «Источник:» у актов из сводной редакции CyLaw
+CYLAW_NAME = "CyLaw (cylaw.org)"
+
+
+def cylaw_source(act):
+    """Строка «Источник: CyLaw (cylaw.org)» у акта из сводной редакции CyLaw:
+    ссылка — адрес акта у CyLaw, если он есть, иначе адрес CyLaw; не CyLaw —
+    None."""
+    expression = (
+        act.expressions.select_related("source")
+        .filter(source__code="cylaw")
+        .first()
+    )
+    if expression is None:
+        return None
+    return {
+        "name": CYLAW_NAME,
+        "url": expression.url or expression.source.url,
+    }
+
+
 BACK_AT_RE = re.compile(r"^[\w.-]+$")
 
 # параметры начала цепочки переходов по ссылкам: страница и место первой ссылки
@@ -590,6 +611,7 @@ def act_page(request, route, structure):
             ],
             "short": reading.act_short_label(act, route.lang),
             "sources": text_sources(act),
+            "cylaw_source": cylaw_source(act),
         }
     )
     context.update(nav_context(route, toc))
