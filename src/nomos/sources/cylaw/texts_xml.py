@@ -883,13 +883,17 @@ def escape(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+# Папки, где act.xml не акт: копии источников и рабочие копии текстов.
+SKIPPED_PARTS = {"sources", ".worktrees"}
+
+
 def act_paths(root):
     """Все act.xml папки текстов по порядку, кроме копий источников (папки
-    sources)."""
+    sources) и рабочих копий (папки .worktrees)."""
     return sorted(
         path
         for path in root.rglob("act.xml")
-        if "sources" not in path.relative_to(root).parts
+        if not SKIPPED_PARTS & set(path.relative_to(root).parts)
     )
 
 

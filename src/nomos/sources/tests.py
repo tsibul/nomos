@@ -161,6 +161,21 @@ class TemporaryInsertTests(SimpleTestCase):
         )
 
 
+class ActPathsTests(SimpleTestCase):
+    def test_skips_sources_and_worktrees(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            act = root / "cy/law/2000/1/act.xml"
+            others = (
+                root / ".worktrees/x/cy/law/2000/1/act.xml",
+                root / "sources/cy/law/2000/1/act.xml",
+            )
+            for path in (act, *others):
+                path.parent.mkdir(parents=True)
+                path.write_text("<act/>", encoding="utf-8")
+            self.assertEqual(texts_xml.act_paths(root), [act])
+
+
 class SlugTests(SimpleTestCase):
     def test_greek_term(self):
         self.assertEqual(numbering.slug("«αναδιάρθρωση»"), "anadiarthrwsh")
@@ -184,7 +199,9 @@ class CollectedTextsTests(TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         cls.copy = Path(cls.temp.name) / "texts"
         shutil.copytree(
-            TEXTS_DIR, cls.copy, ignore=shutil.ignore_patterns(".git")
+            TEXTS_DIR,
+            cls.copy,
+            ignore=shutil.ignore_patterns(".git", ".worktrees"),
         )
         output = StringIO()
         for uid in cls.collected:
