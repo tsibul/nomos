@@ -2763,6 +2763,44 @@ class IncomeTaxParsingTests(SimpleTestCase):
         self.assertEqual(texts['art_9A.par_1'], ['Ένα.'])
         self.assertEqual(texts['art_9B.par_1'], ['Ανεξαρτήτως δύο.'])
 
+    def test_four_letter_article_numbers(self):
+        """«201ΗΙΣΤ.-(1) …» и «152Α(1)(α) …» — статьи (Κεφ. 113)."""
+        root = parse_body(
+            '201ΗΙΕ. Ένα.',
+            '201ΗΙΣΤ.-(1) Δύο.',
+            '152Α(1)(α) Τρία·',
+        )
+        texts = {
+            node.eid: node.paragraphs for node in root.walk() if node.eid
+        }
+        self.assertEqual(texts['art_201HIST.par_1'], ['Δύο.'])
+        self.assertIn('art_152A.par_1.pnt_a', texts)
+
+    def test_long_centered_group_heading(self):
+        """Длинный заголовок группы по центру начинается с отступа 14,
+        за ним — заголовок статьи на полях (Κεφ. 113, перед ст. 141)."""
+        heading = (
+            'Οικονομικές καταστάσεις και Έλεγχος ή Επισκόπηση '
+            'και Διασφάλιση Εκθέσεων Βιωσιμότητας'
+        )
+        rows = [
+            'Προοίμιο',
+            '',
+            PAD + 'Επειδή.',
+            '',
+            PAD + '140. Κείμενο.',
+            '',
+            ' ' * 14 + heading,
+            '',
+            ' ' * 6 + 'Τήρηση λογιστικών βιβλίων',
+            '',
+            PAD + '141. Άλλο.',
+        ]
+        root = consolidated.Parser('cy/law/1978/4').parse(rows)
+        article = next(node for node in root.walk() if node.eid == 'art_141')
+        self.assertEqual(article.parent.kind, 'sct')
+        self.assertEqual(article.parent.heading, heading)
+
     def test_reference_with_subsection_is_not_article(self):
         """«4(1) του …» без буквы в номере — не начало статьи."""
         root = parse_body('3. Κείμενο που συνεχίζεται.', '4(1) του Νόμου ισχύει.')

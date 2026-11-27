@@ -89,9 +89,9 @@ def is_lookalike(word, words, index):
     return any(GREEK_RE.search(neighbour.group()) for neighbour in neighbours)
 
 
-ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,3}\s?\.\s)')
+ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,4}\s?\.\s)')
 # «39Α.-(1) …» — тире сразу за точкой (118(Ι)/2002)
-DASHED_START_RE = re.compile(r'^\s*\d+[^\W\d_]{0,3}\s?\.[-—–―]')
+DASHED_START_RE = re.compile(r'^\s*\d+[^\W\d_]{0,4}\s?\.[-—–―]')
 
 
 def blocks(lines, skip=None, dashed=True):

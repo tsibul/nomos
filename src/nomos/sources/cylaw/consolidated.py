@@ -20,7 +20,7 @@ CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
 CORRIGENDUM_FULL_RE = re.compile(r'ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+')
 
 TOP_RE = re.compile(
-    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,3}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
+    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,4}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
     r'(?:\((?P<sub>\d+[Α-ΩA-Z]{0,3})\)\s*)?(?P<rest>.*)$'
 )
 ITEM_RES = [
@@ -115,8 +115,11 @@ BRACKETED_TOP_RE = re.compile(
     r'^\((?P<num>\d+[Α-ΩA-Z]{1,3})\)\.\s*(?P<sub>\d+)\.\s*[-—–―]+\s*(?P<rest>.*)$'
 )
 # «9Β(1) Ανεξαρτήτως …» — без точки после номера (118(Ι)/2002); только с буквой в номере,
-# иначе спутается со ссылкой «4(1) του Ν. …»
-UNDOTTED_TOP_RE = re.compile(r'^(?P<num>\d+[Α-ΩA-Z]{1,3})\((?P<sub>\d+)\)\s+(?P<rest>.*)$')
+# иначе спутается со ссылкой «4(1) του Ν. …»; «152Α(1)(α) Οι …» — пункт сразу
+# за εδάφιο, без пробела (Κεφ. 113)
+UNDOTTED_TOP_RE = re.compile(
+    r'^(?P<num>\d+[Α-ΩA-Z]{1,4})\((?P<sub>\d+)\)(?:\s+|(?=\())(?P<rest>.*)$'
+)
 LATIN_TO_GREEK = str.maketrans('ABEZHIKMNOPTYX', 'ΑΒΕΖΗΙΚΜΝΟΡΤΥΧ')
 
 # акты, собранные до 118(Ι)/2002: правила, добавленные для него («39Α.-(1)» после
@@ -134,6 +137,8 @@ STACKED_TABLE_ACTS = {'cy/law/2002/118_I'}
 RATE_TABLE_ACTS = {'cy/law/1963/19'}
 
 HEADING_MAX = 110
+# длинный заголовок группы по центру начинается левее отступа 25
+GROUP_LONG = 60
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
 COLUMN_SEPARATOR = ' — '
 HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
@@ -507,7 +512,7 @@ class Parser:
         if not self.in_schedules and self.is_part(block):
             self.open_part(text)
             return
-        if not self.in_schedules and block.indent >= 25 and is_group_heading(text):
+        if not self.in_schedules and self.is_group(block, following):
             self.open_group(text)
             return
         if looks_like_heading(block, following):
@@ -622,6 +627,20 @@ class Parser:
         self.root.add(node)
         self.container = node
         self.stack = [node]
+
+    def is_group(self, block, following):
+        """Заголовок группы статей по центру. Длинный (Κεφ. 113, перед
+        ст. 141) начинается левее: за ним сразу заголовок статьи на полях."""
+        if not is_group_heading(block.text):
+            return False
+        if block.indent >= 25:
+            return True
+        return (
+            block.indent > MARGIN
+            and len(block.text) > GROUP_LONG
+            and following is not None
+            and following.indent <= MARGIN
+        )
 
     def open_group(self, text):
         part = self.nearest_in_root('prt')
