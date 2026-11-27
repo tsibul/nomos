@@ -1654,6 +1654,10 @@ class RefsTests(SimpleTestCase):
             ("του άρθρου 25 του Νόμου του 1990", refs.EL),
             ("του άρθρου 10Α αυτού", refs.EL),
             ("статьи 33 Закона о подоходном налоге", refs.RU),
+            (
+                "статьёй 4 законов о торговом судоходстве 1963 года",
+                refs.RU,
+            ),
             ("на основании его статьи 10Α", refs.RU),
             ("настоящей статьи", refs.RU),
         ]
@@ -2117,6 +2121,35 @@ class RefsTests(SimpleTestCase):
         self.assertIn('<ref id="r3" to="art_8">статье 8</ref>', result)
         self.assertIn(" и статье 7</p>", result)
         self.assertEqual(skipped["прежняя ссылка: цели нет"], 1)
+
+    def test_translation_stale_foreign_ref_removed(self):
+        """44(Ι)/2010: прежняя ссылка на место, где разбор видит другой акт,
+        снимается; есть в el — остаётся."""
+        text = (
+            '    <p>предусмотренный <ref id="r1" to="art_5">статьёй 5</ref>'
+            " законов о торговом судоходстве</p>\n"
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "ru.xml"
+            path.write_text(
+                '<texts>\n  <text fragment="u1" version="base">\n'
+                + text
+                + '  </text>\n  <text fragment="u2" version="base">\n'
+                + text
+                + "  </text>\n</texts>\n",
+                encoding="utf-8",
+            )
+            skipped, _, total = refs.mark_translation(
+                path,
+                refs.Targets(REF_EIDS),
+                {"u1": "art_2", "u2": "art_3"},
+                {("u1", "base"): [], ("u2", "base"): ["art_5"]},
+            )
+            result = path.read_text(encoding="utf-8")
+        self.assertEqual(total, 1)
+        self.assertEqual(result.count('to="art_5">статьёй 5</ref>'), 1)
+        self.assertIn("<p>предусмотренный статьёй 5 законов", result)
+        self.assertEqual(skipped["прежняя ссылка: другой акт"], 1)
 
     def test_translation_union_code_article_foreign(self):
         """«статье 5, пункт 17) Таможенного кодекса Союза» — статья другого

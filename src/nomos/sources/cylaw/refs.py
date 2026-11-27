@@ -253,7 +253,8 @@ RU = Language(
         r"|^\s+(?!настоящего)(?:[Α-ΩA-Z]"
         r"|(?:Закон|Кодекс|Директив|Регламент|Указ|Постановлени|Конвенци|Правил|Договор"
         r"|Соглашени|Протокол)[а-яё]*(?![\wё])"
-        r"|закона|кодекса|директивы|регламента|указа"
+        # «статьёй 4 законов о торговом судоходстве» — другой акт
+        r"|закона|законов|кодекса|директивы|регламента|указа"
         r"|постановления|упомянутого|указанного|этого|данного|его|её|их|т(?:ого|ой)\s+же"
         r"|к\s+(?!настоящему)[А-ЯЁа-яё])"
     ),
@@ -406,7 +407,7 @@ class Marker:
             plain = OWN_REF_RE.sub(r"\1", paragraph)
             spans = self.spans(plain, own)
             if keep:
-                spans = self.kept_spans(paragraph, spans)
+                spans = self.kept_spans(paragraph, plain, spans)
             marked.append(self.insert(plain, spans, found))
             self.depth = max(
                 0, self.depth + plain.count("«") - plain.count("»")
@@ -417,7 +418,7 @@ class Marker:
             )
         return marked, found
 
-    def kept_spans(self, paragraph, spans):
+    def kept_spans(self, paragraph, plain, spans):
         """Прежние ссылки абзаца и новые, не перекрывающие их, по порядку.
 
         Прежняя ссылка на фрагмент, которого больше нет, снимается."""
@@ -437,11 +438,28 @@ class Marker:
             ):
                 self.skipped["прежняя ссылка: цели нет"] += 1
                 continue
+            if self.stale(plain, target, start, end, spans):
+                self.skipped["прежняя ссылка: другой акт"] += 1
+                continue
             kept.append((start, end, target))
         added = [
             span for span in spans if not self.overlaps(kept, span[0], span[1])
         ]
         return sorted(kept + added)
+
+    def stale(self, plain, target, start, end, spans):
+        """Прежняя ссылка на свой фрагмент там, где новый разбор видит другой
+        акт («статьёй 4 законов о торговом судоходстве»), если el её не
+        подтверждает."""
+        if "#" in target or "/" in target:
+            return False
+        full = "%s#%s" % (self.act, target) if self.act else target
+        if full in self.agreed or any(
+            eid == target and span_start < end and start < span_end
+            for span_start, span_end, eid in spans
+        ):
+            return False
+        return self.external(plain, end, start) == FOREIGN
 
     def amended_article(self, own):
         """Изменяемая статья закона для пунктов без статьи в изменяющем акте,
