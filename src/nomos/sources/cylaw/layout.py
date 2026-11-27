@@ -90,8 +90,11 @@ def is_lookalike(word, words, index):
 
 
 ITEM_START_RE = re.compile(r'^\s*(\(\w{1,5}\)|\d+[^\W\d_]{0,4}\s?\.\s)')
-# «39Α.-(1) …» — тире сразу за точкой (118(Ι)/2002)
-DASHED_START_RE = re.compile(r'^\s*\d+[^\W\d_]{0,4}\s?\.[-—–―]')
+# «39Α.-(1) …» — тире сразу за точкой (118(Ι)/2002); «115-(1)» — без точки
+# (Κεφ. 113)
+DASHED_START_RE = re.compile(
+    r'^\s*\d+[^\W\d_]{0,4}\s?(?:\.[-—–―]|[-—–―]\()'
+)
 
 
 def blocks(lines, skip=None, dashed=True):

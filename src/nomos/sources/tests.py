@@ -2802,7 +2802,8 @@ class IncomeTaxParsingTests(SimpleTestCase):
         self.assertEqual(article.parent.heading, heading)
 
     def test_wrapped_proviso_is_not_group_heading(self):
-        """«Νοείται ότι, … (ii) και» по центру — оговорка, не раздел."""
+        """Оговорка «Νοείται ότι, … και», «και», «(ίι) … είτε», вставка в
+        кавычках на глубоком отступе — части пункта, не раздел."""
         rows = [
             'Προοίμιο',
             '',
@@ -2812,10 +2813,23 @@ class IncomeTaxParsingTests(SimpleTestCase):
             '',
             ' ' * 33 + 'Νοείται ότι, η πληροφορία δεν απαιτείται (ii) και',
             '',
+            ' ' * 25 + 'και',
+            '',
+            ' ' * 25 + '(ίι) διορίζουν ανεξάρτητο εκτιμητή είτε',
+            '',
+            ' ' * 25 + '"(3Α) Οι διατάξεις τίθενται σε ισχύ."',
+            '',
             PAD + '202. Άλλο.',
         ]
         root = consolidated.Parser('cy/law/1978/4').parse(rows)
         self.assertFalse(any(node.kind == 'sct' for node in root.walk()))
+
+    def test_spaced_letter_and_undotted_dash_article(self):
+        """«126 Α.» — ст. 126Α; «115-(1)» после колонтитула — новый блок."""
+        root = parse_body('126 Α. Κείμενο.', '127. Άλλο.')
+        self.assertIn('art_126A', self.eids(root, 'art_126A'))
+        self.assertTrue(layout.starts_item('115-(1) Κείμενο.'))
+        self.assertFalse(layout.starts_item('115-(1) Κείμενο.', dashed=False))
 
     def test_reference_with_subsection_is_not_article(self):
         """«4(1) του …» без буквы в номере — не начало статьи."""

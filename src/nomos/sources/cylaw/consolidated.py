@@ -19,8 +19,10 @@ CORRIGENDUM_RE = re.compile(r'ΔΙΟΡΘ\.[^0-9]*\d+')
 # «244(I)/2025 ΔΙΟΡΘΩΣΗ Ε.Ε. Παρ. Ι(Ι), Αρ. 5075» (118(Ι)/2002, ст. 14Β)
 CORRIGENDUM_FULL_RE = re.compile(r'ΔΙΟΡΘΩΣΗ Ε\.Ε\. Παρ\. [IΙ]\([IΙ]\), Αρ\. \d+')
 
+# «126 Α.» — буква через пробел (Κεφ. 113)
 TOP_RE = re.compile(
-    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,4}|\([Α-Ω]\)))\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
+    r'^(?P<num>\d+(?:[Α-ΩA-Z]{0,4}|\([Α-Ω]\)| [Α-Ω](?=\.)))'
+    r'\s?(?:\.\s*(?:[-—–―]+\s*)?|[-—–―]\s*(?=\())'
     r'(?:\((?P<sub>\d+[Α-ΩA-Z]{0,3})\)\s*)?(?P<rest>.*)$'
 )
 ITEM_RES = [
@@ -139,6 +141,8 @@ RATE_TABLE_ACTS = {'cy/law/1963/19'}
 HEADING_MAX = 110
 # длинный заголовок группы по центру начинается левее отступа 25
 GROUP_LONG = 60
+# «και», «… είτε» в конце строки — продолжение перечня, не заголовок
+LIST_WORD_RE = re.compile(r'(^|\s)(και|ή|είτε)$')
 # столбцы таблицы в расшифровке скана: «Μήνες εισφορών — Ημερομηνία»
 COLUMN_SEPARATOR = ' — '
 HISTORY_HEADING = 'Ιστορικό Τροποποιήσεων'
@@ -638,6 +642,10 @@ class Parser:
         # — не заголовок (Κεφ. 113, ст. 201Β)
         if text.startswith('Νοείται') or LIST_END_RE.search(text):
             return False
+        # отдельное «και», «(ίι) … είτε» и вставка в кавычках «"(3Α) …"» на
+        # глубоком отступе — части пункта (Κεφ. 113, ст. 202ΚΖ, 350, 394)
+        if text[:1] in '"«“(' or LIST_WORD_RE.search(text):
+            return False
         if block.indent >= 25:
             return True
         return (
@@ -682,7 +690,8 @@ class Parser:
         text = block.text
         top = TOP_RE.match(text)
         if top and block.indent <= 14:
-            node = self.open_item('top', top.group('num'), block)
+            num = top.group('num').replace(' ', '')
+            node = self.open_item('top', num, block)
             rest = top.group('rest')
             if top.group('sub'):
                 node = self.open_item('arabic', '(%s)' % top.group('sub'), block)
