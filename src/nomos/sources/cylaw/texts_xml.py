@@ -208,6 +208,71 @@ def follow_texts(info, uids, new, old, nums, eids):
     return uids
 
 
+def old_headings(path):
+    """{uid: {редакция: заголовок}} из прежнего act.xml."""
+    found = {}
+    if not path.exists():
+        return found
+    for item in ET.parse(path).getroot().iter("fragment"):
+        for version in item.iter("version"):
+            heading = version.get("heading")
+            if heading:
+                found.setdefault(item.get("uid"), {})[version.get("key")] = (
+                    heading
+                )
+    return found
+
+
+def follow_headings(info, uids, new, headings, old):
+    """uid фрагмента без текста (раздела) идёт за заголовком, а не за eid.
+
+    Новый разбор находит пропущенный заголовок группы (94(Ι)/2004, перед
+    ст. 82): разделы за ним сдвигаются на номер, и по eid uid — а с ним
+    перевод заголовка — достался бы соседнему разделу. Раздел, заголовок
+    которого совпал с прежним заголовком другого uid, получает этот uid;
+    прежний владелец, если uid за ним остался, получает новый.
+
+    new: {node: {редакция: текст}}; headings: {node: {редакция: заголовок}};
+    old: {uid: {редакция: заголовок}}."""
+    current = {
+        node: {
+            key: text for key, text in headings.get(node, {}).items() if text
+        }
+        for node in uids
+        if not new[node]
+    }
+    moved = [
+        node
+        for node, heading in current.items()
+        if heading and old.get(uids[node]) != heading
+    ]
+    holder = {uid: node for node, uid in uids.items()}
+    taken = set(uids.values()) | set(old)
+    for node in moved:
+        found = [
+            uid
+            for uid, heading in old.items()
+            if heading == current[node]
+            and (uid not in holder or holder[uid] in moved)
+        ]
+        if len(found) != 1 or found[0] == uids[node]:
+            continue
+        uid = found[0]
+        previous = holder.get(uid)
+        if previous is not None and uids[previous] == uid:
+            fresh = numbering.make_uid(info.uid, previous.eid)
+            suffix = "~"
+            while fresh in taken:
+                fresh = numbering.make_uid(info.uid, previous.eid + suffix)
+                suffix += "~"
+            taken.add(fresh)
+            uids[previous] = fresh
+            holder[fresh] = previous
+        uids[node] = uid
+        holder[uid] = node
+    return uids
+
+
 def closest(found, eid, eids):
     """uid, прежний eid которых делит с eid самое длинное начало по частям;
     один или все."""
@@ -405,6 +470,32 @@ def headed_uids(uids, headings, old, lost):
     return found
 
 
+def emptied_uids(uids, new, headings, old):
+    """Текст фрагмента, ставший заголовком вложенного:
+    [(uid, uid нового, редакция)].
+
+    Прежний разбор ставил «ΚΕΦΑΛΑΙΟ Α – …» текстом части (44(Ι)/2010); новый —
+    заголовком её первого раздела. uid части остаётся, текст уходит."""
+    found = []
+    order = list(headings)
+    for node, uid in uids.items():
+        if new[node] or len(old.get(uid, {})) != 1:
+            continue
+        ((key, text),) = old[uid].items()
+        start = order.index(node) + 1
+        target = next(
+            (
+                other
+                for other in order[start:]
+                if not new[other] and headings[other].get(key) == text
+            ),
+            None,
+        )
+        if target is not None:
+            found.append((uid, uids[target], key))
+    return found
+
+
 def translation_files(folder):
     """Файлы переводов папки акта: (путь, текст, {(uid, редакция): запись})."""
     for path in sorted(folder.glob("*.xml")):
@@ -423,14 +514,14 @@ def translation_files(folder):
         yield path, source, blocks
 
 
-def move_to_headings(folder, triples):
+def move_to_headings(folder, triples, kept=()):
     """Перевод фрагмента, ставшего заголовком, — в атрибут heading записи
     нового фрагмента.
 
     Текст записи (абзацы без разметки) становится заголовком; запись
-    потерянного убирается,
-    её примечания переходят в запись нового. Запись нового создаётся, если её
-    нет."""
+    потерянного убирается, её примечания переходят в запись нового. Запись
+    нового создаётся, если её нет. kept — uid, которые остаются: у их записей
+    убираются только абзацы."""
     moves = {(uid, key): target for uid, target, key in triples}
     for path, source, blocks in translation_files(folder):
         headings = {}
@@ -450,6 +541,9 @@ def move_to_headings(folder, triples):
                 for line in body.splitlines(keepends=True)
                 if not line.startswith("    <p>")
             )
+            if uid in kept:
+                # примечания остаются в записи самого фрагмента
+                rest = ""
             attributes = re.search(
                 r'^  <text [^>]*?((?: translator="[^"]*")?'
                 r'(?: review="[^"]*")?)>',
@@ -464,21 +558,21 @@ def move_to_headings(folder, triples):
             key = (match.group("uid"), match.group("key"))
             if key in drop:
                 target = drop[key]
+                own = ""
+                if key[0] in kept:
+                    own = "".join(
+                        line
+                        for line in match.group(0).splitlines(keepends=True)
+                        if not line.startswith("    <p>")
+                    )
                 if target in blocks or target not in headings:
-                    return ""
+                    return own
                 # записи нового фрагмента нет: новая запись на месте убранной
                 heading, rest, attributes = headings.pop(target)
-                return (
-                    '  <text fragment="%s" version="%s" heading="%s"%s>\n%s  '
-                    "</text>\n"
-                    % (
-                        target[0],
-                        target[1],
-                        heading,
-                        attributes,
-                        rest,
-                    )
-                )
+                return own + (
+                    '  <text fragment="%s" version="%s" heading="%s"%s>\n'
+                    "%s  </text>\n"
+                ) % (target[0], target[1], heading, attributes, rest)
             if key not in headings:
                 return match.group(0)
             heading, rest, _ = headings.pop(key)

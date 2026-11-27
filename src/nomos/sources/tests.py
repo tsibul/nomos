@@ -2448,6 +2448,60 @@ class FollowTextsTests(SimpleTestCase):
         )
         self.assertEqual(uids[node], "aaaaaaaaaa")
 
+    def test_section_uid_follows_heading(self):
+        """Новый раздел впереди: uid прежних разделов идут за заголовком."""
+        first = Place("prt_I.sct_1")
+        second = Place("prt_I.sct_2")
+        uids = {first: "aaaaaaaaaa", second: "bbbbbbbbbb"}
+        new = {first: {}, second: {}}
+        headings = {
+            first: {"base": "Νέο τμήμα"},
+            second: {"base": "Παλαιό τμήμα"},
+        }
+        old = {"aaaaaaaaaa": {"base": "Παλαιό τμήμα"}}
+        texts_xml.follow_headings(self.info, uids, new, headings, old)
+        self.assertEqual(uids[second], "aaaaaaaaaa")
+        self.assertNotIn(uids[first], ("aaaaaaaaaa", "bbbbbbbbbb"))
+
+    def test_part_text_becomes_section_heading(self):
+        """«ΚΕΦΑΛΑΙΟ Α» был текстом части, стал заголовком раздела:
+        перевод — в заголовок раздела, у части остаётся свой."""
+        part = Place("prt_V")
+        section = Place("prt_V.sct_1")
+        uids = {part: "aaaaaaaaaa", section: "bbbbbbbbbb"}
+        new = {part: {}, section: {}}
+        headings = {
+            part: {"base": "ΜΕΡΟΣ V"},
+            section: {"base": "ΚΕΦΑΛΑΙΟ Α"},
+        }
+        old = {"aaaaaaaaaa": {"base": "ΚΕΦΑΛΑΙΟ Α"}}
+        emptied = texts_xml.emptied_uids(uids, new, headings, old)
+        self.assertEqual(emptied, [("aaaaaaaaaa", "bbbbbbbbbb", "base")])
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "ru.xml").write_text(
+                "<texts>\n"
+                '  <text fragment="aaaaaaaaaa" version="base" '
+                'heading="ЧАСТЬ V" review="draft">\n'
+                "    <p>ГЛАВА А</p>\n"
+                "  </text>\n"
+                "</texts>\n",
+                encoding="utf-8",
+            )
+            texts_xml.move_to_headings(root, emptied, kept={"aaaaaaaaaa"})
+            result = (root / "ru.xml").read_text(encoding="utf-8")
+        self.assertEqual(
+            result,
+            "<texts>\n"
+            '  <text fragment="aaaaaaaaaa" version="base" '
+            'heading="ЧАСТЬ V" review="draft">\n'
+            "  </text>\n"
+            '  <text fragment="bbbbbbbbbb" version="base" '
+            'heading="ГЛАВА А" review="draft">\n'
+            "  </text>\n"
+            "</texts>\n",
+        )
+
     def test_page_break_merge_joins_translation(self):
         """Абзац, разорванный переносом страницы, склеен: перевод хвоста — в
         конец абзаца."""
@@ -3829,6 +3883,72 @@ class IncomeTaxParsingTests(SimpleTestCase):
         texts = {node.eid: node.paragraphs for node in root.walk() if node.eid}
         self.assertEqual(texts["art_9A.par_1"], ["Ένα."])
         self.assertEqual(texts["art_9B.par_1"], ["Ανεξαρτήτως δύο."])
+
+    def test_four_letter_article_numbers(self):
+        """«201ΗΙΣΤ.-(1) …» и «152Α(1)(α) …» — статьи (Κεφ. 113)."""
+        root = parse_body(
+            "201ΗΙΕ. Ένα.",
+            "201ΗΙΣΤ.-(1) Δύο.",
+            "152Α(1)(α) Τρία·",
+        )
+        texts = {node.eid: node.paragraphs for node in root.walk() if node.eid}
+        self.assertEqual(texts["art_201HIST.par_1"], ["Δύο."])
+        self.assertIn("art_152A.par_1.pnt_a", texts)
+
+    def test_long_centered_group_heading(self):
+        """Длинный заголовок группы по центру начинается с отступа 14,
+        за ним — заголовок статьи на полях (Κεφ. 113, перед ст. 141)."""
+        heading = (
+            "Οικονομικές καταστάσεις και Έλεγχος ή Επισκόπηση "
+            "και Διασφάλιση Εκθέσεων Βιωσιμότητας"
+        )
+        rows = [
+            "Προοίμιο",
+            "",
+            PAD + "Επειδή.",
+            "",
+            PAD + "140. Κείμενο.",
+            "",
+            " " * 14 + heading,
+            "",
+            " " * 6 + "Τήρηση λογιστικών βιβλίων",
+            "",
+            PAD + "141. Άλλο.",
+        ]
+        root = consolidated.Parser("cy/law/1978/4").parse(rows)
+        article = next(node for node in root.walk() if node.eid == "art_141")
+        self.assertEqual(article.parent.kind, "sct")
+        self.assertEqual(article.parent.heading, heading)
+
+    def test_wrapped_proviso_is_not_group_heading(self):
+        """Оговорка «Νοείται ότι, … και», «και», «(ίι) … είτε», вставка в
+        кавычках на глубоком отступе — части пункта, не раздел."""
+        rows = [
+            "Προοίμιο",
+            "",
+            PAD + "Επειδή.",
+            "",
+            PAD + "201Β. Κείμενο:",
+            "",
+            " " * 33 + "Νοείται ότι, η πληροφορία δεν απαιτείται (ii) και",
+            "",
+            " " * 25 + "και",
+            "",
+            " " * 25 + "(ίι) διορίζουν ανεξάρτητο εκτιμητή είτε",
+            "",
+            " " * 25 + '"(3Α) Οι διατάξεις τίθενται σε ισχύ."',
+            "",
+            PAD + "202. Άλλο.",
+        ]
+        root = consolidated.Parser("cy/law/1978/4").parse(rows)
+        self.assertFalse(any(node.kind == "sct" for node in root.walk()))
+
+    def test_spaced_letter_and_undotted_dash_article(self):
+        """«126 Α.» — ст. 126Α; «115-(1)» после колонтитула — новый блок."""
+        root = parse_body("126 Α. Κείμενο.", "127. Άλλο.")
+        self.assertIn("art_126A", self.eids(root, "art_126A"))
+        self.assertTrue(layout.starts_item("115-(1) Κείμενο."))
+        self.assertFalse(layout.starts_item("115-(1) Κείμενο.", dashed=False))
 
     def test_reference_with_subsection_is_not_article(self):
         """«4(1) του …» без буквы в номере — не начало статьи."""
