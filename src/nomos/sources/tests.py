@@ -940,6 +940,106 @@ class ConsolidatedTests(SimpleTestCase):
         block = layout.Block(1, 13, "ΜΕΡΟΣ ΙΙΙ ΠΑΡΟΧΕΣ")
         self.assertTrue(parser.is_part(block))
 
+    def test_table_inside_article(self):
+        """«ΠΙΝΑΚΑΣ» после «…με τον ακόλουθο:» (188(Ι)/2007, ст. 9(1)) —
+        абзацы εδάφιο, столбцы через « — »; следующее εδάφιο — снова у
+        статьи. Столбцы, слившиеся без промежутка, — одним абзацем."""
+        rows = column_lines(
+            [(12, "9. (1) Ο Πίνακας αντικαθίσταται με τον ακόλουθο:")],
+            [],
+            [(34, "ΠΙΝΑΚΑΣ")],
+            [],
+            [(57, "Δεύτερη")],
+            [(28, "Πρώτη στήλη")],
+            [(58, "Στήλη")],
+            [],
+            [(12, "Ποσό έως 100 ευρώ 7 ημέρες")],
+            [],
+            [(12, "Ποσό άνω των 100 ευρώ")],
+            [(53, "14 ημέρες")],
+            [(12, "αλλά όχι των 200 ευρώ")],
+            [],
+            [],
+            [(12, "(2) Οι διατάξεις εφαρμόζονται.")],
+            [],
+            [(12, "10. Άλλο.")],
+        )
+        root = consolidated.Parser("x").parse(
+            ["Προοίμιο", "", PAD + "Επειδή.", ""] + rows
+        )
+        texts = {node.eid: node.paragraphs for node in root.walk()}
+        self.assertEqual(
+            [eid for eid in texts if eid.startswith("art_")],
+            ["art_9", "art_9.par_1", "art_9.par_2", "art_10"],
+        )
+        self.assertFalse(any(node.kind == "sct" for node in root.walk()))
+        self.assertEqual(
+            texts["art_9.par_1"],
+            [
+                "Ο Πίνακας αντικαθίσταται με τον ακόλουθο:",
+                "ΠΙΝΑΚΑΣ",
+                "Πρώτη στήλη — Δεύτερη Στήλη",
+                "Ποσό έως 100 ευρώ 7 ημέρες",
+                "Ποσό άνω των 100 ευρώ αλλά όχι των 200 ευρώ — 14 ημέρες",
+            ],
+        )
+
+    def test_part_number_with_letter(self):
+        """«ΜΕΡΟΣ IVA», «ΜΕΡΟΣ IVB» (188(Ι)/2007) — prt_IVA, prt_IVB, как
+        art_2A; длинное заглавное «ΜΕΡΟΣ IVB …» в колонке полей — Часть, а не
+        начало заголовка статьи. В актах до 188(Ι) — по-прежнему «IV»."""
+        lines = column_lines(
+            [(30, "ΜΕΡΟΣ IV ΔΙΕΘΝΗΣ ΣΥΝΕΡΓΑΣΙΑ")],
+            [],
+            [(12, "40. Ένα.")],
+            [],
+            [(25, "ΜΕΡΟΣ IVA ΣΥΝΕΡΓΑΣΙΑ ΜΕ ΚΡΑΤΗ ΜΕΛΗ")],
+            [],
+            [(12, "41. Δύο.")],
+            [],
+            [(7, "ΜΕΡΟΣ IVB ΣΥΝΕΡΓΑΣΙΑ ΜΕ ΚΡΑΤΗ ΜΕΛΗ ΤΗΣ ΕΥΡΩΠΑΪΚΗΣ ΕΝΩΣΗΣ")],
+            [(30, "ΣΥΜΦΩΝΑ ΜΕ ΤΟΝ ΚΑΝΟΝΙΣΜΟ (ΕΕ) 2018/1805")],
+            [],
+            [(6, "Ερμηνεία")],
+            [],
+            [(12, "42. Τρία.")],
+        )
+        rows = ["Προοίμιο", "", PAD + "Επειδή.", ""] + lines
+        root = consolidated.Parser("x").parse(rows)
+        parts = [node for node in root.children if node.kind == "prt"]
+        self.assertEqual(
+            [(part.eid, part.num) for part in parts],
+            [("prt_IV", "IV"), ("prt_IVA", "IVA"), ("prt_IVB", "IVB")],
+        )
+        self.assertEqual(parts[2].children[0].heading, "Ερμηνεία")
+        earlier = consolidated.Parser("cy/law/cap/113").parse(rows)
+        self.assertEqual(
+            [node.num for node in earlier.children if node.kind == "prt"],
+            ["IV", "IV"],
+        )
+
+    def test_repeated_schedule_heading(self):
+        """«ΠΑΡΑΡΤΗΜΑ Ι» и ниже «ΠΑΡΑΡΤΗΜΑ Ι (Άρθρο 61(2))» (188(Ι)/2007) —
+        заголовок без повтора."""
+        lines = column_lines(
+            [(12, "1. Ένα.")],
+            [],
+            [(64, "ΠΑΡΑΡΤΗΜΑΤΑ")],
+            [],
+            [(65, "ΠΑΡΑΡΤΗΜΑ Ι")],
+            [],
+            [(65, "ΠΑΡΑΡΤΗΜΑ Ι")],
+            [(65, "(Άρθρο 61(2))")],
+            [],
+            [(7, "1. Ο σκοπός ενός λογαριασμού.")],
+        )
+        root = consolidated.Parser("x").parse(
+            ["Προοίμιο", "", PAD + "Επειδή.", ""] + lines
+        )
+        schedule = root.children[-1]
+        self.assertEqual(schedule.eid, "sch_1")
+        self.assertEqual(schedule.heading, "ΠΑΡΑΡΤΗΜΑ Ι (Άρθρο 61(2))")
+
 
 def column_lines(*rows):
     """Строки pdftotext -layout: каждая — [(позиция, текст), …]."""
