@@ -188,6 +188,8 @@ def about(request):
             "expressions__act"
         ).order_by("name")
     ]
+    # источник без видимых текстов не показывается
+    sources = [entry for entry in sources if entry["count"]]
     context = {
         "sources": sources,
         # ссылка внутри переводимой фразы: в каталоге — только место {{ link }}
