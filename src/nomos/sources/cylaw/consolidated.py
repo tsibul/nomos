@@ -99,6 +99,8 @@ ROMAN_SCHEDULE_RE = re.compile(
     r"|ΠΑΡΑΡΤΗΜΑ (?P<annex>[IVXΙΧ]+))$"
 )
 LONE_SCHEDULE = "ΠΑΡΑΡΤΗΜΑ"
+# начало бланка в приложении: «ΕΝΤΥΠΟ Φ.Κ. 5» (ΚΔΠ 398/2004)
+FORM_START = "ΕΝΤΥΠΟ "
 # «ΜΕΡΟΣ ΠΡΩΤΟ ΕΙΣΑΓΩΓΗ» (69(Ι)/1992): номер Μέρους словом — порядковое
 # числительное
 PART_ORDINALS = {
@@ -117,6 +119,10 @@ PART_RE = re.compile(
     r"^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>(?:%s)\b|[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$"
     % "|".join(PART_ORDINALS)
 )
+
+
+# «ΚΕΦΑΛΑΙΟ Ι» — глава; с частями внутри — см. Parser.is_chapter
+CHAPTER_WORD = "ΚΕΦΑΛΑΙΟ "
 
 
 def part_number(match):
@@ -510,6 +516,8 @@ class Parser:
         # из них — строки ставок
         self.table_lines = set()
         self.rate_lines = set()
+        # приложение-бланк (см. feed_form)
+        self.form = None
 
     def parse(self, lines):
         start = (
@@ -614,8 +622,13 @@ class Parser:
             self.in_schedules = True
         if self.in_schedules and self.feed_schedule_heading(text, block):
             return
+        if self.in_schedules and self.feed_form(block):
+            return
         if not self.in_schedules and self.is_part(block):
             self.open_part(text)
+            return
+        if not self.in_schedules and self.is_chapter(block, following):
+            self.open_chapter(text)
             return
         if not self.in_schedules and self.is_group(block, following):
             self.open_group(text)
@@ -698,6 +711,20 @@ class Parser:
             return True
         return False
 
+    def feed_form(self, block):
+        """Бланк в приложении («ΕΝΤΥΠΟ Φ.Κ. 5», ΚΔΠ 398/2004): номера граф
+        и пунктов бланка повторяются, строки полей кончаются «:». Каждая
+        строка бланка — свой фрагмент приложения, без вложенности."""
+        if self.schedule is None:
+            return False
+        if block.text.startswith(FORM_START) and not self.schedule.children:
+            self.form = self.schedule
+        if self.form is not self.schedule:
+            return False
+        self.open_unnumbered(self.schedule, block.text, block.indent)
+        self.stack = [self.schedule]
+        return True
+
     def is_item_heading(self, text):
         """Строчная строка после заглавного названия контейнера — заголовок
         пункта
@@ -744,9 +771,34 @@ class Parser:
     def open_part(self, text):
         part = PART_RE.match(text)
         node = Node("prt", num=part_number(part), heading=text)
+        self.part_parent().add(node)
+        self.container = node
+        self.stack = [node]
+
+    def is_chapter(self, block, following):
+        """«ΚΕΦΑΛΑΙΟ Ι …» по центру, за которым сразу «ΜΕΡΟΣ», — глава с
+        частями (ΚΔΠ 377/2004); после неё и прочие «ΚΕΦΑΛΑΙΟ» акта — главы.
+        Иначе «ΚΕΦΑΛΑΙΟ» — заголовок группы статей (91(Ι)/2004)."""
+        if not block.text.startswith(CHAPTER_WORD):
+            return False
+        if not self.is_group(block, following):
+            return False
+        if self.nearest_in_root("cpt") is not None:
+            return True
+        return following is not None and self.is_part(following)
+
+    def open_chapter(self, text):
+        node = Node("cpt", num=text.split()[1], heading=text)
         self.root.add(node)
         self.container = node
         self.stack = [node]
+
+    def part_parent(self):
+        """Часть после главы с частями — в этой главе, иначе — в акте."""
+        last = self.root.children[-1] if self.root.children else None
+        if last is not None and last.kind == "cpt":
+            return last
+        return self.root
 
     def is_group(self, block, following):
         """Заголовок группы статей по центру. Длинный (Κεφ. 113, перед
