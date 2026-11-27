@@ -13,11 +13,10 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from nomos.sources.cylaw import consolidated, forward, gazette, history, layout, refs
-from nomos.sources.cylaw import texts_xml
 from nomos.sources.cylaw import acts as acts_index
 from nomos.sources.cylaw import (
     consolidated,
+    forward,
     gazette,
     history,
     layout,
@@ -26,9 +25,11 @@ from nomos.sources.cylaw import (
 )
 
 BASE_KEY = history.BASE_KEY
-# сводки нет: layout="gazette-law" — базовый закон разбирается из газеты; layout="text" —
-# базовый закон переписан в раскладке сводки, изменения накладываются вперёд (forward)
-LAYOUT_SOURCES = {'gazette-law': 'cy-gazette-law', 'text': 'cy-text'}
+# сводки нет: layout="gazette-law" — базовый закон разбирается из газеты;
+# layout="text" —
+# базовый закон переписан в раскладке сводки, изменения накладываются вперёд
+# (forward)
+LAYOUT_SOURCES = {"gazette-law": "cy-gazette-law", "text": "cy-text"}
 
 
 def base_version(info):
@@ -439,8 +440,8 @@ class Command(BaseCommand):
         tree, _, notes = consolidated.parse(
             root_dir / manifest["file"],
             info.uid,
-            LAYOUT_SOURCES.get(manifest.get('layout'), manifest['source']),
-            history.read_splits(folder / 'collect.xml'),
+            LAYOUT_SOURCES.get(manifest.get("layout"), manifest["source"]),
+            history.read_splits(folder / "collect.xml"),
         )
         history.apply_source_fixes(
             tree,
@@ -448,9 +449,9 @@ class Command(BaseCommand):
             report,
         )
         act_notes, other_notes = split_notes(notes, acts)
-        base_ref = '%s#%s' % (info.uid, BASE_KEY)
+        base_ref = "%s#%s" % (info.uid, BASE_KEY)
         history_acts = acts
-        if manifest.get('layout') == 'text':
+        if manifest.get("layout") == "text":
             history_acts = forward.apply(tree, acts, info.uid, report)
         versions = history.collect(tree, history_acts, base_ref, report)
         apply_remarks(versions, remarks, base_ref, report)

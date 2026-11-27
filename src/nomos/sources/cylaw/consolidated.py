@@ -1177,11 +1177,15 @@ def mark_definitions(article):
         current.add(node)
 
 
-def parse(path, act_uid, source='cylaw', splits=()):
-    """`source` — откуда сводка: 'cylaw', 'leginet' или 'cy-customs' (Τμήμα Τελωνείων);
-    у них разная раскладка PDF. 'cy-gazette-law' — сводки нет, базовый закон из газеты
-    (151(Ι)/2024): строки переводятся в раскладку сводки CyLaw (gazette_law). 'cy-text' —
-    базовый закон, переписанный вручную в раскладке сводки CyLaw (76(Ι)/2016, скан).
+def parse(path, act_uid, source="cylaw", splits=()):
+    """`source` — откуда сводка: 'cylaw', 'leginet' или 'cy-customs' (Τμήμα
+    Τελωνείων);
+    у них разная раскладка PDF. 'cy-gazette-law' — сводки нет, базовый закон из
+    газеты
+    (151(Ι)/2024): строки переводятся в раскладку сводки CyLaw (gazette_law).
+    'cy-text' —
+    базовый закон, переписанный вручную в раскладке сводки CyLaw (76(Ι)/2016,
+    скан).
 
     `splits` — правки манифеста `<split before="…">` (см. split_blocks)."""
     parser = Parser(act_uid, splits, lone_schedule=source == "cy-customs")
@@ -1191,8 +1195,8 @@ def parse(path, act_uid, source='cylaw', splits=()):
         lines, parser.rate_lines = customs.pdf_layout(path)
     elif source == "cy-gazette-law":
         lines = gazette_law.consolidated_lines(path)
-    elif source == 'cy-text':
-        lines = Path(path).read_text(encoding='utf-8').split('\n')
+    elif source == "cy-text":
+        lines = Path(path).read_text(encoding="utf-8").split("\n")
     else:
         lines = layout.pdf_lines(path)
     if act_uid in RATE_TABLE_ACTS:
