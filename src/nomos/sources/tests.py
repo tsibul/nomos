@@ -795,6 +795,19 @@ class ConsolidatedTests(SimpleTestCase):
             )
         self.assertIsNone(consolidated.SCHEDULE_RE.match("ΠΙΝΑΚΑΣ"))
 
+    def test_schedule_ordinal_seventeenth(self):
+        """Κεφ. 113: «ΔΕΚΑΤΟ ΕΚΤΟ» и «ΔΕΚΑΤΟ ΕΒΔΟΜΟ ΠΑΡΑΡΤΗΜΑ» — sch_16 и
+        sch_17, не продолжение sch_15."""
+        for heading, number in (
+            ("ΔΕΚΑΤΟ ΕΚΤΟ ΠΑΡΑΡΤΗΜΑ", 16),
+            ("ΔΕΚΑΤΟ ΕΒΔΟΜΟ ΠΑΡΑΡΤΗΜΑ", 17),
+        ):
+            match = consolidated.SCHEDULE_RE.match(heading)
+            self.assertEqual(
+                consolidated.SCHEDULE_ORDINALS.index(match.group("ord")) + 1,
+                number,
+            )
+
     def test_schedule_heading_roman(self):
         """«ΠΙΝΑΚΑΣ ΙΙ» по центру (ΚΔΠ 289/2010) — приложение sch_2 без
         «ΠΑΡΑΡΤΗΜΑΤΑ»."""
