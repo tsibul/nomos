@@ -4,6 +4,7 @@ import globals from 'globals';
 export default [
   {
     ignores: [
+      '.claude/',
       '.venv/',
       'node_modules/',
       'src/nomos/site/static/dist/',
