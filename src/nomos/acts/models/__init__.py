@@ -10,14 +10,14 @@ from .nav_node import NavNode
 from .reference import Reference
 
 __all__ = [
-    'Act',
-    'ActRelation',
-    'Amendment',
-    'Expression',
-    'Fragment',
-    'FragmentAlias',
-    'FragmentText',
-    'FragmentVersion',
-    'NavNode',
-    'Reference',
+    "Act",
+    "ActRelation",
+    "Amendment",
+    "Expression",
+    "Fragment",
+    "FragmentAlias",
+    "FragmentText",
+    "FragmentVersion",
+    "NavNode",
+    "Reference",
 ]

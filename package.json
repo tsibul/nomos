@@ -5,9 +5,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "dup": "jscpd"
+    "dup": "jscpd",
+    "lint": "uv run ruff check . && eslint .",
+    "format": "uv run ruff format . && uv run ruff check --fix . && eslint --fix ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.16.0",
+    "globals": "^17.14.0",
     "jscpd": "5.4.3",
     "sass": "^1.108.2",
     "vite": "^8.3.8"

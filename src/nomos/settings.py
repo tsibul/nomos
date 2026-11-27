@@ -19,109 +19,117 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 ROOT_DIR = BASE_DIR.parent
 
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DJANGO_DEBUG', '0') == '1'
-
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 
 
 def env_list(name):
     """Список из переменной окружения через запятую, без пустых."""
-    return [item.strip() for item in os.environ.get(name, '').split(',') if item.strip()]
+    return [
+        item.strip()
+        for item in os.environ.get(name, "").split(",")
+        if item.strip()
+    ]
 
 
-ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS')
+ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS")
 
 # адреса со схемой (https://example.org), с которых принимаются формы (вход)
-CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
+CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
 # сайт отдаётся по HTTPS: по умолчанию — при выключенном DEBUG;
 # DJANGO_HTTPS=0 — проверка сборки локально по http
-HTTPS = os.environ.get('DJANGO_HTTPS', '0' if DEBUG else '1') == '1'
+HTTPS = os.environ.get("DJANGO_HTTPS", "0" if DEBUG else "1") == "1"
 
-# Только публичные выражения для посетителя без входа (nomos.site.access); по умолчанию — всё
-NOMOS_PUBLIC_ONLY = os.environ.get('NOMOS_PUBLIC_ONLY', '0') == '1'
+# Только публичные выражения для посетителя без входа (nomos.site.access); по
+# умолчанию — всё
+NOMOS_PUBLIC_ONLY = os.environ.get("NOMOS_PUBLIC_ONLY", "0") == "1"
 
-# Ссылка в меню на внешний сайт (возврат на сайт, где размещён Nomos); пустой адрес — ссылки нет.
-# Подпись без значения — сам адрес. Адрес абсолютный, подпуть NOMOS_URL_PREFIX к нему не относится.
-NOMOS_HOME_URL = os.environ.get('NOMOS_HOME_URL', '').strip()
-NOMOS_HOME_LABEL = os.environ.get('NOMOS_HOME_LABEL', '').strip() or NOMOS_HOME_URL
+# Ссылка в меню на внешний сайт (возврат на сайт, где размещён Nomos); пустой
+# адрес — ссылки нет.
+# Подпись без значения — сам адрес. Адрес абсолютный, подпуть NOMOS_URL_PREFIX
+# к нему не относится.
+NOMOS_HOME_URL = os.environ.get("NOMOS_HOME_URL", "").strip()
+NOMOS_HOME_LABEL = (
+    os.environ.get("NOMOS_HOME_LABEL", "").strip() or NOMOS_HOME_URL
+)
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'nomos.acts',
-    'nomos.sources',
-    'nomos.translate',
-    'nomos.site',
-    'django_vite',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "nomos.acts",
+    "nomos.sources",
+    "nomos.translate",
+    "nomos.site",
+    "django_vite",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
     # аноним при NOMOS_PUBLIC_ONLY видит только публичные выражения
-    'nomos.site.access.PublicOnlyMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "nomos.site.access.PublicOnlyMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
     # язык интерфейса из адреса, без cookies
-    'nomos.site.ui.InterfaceLanguageMiddleware',
+    "nomos.site.ui.InterfaceLanguageMiddleware",
 ]
 
-ROOT_URLCONF = 'nomos.urls'
+ROOT_URLCONF = "nomos.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-                'nomos.site.menu.menu',
-                'nomos.site.notices.notices',
-                'nomos.site.ui.ui',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+                "nomos.site.menu.menu",
+                "nomos.site.notices.notices",
+                "nomos.site.ui.ui",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'nomos.wsgi.application'
+WSGI_APPLICATION = "nomos.wsgi.application"
 
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ.get('DB_NAME', 'nomos'),
-        'USER': os.environ.get('DB_USER', 'nomos'),
-        'PASSWORD': os.environ['DB_PASSWORD'],
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '3306'),
-        'OPTIONS': {
-            'charset': 'utf8mb4',
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": os.environ.get("DB_NAME", "nomos"),
+        "USER": os.environ.get("DB_USER", "nomos"),
+        "PASSWORD": os.environ["DB_PASSWORD"],
+        "HOST": os.environ.get("DB_HOST", "localhost"),
+        "PORT": os.environ.get("DB_PORT", "3306"),
+        "OPTIONS": {
+            "charset": "utf8mb4",
         },
     }
 }
@@ -132,16 +140,16 @@ DATABASES = {
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",  # noqa: E501
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",  # noqa: E501
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",  # noqa: E501
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",  # noqa: E501
     },
 ]
 
@@ -149,28 +157,31 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
 
-# исходный язык строк интерфейса; переводы — в nomos/locale/ (собираются compilemessages)
-LANGUAGE_CODE = 'ru'
+# исходный язык строк интерфейса; переводы — в nomos/locale/ (собираются
+# compilemessages)
+LANGUAGE_CODE = "ru"
 
 LANGUAGES = [
-    ('ru', 'Русский'),
-    ('el', 'Ελληνικά'),
-    ('en', 'English'),
+    ("ru", "Русский"),
+    ("el", "Ελληνικά"),
+    ("en", "English"),
 ]
 
-LOCALE_PATHS = [BASE_DIR / 'nomos' / 'locale']
+LOCALE_PATHS = [BASE_DIR / "nomos" / "locale"]
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = "UTC"
 
 USE_I18N = True
 
 USE_TZ = True
 
 
-# Подпуть сайта за прокси (например /resources/nomos); пусто — сайт в корне домена.
-# Прокси передаёт запросы без подпути, Django добавляет его к ссылкам (FORCE_SCRIPT_NAME).
-_url_prefix = os.environ.get('NOMOS_URL_PREFIX', '').strip().strip('/')
-NOMOS_URL_PREFIX = '/' + _url_prefix if _url_prefix else ''
+# Подпуть сайта за прокси (например /resources/nomos); пусто — сайт в корне
+# домена.
+# Прокси передаёт запросы без подпути, Django добавляет его к ссылкам
+# (FORCE_SCRIPT_NAME).
+_url_prefix = os.environ.get("NOMOS_URL_PREFIX", "").strip().strip("/")
+NOMOS_URL_PREFIX = "/" + _url_prefix if _url_prefix else ""
 
 FORCE_SCRIPT_NAME = NOMOS_URL_PREFIX or None
 
@@ -178,19 +189,23 @@ FORCE_SCRIPT_NAME = NOMOS_URL_PREFIX or None
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = NOMOS_URL_PREFIX + '/static/'
+STATIC_URL = NOMOS_URL_PREFIX + "/static/"
 
-# сюда collectstatic собирает статику для веб-сервера (по умолчанию — staticfiles/ в корне)
-STATIC_ROOT = os.environ.get('DJANGO_STATIC_ROOT', str(ROOT_DIR / 'staticfiles'))
+# сюда collectstatic собирает статику для веб-сервера (по умолчанию —
+# staticfiles/ в корне)
+STATIC_ROOT = os.environ.get(
+    "DJANGO_STATIC_ROOT", str(ROOT_DIR / "staticfiles")
+)
 
 
-# Вход: стандартная аутентификация Django; регистрации и восстановления пароля нет
+# Вход: стандартная аутентификация Django; регистрации и восстановления пароля
+# нет
 
-LOGIN_URL = 'site:login'
+LOGIN_URL = "site:login"
 
-LOGIN_REDIRECT_URL = 'site:act_list'
+LOGIN_REDIRECT_URL = "site:act_list"
 
-LOGOUT_REDIRECT_URL = 'site:act_list'
+LOGOUT_REDIRECT_URL = "site:act_list"
 
 # cookie сессии и CSRF: Secure при HTTPS, локально — по http
 SESSION_COOKIE_SECURE = HTTPS
@@ -201,61 +216,73 @@ SESSION_COOKIE_HTTPONLY = True
 
 CSRF_COOKIE_HTTPONLY = True
 
-SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = "Lax"
 
-CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = "Lax"
 
 # cookie — только для подпути сайта, а не для всего домена
-SESSION_COOKIE_PATH = NOMOS_URL_PREFIX + '/'
+SESSION_COOKIE_PATH = NOMOS_URL_PREFIX + "/"
 
-CSRF_COOKIE_PATH = NOMOS_URL_PREFIX + '/'
+CSRF_COOKIE_PATH = NOMOS_URL_PREFIX + "/"
 
 
 # Заголовки безопасности
 
 SECURE_CONTENT_TYPE_NOSNIFF = True
 
-SECURE_REFERRER_POLICY = 'same-origin'
+SECURE_REFERRER_POLICY = "same-origin"
 
-X_FRAME_OPTIONS = 'DENY'
+X_FRAME_OPTIONS = "DENY"
 
 # HTTPS: перенаправление с http и HSTS (срок в секундах, 0 — без HSTS)
 SECURE_SSL_REDIRECT = HTTPS
 
-SECURE_HSTS_SECONDS = int(os.environ.get('DJANGO_HSTS_SECONDS', '31536000')) if HTTPS else 0
+SECURE_HSTS_SECONDS = (
+    int(os.environ.get("DJANGO_HSTS_SECONDS", "31536000")) if HTTPS else 0
+)
 
 SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0
 
 SECURE_HSTS_PRELOAD = False
 
-# за прокси, который снимает HTTPS: DJANGO_PROXY_SSL_HEADER=1 — верить X-Forwarded-Proto
-if os.environ.get('DJANGO_PROXY_SSL_HEADER', '0') == '1':
-    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# за прокси, который снимает HTTPS: DJANGO_PROXY_SSL_HEADER=1 — верить
+# X-Forwarded-Proto
+if os.environ.get("DJANGO_PROXY_SSL_HEADER", "0") == "1":
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
 
-# Сайт писем не шлёт (ни регистрации, ни восстановления пароля). Локально — в консоль,
-# на хостинге — SMTP с умолчаниями Django, чтобы случайное письмо не терялось молча.
+# Сайт писем не шлёт (ни регистрации, ни восстановления пароля). Локально — в
+# консоль,
+# на хостинге — SMTP с умолчаниями Django, чтобы случайное письмо не терялось
+# молча.
 MAILERS = {
-    'default': {
-        'BACKEND': (
-            'django.core.mail.backends.console.EmailBackend'
+    "default": {
+        "BACKEND": (
+            "django.core.mail.backends.console.EmailBackend"
             if DEBUG
-            else 'django.core.mail.backends.smtp.EmailBackend'
+            else "django.core.mail.backends.smtp.EmailBackend"
         ),
     },
 }
 
-# Vite (django-vite): в разработке — dev-сервер с HMR, иначе собранный manifest.
+# Vite (django-vite): в разработке — dev-сервер с HMR, иначе собранный
+# manifest.
 STATICFILES_DIRS = []
 DJANGO_VITE = {
-    'default': {
-        'dev_mode': DEBUG,
-        'dev_server_port': 5173,
-        # собранные файлы лежат в static/dist/, dev-сервер Vite отдаёт их от /static/
-        'static_url_prefix': '' if DEBUG else 'dist',
-        'manifest_path': BASE_DIR / 'nomos' / 'site' / 'static' / 'dist' / 'manifest.json',
+    "default": {
+        "dev_mode": DEBUG,
+        "dev_server_port": 5173,
+        # собранные файлы лежат в static/dist/, dev-сервер Vite отдаёт их от
+        # /static/
+        "static_url_prefix": "" if DEBUG else "dist",
+        "manifest_path": BASE_DIR
+        / "nomos"
+        / "site"
+        / "static"
+        / "dist"
+        / "manifest.json",
     }
 }
