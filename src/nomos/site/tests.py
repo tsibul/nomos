@@ -956,6 +956,45 @@ class ViewerTests(TestCase):
                 response, "Πηγή κειμένου: ενοποιημένο κείμενο του CyLaw"
             )
 
+    def test_cylaw_source_line_on_act_page(self):
+        """«Источник: CyLaw (cylaw.org)» со ссылкой — только у актов CyLaw,
+        подпись на языке страницы."""
+
+        def link(caption, lang):
+            """Адрес ссылки в строке «<caption> CyLaw (cylaw.org)»; нет —
+            None."""
+            # акт заново из базы: языки акта запоминаются на объекте
+            act = Act.objects.get(pk=self.law.pk)
+            response = self.client.get(reading.build_url(act, lang=lang))
+            found = re.search(
+                r'class="original-source">\s*%s\s*<a\s+'
+                r'class="original-source__link"\s+href="([^"]*)"\s+'
+                r'rel="external"\s*>\s*CyLaw \(cylaw\.org\)\s*</a>'
+                % re.escape(caption),
+                response.content.decode(),
+            )
+            return found.group(1) if found else None
+
+        self.assertIsNone(link("Πηγή:", "el"))
+        fields = load_texts.SOURCES["cylaw"]
+        self.el.source = Source.objects.create(code="cylaw", **fields)
+        self.el.save()
+        for lang in ("en", "ru"):
+            Expression.objects.create(
+                act=self.law,
+                lang=lang,
+                status="our_translation",
+                source=Source.objects.get(code="test"),
+                title="Law",
+            )
+        captions = {"el": "Πηγή:", "en": "Source:", "ru": "Источник:"}
+        for lang, caption in captions.items():
+            with self.subTest(lang=lang):
+                self.assertEqual(link(caption, lang), "https://www.cylaw.org")
+        self.el.url = "https://www.cylaw.org/nomoi/enop/non-ind/2000_1_1/"
+        self.el.save()
+        self.assertEqual(link("Источник:", "ru"), self.el.url)
+
     def test_source_labels_follow_interface_language(self):
         fields = load_texts.SOURCES["cylaw"]
         self.el.source = Source.objects.create(code="cylaw", **fields)

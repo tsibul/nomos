@@ -1,0 +1,20 @@
+{% comment %}
+  Строка «<подпись> <источник>» со ссылкой на источник: line — {name, url},
+  caption — подпись.
+{% endcomment %}
+{% if line %}
+  <p class="original-source">
+    {{ caption }}
+    {% if line.url %}
+      <a
+        class="original-source__link"
+        href="{{ line.url }}"
+        rel="external"
+      >
+        {{ line.name }}
+      </a>
+    {% else %}
+      {{ line.name }}
+    {% endif %}
+  </p>
+{% endif %}

@@ -228,3 +228,6 @@ msgstr "No text."
 
 msgid "исключён"
 msgstr "repealed"
+
+msgid "Источник:"
+msgstr "Source:"

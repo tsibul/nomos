@@ -1,0 +1,8 @@
+{% load i18n %}
+
+{% comment %}
+  Строка «Источник: CyLaw (cylaw.org)» — у акта, текст которого взят из сводной
+  редакции CyLaw.
+{% endcomment %}
+{% translate 'Источник:' as caption %}
+{% include 'site/parts/source_line.html' with line=cylaw_source caption=caption %}
