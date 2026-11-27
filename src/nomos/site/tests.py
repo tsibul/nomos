@@ -1245,6 +1245,7 @@ class SignedIn:
     """Пользователь запроса, вошедший на сайт (без записи в базе)."""
 
     is_authenticated = True
+    is_superuser = False
 
 
 # тексты непубличного греческого выражения, которых не должно быть в HTML
@@ -1949,6 +1950,251 @@ class PrefixUrlTests(UrlPrefixMixin, TestCase):
             "/cy/law/2024/2_I/art_2/", {"from": ACT_URL + "art_1/"}
         )
         self.assertNotContains(response, "back-ref")
+
+
+IFRS_URL = "/ifrs/ias/16/"
+CLOSED_URL = "/ifrs/amend/2025/1/"
+CYPRUS_URL = "/cy/law/2001/5_I/"
+
+# тексты непубличных выражений МСФО, которых не должно быть в HTML
+# гостя и обычного вошедшего
+CLOSED_TEXTS = (
+    "IFRS 16 Leases",
+    "Lessee remeasures",
+    "Lease Amendments",
+    "Secret amending text",
+)
+
+
+class IfrsAccessMixin:
+    """NOMOS_PUBLIC_ONLY: непубличные выражения актов МСФО видит только
+    суперпользователь."""
+
+    prefix = ""
+
+    def site(self, path):
+        return self.prefix + path
+
+    @classmethod
+    def setUpTestData(cls):
+        source = Source.objects.create(code="test", name="Тест")
+        cls.ifrs = Act.objects.create(
+            uid="ifrs/ias/16",
+            jurisdiction="ifrs",
+            kind="std",
+            number="16",
+            structure_lang="en",
+        )
+        cls.closed = Act.objects.create(
+            uid="ifrs/amend/2025/1",
+            jurisdiction="ifrs",
+            kind="std",
+            number="1",
+            year="2025",
+            structure_lang="en",
+        )
+        cyprus = Act.objects.create(
+            uid="cy/law/2001/5_I",
+            jurisdiction="cy",
+            kind="law",
+            number="5(I)",
+            year="2001",
+            structure_lang="el",
+        )
+        ActRelation.objects.create(
+            from_act=cls.closed, to_act=cls.ifrs, kind="amends"
+        )
+        en = cls.expression(cls.ifrs, "en", source, "IFRS 16 Leases", False)
+        ru = cls.expression(cls.ifrs, "ru", source, "МСФО 16 Аренда", True)
+        closed_en = cls.expression(
+            cls.closed, "en", source, "Lease Amendments", False
+        )
+        cyprus_el = cls.expression(
+            cyprus, "el", source, "Κυπριακός Νόμος", False
+        )
+        closed_article = cls.article(cls.closed, "cl00000001")
+        cls.version(
+            closed_article,
+            cls.base(cls.closed),
+            {closed_en: "Secret amending text"},
+        )
+        cls.version(
+            cls.article(cyprus, "cn00000001"),
+            cls.base(cyprus),
+            {cyprus_el: "Κυπριακό κείμενο"},
+        )
+        article = cls.article(cls.ifrs, "if00000001")
+        cls.version(
+            article,
+            cls.base(cls.ifrs),
+            {en: "Lessee recognises", ru: "Арендатор признаёт"},
+        )
+        replace = Amendment.objects.create(
+            amending_act=cls.closed,
+            amending_fragment=closed_article,
+            kind="replace",
+            key="art_1:replace",
+            marker="art_1:replace",
+            published_on=datetime.date(2024, 12, 1),
+            in_force_from=datetime.date(2025, 1, 1),
+        )
+        anchor = ', см. <ref id="r1">поправку</ref>'
+        texts = cls.version(
+            article,
+            replace,
+            {
+                en: "Lessee remeasures" + anchor,
+                ru: "Арендатор переоценивает" + anchor,
+            },
+            key="2025-01-01",
+            valid_from=datetime.date(2025, 1, 1),
+        )
+        for text in texts:
+            Reference.objects.create(
+                from_text=text,
+                anchor="r1",
+                to_act=cls.closed,
+                to_fragment=closed_article,
+                resolved=True,
+            )
+        make_nav()
+        section = NavNode.objects.get(key="ifrs")
+        for order, act in enumerate([cls.ifrs, cls.closed, cyprus]):
+            NavNode.objects.create(
+                parent=section,
+                label=f"Пункт {order}",
+                order=order,
+                act_uid=act.uid,
+                act=act,
+            )
+        cls.reader = User.objects.create_user("reader")
+        cls.admin = User.objects.create_superuser("admin")
+
+    @staticmethod
+    def expression(act, lang, source, title, public):
+        return Expression.objects.create(
+            act=act,
+            lang=lang,
+            status="official_text",
+            source=source,
+            title=title,
+            public=public,
+        )
+
+    @staticmethod
+    def base(act):
+        return Amendment.objects.create(
+            amending_act=act, kind="base", key="base", marker="base"
+        )
+
+    @staticmethod
+    def article(act, uid):
+        return Fragment.objects.create(
+            uid=uid, act=act, kind="art", eid="art_1", order_key="0001"
+        )
+
+    @staticmethod
+    def version(fragment, amendment, bodies, key="base", **fields):
+        version = FragmentVersion.objects.create(
+            fragment=fragment,
+            key=key,
+            amendment=amendment,
+            num="1",
+            known_from=datetime.date(2024, 1, 1),
+            **fields,
+        )
+        return [
+            FragmentText.objects.create(
+                version=version,
+                expression=expression,
+                body=f"<p>{body}</p>",
+                text_hash=key,
+            )
+            for expression, body in bodies.items()
+        ]
+
+    def assert_closed_hidden(self):
+        """МСФО — только публичное: закрытого акта нет нигде, URL — 404."""
+        for page in ["/", "/ifrs/", "/about/", IFRS_URL, IFRS_URL + "art_1/"]:
+            with self.subTest(page=page):
+                response = self.client.get(page)
+                self.assertEqual(response.status_code, 200)
+                self.assertNotContains(response, self.site(CLOSED_URL))
+                for text in CLOSED_TEXTS:
+                    self.assertNotContains(response, text)
+        response = self.client.get(IFRS_URL + "art_1/")
+        self.assertContains(response, "Арендатор переоценивает")
+        self.assertContains(
+            response, '<span class="ref ref--unresolved">поправку</span>'
+        )
+        response = self.client.get(IFRS_URL + "art_1/history/")
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, self.site(CLOSED_URL))
+        hidden = [
+            CLOSED_URL,
+            CLOSED_URL + "art_1/",
+            CLOSED_URL + "art_1/history/",
+            IFRS_URL + "en/",
+            IFRS_URL + "art_1/en/",
+        ]
+        for page in hidden:
+            with self.subTest(page=page):
+                self.assertEqual(self.client.get(page).status_code, 404)
+
+    def test_guest(self):
+        self.assert_closed_hidden()
+        self.assertEqual(self.client.get(CYPRUS_URL).status_code, 404)
+
+    def test_signed_in_sees_all_but_closed_ifrs(self):
+        self.client.force_login(self.reader)
+        self.assert_closed_hidden()
+        response = self.client.get(CYPRUS_URL + "art_1/")
+        self.assertContains(response, "Κυπριακό κείμενο")
+        self.assertContains(
+            self.client.get("/ifrs/"), f'href="{self.site(CYPRUS_URL)}'
+        )
+
+    def test_superuser_sees_everything(self):
+        self.client.force_login(self.admin)
+        closed_link = f'href="{self.site(CLOSED_URL)}'
+        for page in ["/", "/ifrs/"]:
+            with self.subTest(page=page):
+                self.assertContains(self.client.get(page), closed_link)
+        response = self.client.get(IFRS_URL + "art_1/")
+        self.assertContains(response, "Lessee remeasures")
+        self.assertRegex(
+            response.content.decode(),
+            r'<a class="ref" id="[^"]*" href="'
+            + re.escape(self.site(CLOSED_URL)),
+        )
+        response = self.client.get(IFRS_URL + "art_1/history/")
+        self.assertContains(response, closed_link)
+        response = self.client.get(CLOSED_URL + "art_1/")
+        self.assertContains(response, "Secret amending text")
+        response = self.client.get(CYPRUS_URL + "art_1/")
+        self.assertContains(response, "Κυπριακό κείμενο")
+
+    def test_setting_off_shows_everything(self):
+        with self.settings(NOMOS_PUBLIC_ONLY=False):
+            response = self.client.get(CLOSED_URL + "art_1/")
+        self.assertContains(response, "Secret amending text")
+
+
+@override_settings(
+    DJANGO_VITE={"default": {"dev_mode": True}}, NOMOS_PUBLIC_ONLY=True
+)
+class IfrsAccessTests(IfrsAccessMixin, TestCase):
+    """Сайт в корне домена."""
+
+
+@under_prefix
+@override_settings(
+    DJANGO_VITE={"default": {"dev_mode": True}}, NOMOS_PUBLIC_ONLY=True
+)
+class IfrsAccessPrefixTests(IfrsAccessMixin, TestCase):
+    """Сайт в подпути /resources/nomos."""
+
+    prefix = PREFIX
 
 
 def run_python(code, env):

@@ -151,7 +151,7 @@ def parse_path(path):
 def default_lang(act):
     """Язык адреса без языка: русский, если у акта есть русский текст, иначе
     язык оригинала."""
-    restricted = access.is_restricted()
+    restricted = access.limited(act)
     cache = act.__dict__.setdefault("_default_lang", {})
     if restricted not in cache:
         langs = access.visible_langs(act)
@@ -250,7 +250,7 @@ def act_title_lang(act, lang=DEFAULT_LANG):
         for expression in expressions:
             if expression.lang == wanted and expression.title:
                 return expression.title, expression.lang
-    if access.is_restricted():
+    if access.limited(act):
         # оригинал скрыт: название любого видимого выражения
         for expression in expressions:
             if expression.title:
@@ -378,7 +378,7 @@ def act_langs(act):
     """Языки переключателя: язык оригинала и те, на которые есть тексты
     акта."""
     present = set(access.visible_langs(act))
-    if not access.is_restricted():
+    if not access.limited(act):
         present.add(act.structure_lang or DEFAULT_LANG)
     return [lang for lang in LANGS if lang in present]
 
