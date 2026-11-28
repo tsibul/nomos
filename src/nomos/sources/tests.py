@@ -838,6 +838,106 @@ class ConsolidatedTests(SimpleTestCase):
         self.assertEqual(schedule.paragraphs, ["Μήνες εισφορών — Ημερομηνία"])
         self.assertEqual(schedule.children[0].heading, "")
 
+    def test_chapters_with_parts(self):
+        """«ΚΕΦΑΛΑΙΟ Ι», за которым сразу «ΜΕΡΟΣ Ι» (ΚΔΠ 377/2004), — глава
+        `cpt` с частями: eid частей через главу; следующая глава без частей —
+        тоже `cpt`."""
+        center = " " * 40
+        rows = ["Προοίμιο", "", PAD + "Επειδή."]
+        # номер и название главы или части — соседние строки, один блок
+        for block in (
+            [center + "ΜΕΡΟΣ Ι - ΕΙΣΑΓΩΓΙΚΕΣ ΔΙΑΤΑΞΕΙΣ"],
+            [PAD + "1. Ένα."],
+            [center + "ΚΕΦΑΛΑΙΟ Ι", center + "ΑΤΕΛΕΙΑ ΚΑΤΑ ΤΗΝ ΕΙΣΑΓΩΓΗ"],
+            [center + "ΜΕΡΟΣ Ι", center + "ΠΡΟΣΩΠΙΚΑ ΕΙΔΗ"],
+            [PAD + "2. Δύο."],
+            [center + "ΜΕΡΟΣ ΙΙ", center + "ΠΡΟΙΚΑ"],
+            [PAD + "3. Τρία."],
+            [center + "ΚΕΦΑΛΑΙΟ ΙΙ", center + "ΤΕΛΙΚΕΣ ΔΙΑΤΑΞΕΙΣ"],
+            [PAD + "4. Τέσσερα."],
+        ):
+            rows += [""] + block
+        root = consolidated.Parser("x").parse(rows)
+        self.assertEqual(
+            [node.eid for node in root.children],
+            ["cit_1", "prt_I", "cpt_I", "cpt_II"],
+        )
+        parents = {
+            node.eid: node.parent_eid
+            for node in root.walk()
+            if node.kind in ("prt", "art")
+        }
+        self.assertEqual(
+            parents,
+            {
+                "prt_I": "",
+                "art_1": "prt_I",
+                "cpt_I.prt_I": "cpt_I",
+                "art_2": "cpt_I.prt_I",
+                "cpt_I.prt_II": "cpt_I",
+                "art_3": "cpt_I.prt_II",
+                "art_4": "cpt_II",
+            },
+        )
+        self.assertEqual(
+            root.children[2].heading, "ΚΕΦΑΛΑΙΟ Ι ΑΤΕΛΕΙΑ ΚΑΤΑ ΤΗΝ ΕΙΣΑΓΩΓΗ"
+        )
+
+    def test_chapter_without_parts_is_group(self):
+        """«ΚΕΦΑΛΑΙΟ Α» без «ΜΕΡΟΣ» следом (91(Ι)/2004) — группа статей
+        внутри Μέρους, не глава."""
+        center = " " * 40
+        rows = ["Προοίμιο", "", PAD + "Επειδή."]
+        for line in (
+            center + "ΜΕΡΟΣ Ι",
+            PAD + "1. Ένα.",
+            center + "ΚΕΦΑΛΑΙΟ Α ΓΕΝΙΚΑ",
+            PAD + "2. Δύο.",
+        ):
+            rows += ["", line]
+        root = consolidated.Parser("x").parse(rows)
+        self.assertEqual(
+            [node.eid for node in root.children], ["cit_1", "prt_I"]
+        )
+        group = root.children[1].children[-1]
+        self.assertEqual(
+            (group.kind, group.heading), ("sct", "ΚΕΦΑΛΑΙΟ Α ΓΕΝΙΚΑ")
+        )
+
+    def test_form_schedule_is_flat(self):
+        """Бланк «ΕΝΤΥΠΟ Φ.Κ. 5» в приложении (ΚΔΠ 398/2004): номера граф
+        и пунктов повторяются, поля кончаются «:» — каждая строка бланка —
+        свой фрагмент приложения, без вложенности."""
+        rows = ["Προοίμιο", "", PAD + "Επειδή.", "", PAD + "1. Ένα."]
+        rows += ["", " " * 40 + "ΠΑΡΑΡΤΗΜΑ Ι"]
+        form = [
+            "ΚΥΠΡΙΑΚΗ ΔΗΜΟΚΡΑΤΙΑ",
+            "ΕΝΤΥΠΟ Φ.Κ. 5 / DOCUMENT E.D. 5",
+            "1 ΣΤΟΙΧΕΙΑ ΥΠΟΧΡΕΟΥ",
+            "Όνομα / Name:",
+            "Αρ. Τηλεφώνου / Telephone No.:",
+            "3 ΣΤΟΙΧΕΙΑ ΜΕΤΑΦΟΡΙΚΩΝ ΜΕΣΩΝ",
+            "1. Μεταφορικά μέσα / Means of Transport",
+            "(α) Περιγραφή / Description:",
+            "(δ) Κράτος μέλος προέλευσης:",
+            "(στ) Ημερομηνία άφιξης / Date of arrival:",
+            "ΜΕΡΟΣ Α",
+            "ΣΗΜΕΙΩΣΕΙΣ / NOTES",
+            "1. Η δήλωση αυτή υποβάλλεται στο πλησιέστερο Τελωνείο.",
+        ]
+        for line in form:
+            rows += ["", PAD + line]
+        root = consolidated.Parser("x").parse(rows)
+        schedule = root.children[-1]
+        self.assertEqual(schedule.eid, "sch_1")
+        self.assertEqual(schedule.paragraphs, ["ΚΥΠΡΙΑΚΗ ΔΗΜΟΚΡΑΤΙΑ"])
+        self.assertEqual(
+            [node.eid for node in schedule.children],
+            ["sch_1.sub_%d" % number for number in range(1, len(form))],
+        )
+        self.assertEqual([node.text() for node in schedule.children], form[1:])
+        self.assertFalse(any(node.children for node in schedule.children))
+
     def test_annex_roman_with_sections(self):
         """«ΠΑΡΑΡΤΗΜΑ V» и «ΤΜΗΜΑ ΙΙ» (205(Ι)/2012): sch_5.sct_II; строка-якорь
         слева — не текст."""
@@ -2368,6 +2468,8 @@ class ActMentionsTests(SimpleTestCase):
     index = acts.Index(
         uids={
             "cy/law/2000/95_I",
+            "cy/law/2004/91_I",
+            "cy/law/2004/94_I",
             "cy/law/2010/59_I",
             "cy/law/2025/245_I",
             "eu/dir/2022/2523",
@@ -2410,6 +2512,10 @@ class ActMentionsTests(SimpleTestCase):
             "της οδηγίας 2006/112/ΕΚ": ["eu/dir/2006/112"],
             "του κανονισμού (ΕΕ) αριθ. 904/2010": ["eu/reg/2010/904"],
             "του Κανονισμού (ΕΕ) 2022/2472": [],
+            "του περί Τελωνειακού Κώδικα Νόμου του 2004": ["cy/law/2004/94_I"],
+            "τους περί Φόρων Κατανάλωσης Νόμους του 2004 έως 2024": [
+                "cy/law/2004/91_I"
+            ],
         }
         for text, expected in cases.items():
             with self.subTest(text=text):
