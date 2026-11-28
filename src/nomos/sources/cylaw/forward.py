@@ -106,17 +106,18 @@ def apply_op(op, node, act_uid, report):
 def replaced(op, paragraphs):
     """Текст после замены old → new или (None, причина)."""
     joined = "\n".join(paragraphs)
+    table = history.dot_form(joined, op.old, op.at == "end")
+    old = op.old.translate(table)
+    new = op.new.translate(table)
     if op.at == "end":
         stripped = joined.rstrip()
-        if not stripped.endswith(op.old):
+        if not stripped.endswith(old):
             return None, "в конце нет «%s»" % op.old
-        return history.split(
-            stripped[: len(stripped) - len(op.old)] + op.new
-        ), ""
-    count = joined.count(op.old)
+        return history.split(stripped[: len(stripped) - len(old)] + new), ""
+    count = joined.count(old)
     if count != 1:
         return None, "«%s» встречается %d раз" % (op.old, count)
-    return history.split(joined.replace(op.old, op.new)), ""
+    return history.split(joined.replace(old, new)), ""
 
 
 def parse_fragment(op, act_uid):

@@ -1632,6 +1632,162 @@ class GazetteTests(SimpleTestCase):
         )
 
 
+class GazetteToolingTests(SimpleTestCase):
+    """Путь «газета → изменяющий акт»: римские подпункты, вырезка закона из
+    выпуска, «·» в манифесте, подсказка <op>."""
+
+    HEAD = (
+        (
+            "Συνοπτικός",
+            "1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του 2025.",
+        ),
+        ("τίτλος.", ""),
+    )
+
+    def parse(self, *rows):
+        return gazette.GazetteParser("cy/law/2025/1_I").parse(
+            gazette_lines(*self.HEAD, *rows)
+        )
+
+    def test_roman_subpoints_of_point(self):
+        """141(Ι)/2024, ст. 2(β): (i)–(ii) — подпункты пункта (β)."""
+        root = self.parse(
+            ("Τροποποίηση", "2. Το άρθρο 5 τροποποιείται ως ακολούθως:"),
+            ("", "(α) Με τη διαγραφή του εδαφίου (1)· και"),
+            ("", "(β) με την τροποποίηση του εδαφίου (2) ως ακολούθως:"),
+            ("", "(i) Με τη διαγραφή της παραγράφου (α)·"),
+            ("", "(ii) με τη διαγραφή της παραγράφου (β)."),
+        )
+        eids = [node.eid for node in root.walk() if node.kind == "pnt"]
+        self.assertEqual(
+            eids,
+            [
+                "art_2.pnt_a",
+                "art_2.pnt_b",
+                "art_2.pnt_b.pnt_i",
+                "art_2.pnt_b.pnt_ii",
+            ],
+        )
+        point = root.children[2].children[1]
+        self.assertEqual(
+            point.paragraphs,
+            ["με την τροποποίηση του εδαφίου (2) ως ακολούθως:"],
+        )
+
+    def test_roman_subpoints_of_article(self):
+        """35(Ι)/2025, ст. 2: (i)–(ii) прямо в статье."""
+        root = self.parse(
+            ("Τροποποίηση", "2. Το άρθρο 5 τροποποιείται ως ακολούθως:"),
+            ("", "(i) Με τη διαγραφή της παραγράφου (α)·"),
+            ("", "(ii) με τη διαγραφή της παραγράφου (β)."),
+        )
+        article = root.children[2]
+        self.assertEqual(
+            [node.eid for node in article.children],
+            ["art_2.pnt_i", "art_2.pnt_ii"],
+        )
+
+    def test_roman_in_quote_and_plain_text_not_subpoints(self):
+        """В цитате (i) — пункты другого акта; без указания «με …» и не по
+        порядку — не подпункт."""
+        root = self.parse(
+            (
+                "Τροποποίηση",
+                "2. Το άρθρο 5 τροποποιείται με την προσθήκη των εξής:",
+            ),
+            ("", "«(i) με την έννοια του άρθρου 2·"),
+            ("", "(ii) με την έννοια του άρθρου 3.»."),
+            ("Τροποποίηση", "3. Το άρθρο 6 τροποποιείται ως ακολούθως:"),
+            ("", "(i) τα πρόσωπα του άρθρου 2·"),
+            ("", "(iii) με τη διαγραφή της παραγράφου (β)."),
+        )
+        self.assertEqual([node.kind for node in root.walk()].count("pnt"), 0)
+
+    ISSUE = [
+        "Αριθμός 4816        Τετάρτη, 17 Μαρτίου 2021        145",
+        "",
+        "   Ο περί Πρώτου (Τροποποιητικός) Νόμος του 2021 εκδίδεται με",
+        "δημοσίευση στην Επίσημη Εφημερίδα.",
+        "",
+        "              Αριθμός 21(Ι) του 2021",
+        "ΝΟΜΟΣ ΠΟΥ ΤΡΟΠΟΠΟΙΕΙ ΤΟΝ ΠΕΡΙ ΠΡΩΤΟΥ ΝΟΜΟ",
+        "",
+        "Ε.Ε. Παρ. Ι(Ι)                            Ν. 22(Ι)/2021",
+        "Αρ. 4816, 17.3.2021",
+        "   Ο περί Δεύτερου (Τροποποιητικός) Νόμος του 2021 εκδίδεται με",
+        "δημοσίευση στην Επίσημη Εφημερίδα.",
+        "",
+        "              Αριθμός 22(Ι) του 2021",
+        "ΝΟΜΟΣ ΠΟΥ ΤΡΟΠΟΠΟΙΕΙ ΤΟΝ ΠΕΡΙ ΔΕΥΤΕΡΟΥ ΝΟΜΟ",
+        "",
+        "    Ο ΠΕΡΙ ΠΡΩΤΟΥ (ΤΡΟΠΟΠΟΙΗΤΙΚΟΣ) ΝΟΜΟΣ ΤΟΥ 2021",
+        "",
+        "                        ΔΙΟΡΘΩΣΗ",
+        "   Αναφορικά με τον περί Πρώτου Νόμο …",
+    ]
+
+    def test_act_cut_from_issue(self):
+        """Выпуск 4816: закон — от указа о публикации до следующего закона
+        или исправления."""
+        first = gazette.act_lines(self.ISSUE, "cy/law/2021/21_I")
+        self.assertEqual(first[0], self.ISSUE[2])
+        # колонтитул следующего закона остаётся в конце: разбор его пропускает
+        self.assertEqual(first[-1], self.ISSUE[9])
+        second = gazette.act_lines(self.ISSUE, "cy/law/2021/22_I")
+        self.assertEqual(second[0], self.ISSUE[10])
+        self.assertEqual(second[-1], "")
+        self.assertEqual(len(second), 6)
+
+    def test_single_act_and_other_acts_kept(self):
+        single = self.ISSUE[:8]
+        self.assertIs(gazette.act_lines(single, "cy/law/2021/21_I"), single)
+        for uid in ("cy/law/2021/23_I", "cy/kdp/2021/21"):
+            self.assertIs(gazette.act_lines(self.ISSUE, uid), self.ISSUE)
+
+    def test_manifest_dot_matches_gazette_ano_teleia(self):
+        """«·» набран в манифесте как U+00B7, в тексте газеты — U+0387."""
+        act = make_act("cy/law/2025/35_I", datetime.date(2025, 4, 11))
+        op = make_op(act, "replace", old="(α)·", new="(α)· και")
+        text = ["της παραγράφου (α)· και"]
+        self.assertEqual(
+            history.reverse(op, text), (["της παραγράφου (α)·"], "")
+        )
+        added = make_op(act, "add", text=" (β)·")
+        self.assertEqual(
+            history.reverse(added, ["της (α) (β)·"]), (["της (α)"], "")
+        )
+        self.assertEqual(
+            forward.replaced(op, ["της παραγράφου (α)·"]),
+            (["της παραγράφου (α)· και"], ""),
+        )
+
+    def test_op_hints(self):
+        """Конечное положение без <op> — подсказка с первой ссылкой на
+        закон; положение с <op> и родитель подпунктов — без подсказки."""
+        act = make_act("cy/law/2024/141_I", datetime.date(2024, 12, 6))
+        act.ops.append(make_op(act, "replace", "art_61A.par_4"))
+        marker = refs.Marker(refs.Targets([]), refs.EL)
+        law = "cy/law/2007/188_I#"
+        marker.owners = {
+            "u1": "art_2",
+            "u2": "art_2.pnt_b",
+            "u3": "art_2.pnt_b.pnt_i",
+        }
+        marker.found = {
+            ("u1", "base"): [law + "art_61A.par_4"],
+            ("u2", "base"): [law + "art_61A.par_10"],
+            ("u3", "base"): ["cy/law/2012/1_I", law + "art_61A.par_10.pnt_b"],
+        }
+        self.assertEqual(
+            collect_cylaw.op_hints(act, marker, "cy/law/2007/188_I"),
+            [
+                "cy/law/2024/141_I: подсказка: <op "
+                'provision="art_2.pnt_b.pnt_i" '
+                'target="art_61A.par_10.pnt_b" />'
+            ],
+        )
+
+
 class GazetteLawTests(SimpleTestCase):
     """Базовый закон из газеты без сводки (151(Ι)/2024) → раскладка сводки
     CyLaw."""

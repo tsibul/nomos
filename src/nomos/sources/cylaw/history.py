@@ -347,6 +347,29 @@ def make_op(act, item):
     )
 
 
+# «·» в манифесте набирается как U+00B7, в тексте газеты — U+0387 или
+# U+A78F: при сравнении значение берётся в той форме, что есть в тексте
+DOTS = ("\u00b7", "\u0387", "\ua78f")
+DOT_FORMS = [{}] + [
+    str.maketrans({other: dot for other in DOTS if other != dot})
+    for dot in DOTS
+]
+
+
+def dot_form(joined, value, at_end=False):
+    """Таблица замены «·» в значении манифеста под текст фрагмента; без
+    совпадения в любой форме — пустая (значение как есть)."""
+    for table in DOT_FORMS:
+        candidate = value.translate(table)
+        if at_end:
+            found = joined.rstrip().endswith(candidate)
+        else:
+            found = joined.count(candidate) == 1
+        if found:
+            return table
+    return DOT_FORMS[0]
+
+
 def spaced(value):
     """Значения атрибутов в манифесте переносятся по строкам: пробелы —
     одиночные."""
@@ -542,23 +565,28 @@ def reverse(op, text):
     if text is None:
         return None, "текст неизвестен"
     joined = "\n".join(text)
+    at_end = op.at == "end"
     if op.kind in ("replace", CORRECT):
         if not op.old and not op.new:
             return None, "прежний текст не приведён"
-        if op.at == "end":
-            if not joined.rstrip().endswith(op.new):
+        table = dot_form(joined, op.new, at_end)
+        new = op.new.translate(table)
+        old = op.old.translate(table)
+        if at_end:
+            if not joined.rstrip().endswith(new):
                 return None, "в конце нет «%s»" % op.new
             stripped = joined.rstrip()
-            return split(stripped[: len(stripped) - len(op.new)] + op.old), ""
-        count = joined.count(op.new)
+            return split(stripped[: len(stripped) - len(new)] + old), ""
+        count = joined.count(new)
         if count != 1:
             return None, "«%s» встречается %d раз" % (op.new, count)
-        return split(joined.replace(op.new, op.old)), ""
+        return split(joined.replace(new, old)), ""
     if op.kind == "add":
-        count = joined.count(op.text)
+        added = op.text.translate(dot_form(joined, op.text))
+        count = joined.count(added)
         if count != 1:
             return None, "добавленный текст встречается %d раз" % count
-        return split(joined.replace(op.text, "")), ""
+        return split(joined.replace(added, "")), ""
     return None, "вид изменения «%s» не снимается" % op.kind
 
 
