@@ -290,14 +290,7 @@ def read_stacked(lines, index, skip, stops):
     if found is None:
         return None, index
     columns, after = found
-    leaves = [
-        Segment(
-            min(segment.start for segment in column),
-            max(segment.end for segment in column),
-            " ".join(segment.text for segment in column),
-        )
-        for column in columns
-    ]
+    leaves = stacked_leaves(columns)
     body = []
     while after < len(lines):
         line = lines[after]
@@ -322,6 +315,30 @@ def read_stacked(lines, index, skip, stops):
                     Cell(str(row_number), column, blocks=blocks)
                 )
     return table, after
+
+
+def stacked_leaves(columns):
+    """Столбцы шапки `stacked` ([[Segment]]) → по отрезку на столбец."""
+    return [
+        Segment(
+            min(segment.start for segment in column),
+            max(segment.end for segment in column),
+            " ".join(segment.text for segment in column),
+        )
+        for column in columns
+    ]
+
+
+def column_texts(lines, leaves):
+    """Строки ряда → тексты непустых столбцов. Отрезок — в столбце N,
+    если начинается правее названий столбцов 1…N-1 в шапке; столбцы,
+    слившиеся в строке без промежутка, остаются одним отрезком."""
+    parts = [[] for _ in leaves]
+    for line in lines:
+        for segment in segments(line):
+            column = sum(1 for leaf in leaves[:-1] if segment.start > leaf.end)
+            parts[column].append(segment.text)
+    return [layout.join_lines(part) for part in parts if part]
 
 
 def top_cells(table, header, lower, leaves):
