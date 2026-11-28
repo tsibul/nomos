@@ -28,8 +28,13 @@ BASE_KEY = history.BASE_KEY
 # сводки нет: layout="gazette-law" — базовый закон разбирается из газеты;
 # layout="text" —
 # базовый закон переписан в раскладке сводки, изменения накладываются вперёд
-# (forward)
-LAYOUT_SOURCES = {"gazette-law": "cy-gazette-law", "text": "cy-text"}
+# (forward); layout="text-latest" — последняя редакция, собранная по газете,
+# переписана в раскладке сводки, изменения снимаются назад, как со сводки
+LAYOUT_SOURCES = {
+    "gazette-law": "cy-gazette-law",
+    "text": "cy-text",
+    "text-latest": "cy-text",
+}
 
 
 def base_version(info):

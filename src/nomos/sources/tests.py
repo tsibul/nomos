@@ -4859,6 +4859,61 @@ class OverdueContributionsLawTests(CollectedTextsTests):
         self.assertIsNone(self.version("art_5.par_2.sub_1.pnt_b", after))
 
 
+AML_LAW = "cy/law/2007/188_I"
+
+
+@skipUnless(
+    (TEXTS_DIR / AML_LAW / "collect.xml").exists(),
+    "нет Nomos-texts с законом 188(Ι)/2007",
+)
+class GazetteLatestLawTests(CollectedTextsTests):
+    """188(Ι)/2007: редакция на 01.01.2024 собрана по газете,
+    layout="text-latest" — изменения 2024+ снимаются назад, как со
+    сводки."""
+
+    collected = (AML_LAW,)
+    main_uid = AML_LAW
+
+    def test_layout_text_latest(self):
+        self.assertEqual(
+            collect_cylaw.LAYOUT_SOURCES["text-latest"], "cy-text"
+        )
+
+    def test_rebuild_keeps_files(self):
+        self.assertEqual(self.differing(AML_LAW), [])
+
+    def test_all_ops_applied(self):
+        self.assertEqual(self.unapplied_problems(), [])
+
+    def test_gazette_source(self):
+        act = Act.objects.get(uid=AML_LAW)
+        self.assertEqual(act.published_in, "Ε.Ε. Παρ. Ι(Ι) Αρ. 4154")
+        self.assertEqual(act.in_force_from, datetime.date(2008, 1, 1))
+        greek = Expression.objects.get(act__uid=AML_LAW, lang="el")
+        self.assertEqual(greek.source.code, "cy-gazette")
+        self.assertFalse(greek.public)
+
+    def test_gazette_text(self):
+        date = datetime.date(2024, 1, 1)
+        self.assertIn(
+            "Ποσό που υπερβαίνει τα 100 ευρώ αλλά όχι τα 200 ευρώ — 14 ημέρες",
+            self.text("art_9.par_1", date),
+        )
+        self.assertIn(
+            "Συμβόλαια συνταξιοδοτικής",
+            self.text("sch_2.par_2.pnt_b", date),
+        )
+        self.assertIn("Πρόσωπα που διεξάγουν", self.text("art_68B", date))
+
+    def test_later_acts_backward(self):
+        self.assertIsNone(
+            self.version("art_2B.par_2.pnt_g", datetime.date(2024, 1, 1))
+        )
+        self.assertIsNotNone(
+            self.version("art_2B.par_2.pnt_g", datetime.date(2026, 11, 1))
+        )
+
+
 COLLECTION_LAW = "cy/law/1962/31"
 
 
