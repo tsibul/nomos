@@ -19,6 +19,8 @@ GAP_RE = re.compile(r"\S(\s{3,})\S")
 FIRST_ARTICLE_RE = re.compile(r"(?<!\S)(?P<num>[12])\.\s*(Ο|Η|Το|Οι)\s+παρ")
 ARTICLE_RE = re.compile(r"^(?P<num>\d+)\.\s*(?:[-—–]\s*)?(?P<rest>.*)$")
 POINT_RE = re.compile(r"^\((?P<num>[α-ω]{1,3})\)\s*(?P<rest>.*)$")
+# римский подпункт указаний: «(i) Με τη διαγραφή …», «(ii) με την …»
+ROMAN_POINT_RE = re.compile(r"^\((?P<num>[ivx]{1,5})\)\s*(?P<rest>.*)$")
 # строка поля из одного номера закона: «82(I) του 2020», «25(Ι) του 2022.»
 LAW_NUMBER_RE = re.compile(r"^\s*\d+\s*\([ΙI]\)\s+του\s+\d{4}\.?\s*$")
 # «(2) …», «(5)(α) …» — εδάφιο, сразу за номером может идти номер пункта
@@ -79,6 +81,13 @@ LAW_CITATION_PREFIX_RE = re.compile(LAW_CITATION + r"(?=\s{3,}\S)")
 TITLE_RE = re.compile(r"ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})")
 # пункт изменяющего акта начинается с указания: «(β) με την αντικατάσταση …»
 INSTRUCTION_RE = re.compile(r"^[Μμ]ε\s")
+# выпуск с несколькими законами: закон начинается указом о публикации
+# («… εκδίδεται με δημοσίευση …»), за ним — строка номера
+ACT_NUMBER_RE = re.compile(
+    r"^\s*Αριθμός\s+(?P<num>\d+)\s*\([ΙI]\)\s+του\s+(?P<year>\d{4})\s*$"
+)
+LAW_UID_RE = re.compile(r"^cy/law/(?P<year>\d{4})/(?P<num>\d+)_I$")
+CORRECTION_RE = re.compile(r"^\s*ΔΙΟΡΘΩΣΗ\s*$")
 
 
 def split_line(line, column, previous=""):
@@ -285,6 +294,7 @@ class GazetteParser:
         self.preamble = self.root.add(Node(kind="cit", token="cit_1"))
         self.article = None
         self.point = None
+        self.subpoint = None
         self.heading_open = False
         self.quote_depth = 0
         self.paragraph = []
@@ -350,6 +360,10 @@ class GazetteParser:
             if point and not first and self.ends_sentence():
                 self.open_point(point.group("num"))
                 body = point.group("rest")
+            roman = ROMAN_POINT_RE.match(body) if self.article else None
+            if roman and self.is_next_subpoint(roman):
+                self.open_subpoint(roman.group("num"))
+                body = roman.group("rest")
         if margin and self.heading_open:
             self.add_heading(margin)
         if not body:
@@ -416,6 +430,18 @@ class GazetteParser:
             return False
         return self.ends_sentence()
 
+    def is_next_subpoint(self, match):
+        """Римский подпункт пункта или статьи (35, 96, 244(Ι)/2025): номер по
+        порядку с (i), текст — указание «με …», прежняя фраза закончена."""
+        if self.legacy or not INSTRUCTION_RE.match(match.group("rest")):
+            return False
+        current = 0
+        if self.subpoint is not None:
+            current = numbering.roman_value(self.subpoint.num.strip("()"))
+        if numbering.roman_value(match.group("num")) != current + 1:
+            return False
+        return self.ends_sentence()
+
     def is_next_article(self, num, margin):
         """Следующая статья; закон может пропустить номер (244(Ι)/2025: за 13
         идёт 16) —
@@ -452,6 +478,7 @@ class GazetteParser:
         self.flush()
         self.article = self.root.add(Node(kind="art", num=num))
         self.point = None
+        self.subpoint = None
         self.expected = int(num) + 1
         self.heading_open = True
         if margin:
@@ -466,8 +493,16 @@ class GazetteParser:
     def open_point(self, num):
         self.flush()
         self.point = self.article.add(Node(kind="pnt", num="(%s)" % num))
+        self.subpoint = None
+
+    def open_subpoint(self, num):
+        self.flush()
+        parent = self.point if self.point is not None else self.article
+        self.subpoint = parent.add(Node(kind="pnt", num="(%s)" % num))
 
     def owner(self):
+        if self.subpoint is not None:
+            return self.subpoint
         if self.point is not None:
             return self.point
         if self.article is not None:
@@ -483,10 +518,65 @@ class GazetteParser:
         self.paragraph = []
 
 
+def block_start(lines, index):
+    """Первая строка блока над строкой `index`: вверх через пустые строки,
+    затем до пустой строки или колонтитула."""
+    start = index
+    while start > 0 and not lines[start - 1].strip():
+        start -= 1
+    if start == 0:
+        return index
+    while (
+        start > 0
+        and lines[start - 1].strip()
+        and not HEADER_RE.match(lines[start - 1])
+        and not MASTHEAD_RE.match(lines[start - 1])
+    ):
+        start -= 1
+    return start
+
+
+def act_start(lines, index):
+    """Начало закона в выпуске: указ о публикации над строкой номера."""
+    start = block_start(lines, index)
+    if "εκδίδεται" in " ".join(lines[start:index]):
+        return start
+    return index
+
+
+def act_lines(lines, act_uid):
+    """Выпуск газеты → строки одного закона по его номеру.
+
+    Закон идёт от указа о публикации до начала следующего закона или
+    исправления (ΔΙΟΡΘΩΣΗ с заголовком над ним). Файл с одним законом и без
+    исправлений, а также акт не из выпуска возвращаются как есть."""
+    wanted = LAW_UID_RE.match(act_uid)
+    if wanted is None:
+        return lines
+    target = None
+    bounds = []
+    for index, line in enumerate(lines):
+        number = ACT_NUMBER_RE.match(line)
+        if number:
+            start = act_start(lines, index)
+            bounds.append(start)
+            same = number.group("num", "year") == wanted.group("num", "year")
+            if same and target is None:
+                target = start
+        elif CORRECTION_RE.match(line):
+            bounds.append(block_start(lines, index))
+    if target is None or len(bounds) < 2:
+        return lines
+    end = min((bound for bound in bounds if bound > target), default=None)
+    return lines[target:end]
+
+
 def parse(path, act_uid):
-    """PDF изменяющего акта → (дерево, краткий заголовок из ст. 1)."""
+    """PDF изменяющего акта → (дерево, краткий заголовок из ст. 1).
+
+    PDF может быть целым выпуском: закон вырезается по номеру (act_lines)."""
     parser = GazetteParser(act_uid)
-    root = parser.parse(layout.pdf_lines(path))
+    root = parser.parse(act_lines(layout.pdf_lines(path), act_uid))
     title = ""
     articles = [node for node in root.children if node.kind == "art"]
     if articles:

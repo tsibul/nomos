@@ -351,6 +351,7 @@ def write(folder, info, versions, notes=(), marker=None):
         def mark(node, version, paragraphs):
             marked, found = marker.mark_text(paragraphs, node.eid)
             marker.found[(uids[node], version.key)] = found
+            marker.owners[uids[node]] = node.eid
             return marked
 
     texts_xml.write_texts(
@@ -419,6 +420,33 @@ def skipped_text(skipped):
         ", ".join("%s — %d" % item for item in sorted(skipped.items()))
         or "нет"
     )
+
+
+def op_hints(amending, marker, law_uid):
+    """Подсказка для манифеста: конечные положения акта без своего <op> и
+    первая ссылка каждого на закон — вероятная цель изменения."""
+    prefix = law_uid + "#"
+    first = {}
+    for (uid, _), targets in marker.found.items():
+        eid = marker.owners.get(uid)
+        law = [
+            target[len(prefix) :]
+            for target in targets
+            if target.startswith(prefix)
+        ]
+        if eid and law and eid not in first:
+            first[eid] = law[0]
+    eids = set(marker.owners.values())
+    with_ops = {op.provision for op in amending.ops}
+    hints = []
+    for eid in sorted(first):
+        leaf = not any(other.startswith(eid + ".") for other in eids)
+        if leaf and eid not in with_ops:
+            hints.append(
+                '%s: подсказка: <op provision="%s" target="%s" />'
+                % (amending.uid, eid, first[eid])
+            )
+    return hints
 
 
 class Command(BaseCommand):
@@ -547,6 +575,7 @@ class Command(BaseCommand):
             for op in amending.ops:
                 if op.provision not in provisions:
                     report.append("%s: положения нет в разборе акта" % op.ref)
+            report.extend(op_hints(amending, amending_marker, info.uid))
 
         self.write_report(remarks, report)
 
