@@ -42,16 +42,38 @@ def label(node):
     return _(node.label) if node.label else ""
 
 
+def hidden_ids(nodes):
+    """Узлы раздела МСФО со всем, что под ним (закрыт не суперпользователю)."""
+    hidden = {
+        node.id
+        for node in nodes
+        if node.parent_id is None and node.key == access.IFRS_SECTION
+    }
+    grew = True
+    while grew:
+        grew = False
+        for node in nodes:
+            if node.parent_id in hidden and node.id not in hidden:
+                hidden.add(node.id)
+                grew = True
+    return hidden
+
+
 class Tree:
     """Узлы меню, прочитанные одним запросом: дети по родителю, поиск по пути
     ключей."""
 
     def __init__(self):
         self.children = {}
-        for node in NavNode.objects.select_related("act").prefetch_related(
-            "act__expressions"
-        ):
-            self.children.setdefault(node.parent_id, []).append(node)
+        nodes = list(
+            NavNode.objects.select_related("act").prefetch_related(
+                "act__expressions"
+            )
+        )
+        hidden = hidden_ids(nodes) if access.ifrs_closed() else set()
+        for node in nodes:
+            if node.id not in hidden:
+                self.children.setdefault(node.parent_id, []).append(node)
 
     def kids(self, node):
         return self.children.get(node.id if node is not None else None, [])
