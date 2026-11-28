@@ -811,6 +811,9 @@ class ViewerTests(TestCase):
         self.assertContains(response, "toc__link--current")
 
     def test_empty_section_has_same_layout(self):
+        self.client.force_login(
+            User.objects.create_superuser("empty_section_admin")
+        )
         response = self.client.get("/ifrs/")
         self.assertContains(response, "В разделе пока нет актов")
         self.assertNotContains(response, "Изменяющие акты")
@@ -2278,46 +2281,39 @@ class IfrsAccessMixin:
             for expression, body in bodies.items()
         ]
 
-    def assert_closed_hidden(self):
-        """МСФО — только публичное: закрытого акта нет нигде, URL — 404."""
-        for page in ["/", "/ifrs/", "/about/", IFRS_URL, IFRS_URL + "art_1/"]:
+    def assert_ifrs_closed(self):
+        """Раздел МСФО закрыт: адреса /ifrs/... — 404, слов МСФО в HTML
+        нет."""
+        for page in [
+            "/ifrs/",
+            "/ifrs/x/",
+            IFRS_URL,
+            IFRS_URL + "art_1/",
+            IFRS_URL + "art_1/history/",
+            IFRS_URL + "en/",
+            CLOSED_URL,
+            CLOSED_URL + "art_1/",
+        ]:
+            with self.subTest(page=page):
+                self.assertEqual(self.client.get(page).status_code, 404)
+        for page in ["/", "/about/", "/cy/", "/robots.txt"]:
             with self.subTest(page=page):
                 response = self.client.get(page)
                 self.assertEqual(response.status_code, 200)
+                html = response.content.decode()
+                for word in ["МСФО", "IFRS", "IAS", "/ifrs/"]:
+                    self.assertNotIn(word, html)
                 self.assertNotContains(response, self.site(CLOSED_URL))
-                for text in CLOSED_TEXTS:
-                    self.assertNotContains(response, text)
-        response = self.client.get(IFRS_URL + "art_1/")
-        self.assertContains(response, "Арендатор переоценивает")
-        self.assertContains(
-            response, '<span class="ref ref--unresolved">поправку</span>'
-        )
-        response = self.client.get(IFRS_URL + "art_1/history/")
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, self.site(CLOSED_URL))
-        hidden = [
-            CLOSED_URL,
-            CLOSED_URL + "art_1/",
-            CLOSED_URL + "art_1/history/",
-            IFRS_URL + "en/",
-            IFRS_URL + "art_1/en/",
-        ]
-        for page in hidden:
-            with self.subTest(page=page):
-                self.assertEqual(self.client.get(page).status_code, 404)
 
     def test_guest(self):
-        self.assert_closed_hidden()
+        self.assert_ifrs_closed()
         self.assertEqual(self.client.get(CYPRUS_URL).status_code, 404)
 
-    def test_signed_in_sees_all_but_closed_ifrs(self):
+    def test_signed_in_sees_no_ifrs(self):
         self.client.force_login(self.reader)
-        self.assert_closed_hidden()
+        self.assert_ifrs_closed()
         response = self.client.get(CYPRUS_URL + "art_1/")
         self.assertContains(response, "Κυπριακό κείμενο")
-        self.assertContains(
-            self.client.get("/ifrs/"), f'href="{self.site(CYPRUS_URL)}'
-        )
 
     def test_superuser_sees_everything(self):
         self.client.force_login(self.admin)
@@ -2338,9 +2334,15 @@ class IfrsAccessMixin:
         self.assertContains(response, "Secret amending text")
         response = self.client.get(CYPRUS_URL + "art_1/")
         self.assertContains(response, "Κυπριακό κείμενο")
+        menu = self.client.get("/")
+        self.assertContains(menu, "МСФО")
 
-    def test_setting_off_shows_everything(self):
+    def test_setting_off_still_closes_ifrs(self):
         with self.settings(NOMOS_PUBLIC_ONLY=False):
+            response = self.client.get(CLOSED_URL + "art_1/")
+            self.assertEqual(response.status_code, 404)
+            self.assertNotContains(self.client.get("/"), "МСФО")
+            self.client.force_login(self.admin)
             response = self.client.get(CLOSED_URL + "art_1/")
         self.assertContains(response, "Secret amending text")
 

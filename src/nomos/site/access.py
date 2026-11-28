@@ -17,6 +17,7 @@
 from contextvars import ContextVar
 
 from django.conf import settings
+from django.http import Http404
 
 from nomos.acts.models import Act
 
@@ -27,6 +28,10 @@ CLOSED_IFRS = "closed_ifrs"
 IFRS = Act.Jurisdiction.IFRS
 
 _mode = ContextVar("nomos_access_mode", default=None)
+# раздел МСФО закрыт для всех, кроме суперпользователя (вне запроса — открыт)
+_ifrs_closed = ContextVar("nomos_ifrs_closed", default=False)
+
+IFRS_SECTION = "ifrs"
 
 
 def is_restricted():
@@ -53,18 +58,37 @@ def restricted_for(request):
     return mode_for(request) == PUBLIC
 
 
+def ifrs_closed_for(request):
+    """Закрыт ли раздел МСФО для посетителя: всем, кроме суперпользователя."""
+    user = getattr(request, "user", None)
+    return user is None or not user.is_superuser
+
+
+def ifrs_closed():
+    """Закрыт ли раздел МСФО в текущем запросе (меню, адреса /ifrs/...)."""
+    return _ifrs_closed.get()
+
+
 class PublicOnlyMiddleware:
-    """Ставит режим на время запроса (после AuthenticationMiddleware)."""
+    """Ставит режим на время запроса (после AuthenticationMiddleware).
+
+    Адреса /ifrs/... без прав суперпользователя отвечают 404."""
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        closed = ifrs_closed_for(request)
+        first = request.path_info.strip("/").split("/")[0]
+        if closed and first == IFRS_SECTION:
+            raise Http404("Нет такого раздела")
         token = _mode.set(mode_for(request))
+        closed_token = _ifrs_closed.set(closed)
         try:
             return self.get_response(request)
         finally:
             _mode.reset(token)
+            _ifrs_closed.reset(closed_token)
 
 
 def limited(act):
