@@ -19,6 +19,14 @@
       {% translate 'Что меняет:' %} {{ entry.changes }}
     </span>
   {% endif %}
+  {% if show_publication and entry.publication %}
+    <span
+      class="acts__publication"
+      lang="{{ entry.publication.lang }}"
+    >
+      {{ entry.publication.text }}
+    </span>
+  {% endif %}
   {% if entry.title and entry.title != entry.short.text %}
     <span
       class="acts__title"

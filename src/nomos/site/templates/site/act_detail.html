@@ -19,6 +19,10 @@
       {% endif %}
     </p>
 
+    {% if translation %}
+      {% include 'site/parts/translation_notice.html' %}
+    {% endif %}
+
     <div class="act-info__row">
       <span class="act-info__caption">
         {% translate 'Языки:' %}
@@ -38,6 +42,20 @@
         {% endif %}
       {% endfor %}
     </div>
+
+    {% if publication %}
+      <div class="act-info__row">
+        <span class="act-info__caption">
+          {% translate 'Публикация:' %}
+        </span>
+        <span
+          class="act-info__publication"
+          lang="{{ publication.lang }}"
+        >
+          {{ publication.text }}
+        </span>
+      </div>
+    {% endif %}
 
     {% if sources %}
       <div class="act-info__row">

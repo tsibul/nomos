@@ -793,7 +793,7 @@ class ViewerTests(TestCase):
         response = self.client.get(ACT_URL + "art_1/")
         self.assertContains(
             response,
-            "Перевод готовится — показан официальный греческий текст.",
+            "Перевод готовится — показан греческий текст.",
         )
 
     def test_side_column(self):
@@ -1029,6 +1029,144 @@ class ViewerTests(TestCase):
         )
         self.assertNotContains(response, fields["name"])
         self.assertNotContains(response, fields["attribution"])
+
+    def test_publication_lines_on_act_page(self):
+        """Где опубликован акт и каждый изменяющий: «Επίσημη Εφημερίδα,
+        Παράρτημα …, Αρ. N, дата» — в сведениях и в списках актов."""
+        Act.objects.filter(pk=self.law.pk).update(
+            published_in="Ε.Ε. Παρ. Ι(Ι) Αρ. 4154",
+            published_on=datetime.date(2007, 12, 31),
+        )
+        Act.objects.filter(pk=self.amending.pk).update(
+            published_in="Ε.Ε. Παρ. Ι(Ι) Αρ. 5070",
+            published_on=datetime.date(2024, 12, 1),
+        )
+        law_line = "Επίσημη Εφημερίδα, Παράρτημα Ι(Ι), Αρ. 4154, 31.12.2007"
+        amending_line = (
+            "Επίσημη Εφημερίδα, Παράρτημα Ι(Ι), Αρ. 5070, 01.12.2024"
+        )
+        # закон: своя публикация и публикация изменяющего в списке изменений
+        response = self.client.get(ACT_URL)
+        self.assertContains(response, "Δημοσίευση:")
+        self.assertContains(response, law_line)
+        self.assertContains(response, 'class="acts__publication"')
+        self.assertContains(response, amending_line)
+        # изменяющий: своя публикация и публикация изменяемого в «Изменяет:»
+        response = self.client.get("/cy/law/2024/2_I/")
+        self.assertContains(response, amending_line)
+        self.assertContains(response, law_line)
+
+    def test_publication_formats(self):
+        act = Act(published_in="", published_on=None)
+        self.assertIsNone(views.publication(act))
+        act.published_in = "OJ L 347, 11.12.2006, p. 1"
+        self.assertEqual(
+            views.publication(act),
+            {"text": "OJ L 347, 11.12.2006, p. 1", "lang": "en"},
+        )
+        act.published_in = "Ε.Ε. Παρ. ΙΙΙ(Ι) Αρ. 3846Α"
+        self.assertEqual(
+            views.publication(act)["text"],
+            "Επίσημη Εφημερίδα, Παράρτημα ΙΙΙ(Ι), Αρ. 3846Α",
+        )
+        act.published_in = "Τμήμα Φορολογίας"
+        self.assertEqual(
+            views.publication(act),
+            {"text": "Τμήμα Φορολογίας", "lang": "el"},
+        )
+
+    def test_nomos_credit_only_on_gazette_texts(self):
+        """Оговорка Nomos — у текстов из газеты; у CyLaw — прежняя подпись."""
+        credit = (
+            "Сводная редакция и русский перевод — Nomos, неофициальные "
+            "(CC BY 4.0); юридическую силу имеет только текст в Ε.Ε."
+        )
+        ru = Expression.objects.create(
+            act=self.law,
+            lang="ru",
+            status="our_translation",
+            source=Source.objects.get(code="test"),
+            title="Закон об испытании",
+        )
+        act = Act.objects.get(pk=self.law.pk)
+        ru_url = reading.build_url(act, lang="ru")
+        self.assertNotContains(self.client.get(ru_url), credit)
+        self.el.source = Source.objects.create(
+            code="cy-gazette", **load_texts.SOURCES["cy-gazette"]
+        )
+        self.el.save()
+        pages = [
+            ru_url,
+            reading.build_url(act, eid="art_1", lang="ru"),
+            reading.build_url(act, eid="art_1.par_1", lang="ru", history=True),
+        ]
+        for page in pages:
+            with self.subTest(page=page):
+                self.assertContains(self.client.get(page), credit)
+        self.assertContains(
+            self.client.get(reading.build_url(act, lang="el")),
+            "νομική ισχύ έχει μόνο το κείμενο της Ε.Ε.",
+        )
+        self.assertNotContains(self.client.get(ru_url), "www.cylaw.org")
+        # CyLaw: подпись CyLaw, оговорки Nomos нет
+        ru.source = Source.objects.create(
+            code="cylaw", **load_texts.SOURCES["cylaw"]
+        )
+        ru.save()
+        response = self.client.get(ru_url)
+        self.assertContains(response, "www.cylaw.org")
+        self.assertNotContains(response, credit)
+
+    def test_translation_notice_on_act_page(self):
+        """Плашка «перевод ИИ» на странице акта — только на языке перевода."""
+        Expression.objects.create(
+            act=self.law,
+            lang="ru",
+            status="our_translation",
+            source=Source.objects.get(code="test"),
+            title="Закон об испытании",
+        )
+        act = Act.objects.get(pk=self.law.pk)
+        response = self.client.get(reading.build_url(act, lang="ru"))
+        self.assertContains(response, 'class="draft-warning"')
+        self.assertContains(
+            response, "Перевод выполнен ИИ, человеком не выверен."
+        )
+        response = self.client.get(reading.build_url(act, lang="el"))
+        self.assertNotContains(response, 'class="draft-warning"')
+
+    def test_no_official_text_label(self):
+        """Метки «Официальный текст» у сводных текстов нет: «Текст по Ε.Ε.»."""
+        self.assertEqual(
+            str(views.STATUS_NAMES[Expression.Status.OFFICIAL_TEXT]),
+            "Текст по Ε.Ε.",
+        )
+        with translation.override("el"):
+            self.assertEqual(
+                str(views.STATUS_NAMES[Expression.Status.OFFICIAL_TEXT]),
+                "Κείμενο κατά την Ε.Ε.",
+            )
+        Expression.objects.create(
+            act=self.law,
+            lang="ru",
+            status="our_translation",
+            source=Source.objects.get(code="test"),
+            title="Закон об испытании",
+        )
+        act = Act.objects.get(pk=self.law.pk)
+        pages = [
+            reading.build_url(act, lang=lang) for lang in ("el", "ru")
+        ] + [
+            reading.build_url(act, eid="art_1", lang="ru"),
+            reading.build_url(act, eid="art_1", lang="el"),
+            ACT_URL + "art_1.par_1/history/",
+        ]
+        for page in pages:
+            with self.subTest(page=page):
+                response = self.client.get(page)
+                self.assertNotContains(response, "Официальный текст")
+                self.assertNotContains(response, "Επίσημο κείμενο")
+                self.assertNotContains(response, "επίσημο ελληνικό")
 
     def test_preamble_label_follows_interface_language(self):
         preamble = Fragment.objects.create(
