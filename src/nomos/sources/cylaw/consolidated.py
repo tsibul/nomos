@@ -82,6 +82,9 @@ SCHEDULE_ORDINALS = [
     "ΔΕΚΑΤΟ ΤΡΙΤΟ",
     "ΔΕΚΑΤΟ ΤΕΤΑΡΤΟ",
     "ΔΕΚΑΤΟ ΠΕΜΠΤΟ",
+    # Κεφ. 113
+    "ΔΕΚΑΤΟ ΕΚΤΟ",
+    "ΔΕΚΑΤΟ ΕΒΔΟΜΟ",
 ]
 # «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟΣ ΠΙΝΑΚΑΣ» (59(Ι)/2010): мужской род — с «Σ» на
 # конце;
@@ -115,9 +118,11 @@ PART_ORDINALS = {
     "ΕΝΑΤΟ": "9",
     "ΔΕΚΑΤΟ": "10",
 }
+# «ΜΕΡΟΣ IVA», «ΜΕΡΟΣ IVB» (188(Ι)/2007): буква вплотную к римскому номеру
 PART_RE = re.compile(
-    r"^(ΜΕΡΟΣ|Μέρος)\s+(?P<num>(?:%s)\b|[IVXΙΧΑ]+)\s*:?\s*(?P<rest>.*)$"
-    % "|".join(PART_ORDINALS)
+    r"^(ΜΕΡΟΣ|Μέρος)\s+"
+    r"(?P<num>(?:%s)\b|[IVXΙΧΑ]+)(?P<letter>[A-ZΑ-Ω](?!\S))?"
+    r"\s*:?\s*(?P<rest>.*)$" % "|".join(PART_ORDINALS)
 )
 
 
@@ -125,9 +130,14 @@ PART_RE = re.compile(
 CHAPTER_WORD = "ΚΕΦΑΛΑΙΟ "
 
 
-def part_number(match):
+def part_number(match, letters=True):
+    """Номер Части; `letters=False` — без буквы («IVA» → «IV»): акты,
+    собранные до 188(Ι)/2007."""
     num = match.group("num")
-    return PART_ORDINALS.get(num, num)
+    num = PART_ORDINALS.get(num, num)
+    if letters and match.group("letter"):
+        num += match.group("letter")
+    return num
 
 
 # «ΠΑΡΑΡΤΗΜΑ V - ΔΙΑΔΙΚΑΣΙΕΣ …» слева над «ΠΑΡΑΡΤΗΜΑ V» по центру (205(Ι)/2012)
@@ -168,6 +178,10 @@ PROVISO_BY_INDENT_ACTS = BEFORE_118_ACTS | {
     "cy/law/1978/4",
     "cy/law/2001/89_I",
 }
+# акты, собранные до 188(Ι)/2007: буква в номере Части («ΜΕΡΟΣ IVA» →
+# prt_IVA) и Часть, не склеенная с заголовком статьи на полях, меняют их
+# фрагменты с переводом; для них не применяются
+BEFORE_188_ACTS = {"cy/law/cap/113"}
 # акты, где таблицы приложений разбираются по столбцам (columns.py)
 COLUMN_TABLE_ACTS = {"cy/law/2010/59_I", "cy/law/2002/118_I"}
 # из них — таблицы ставок 118(Ι) Παράρτημα 2: шапка через пустую строку, ряд —
@@ -201,6 +215,24 @@ def roman_schedule(block):
     return numbering.roman_value(latin_roman(num))
 
 
+def inline_table_lines(blocks):
+    """Строки «ΠΙΝΑΚΑΣ» без номера сразу после текста на «:» («…με τον
+    ακόλουθο:») — таблица внутри статьи, а не приложение."""
+    lines = set()
+    previous = None
+    for block in blocks:
+        if is_history(block.text):
+            continue
+        if (
+            block.text == "ΠΙΝΑΚΑΣ"
+            and previous is not None
+            and previous.text.endswith(":")
+        ):
+            lines.add(block.line)
+        previous = block
+    return lines
+
+
 def latin_roman(num):
     """Римский номер латиницей: в сводках встречаются греческие «Ι» и «Χ»."""
     return num.replace("Ι", "I").replace("Χ", "X")
@@ -226,6 +258,14 @@ def ends_table(text):
         or SCHEDULE_RE.match(text)
         or ROMAN_SCHEDULE_RE.match(text)
     )
+
+
+def join_heading(heading, text):
+    """Продолжение заголовка приложения. «ΠΑΡΑΡΤΗΜΑ Ι» и затем «ΠΑΡΑΡΤΗΜΑ Ι
+    (Άρθρο 61(2))» (188(Ι)/2007) — заголовок повторён: берётся второй."""
+    if text == heading or text.startswith(heading + " "):
+        return text
+    return "%s %s" % (heading, text)
 
 
 def is_page_furniture(line):
@@ -415,10 +455,16 @@ def is_editor_note(block):
     return bool(EDITOR_NOTE_RE.match(text) or LONE_NOTE_RE.match(text))
 
 
-def join_broken_headings(blocks):
+def is_part_heading(text):
+    """«ΜΕΡΟΣ IVB …» заглавными — заголовок Части, не заголовок на полях."""
+    return bool(PART_RE.match(text)) and text.isupper()
+
+
+def join_broken_headings(blocks, parts=True):
     """Заголовок на полях, разорванный переносом страницы («… της» /
     «Δημοκρατίας Νόμου»),
-    — один блок, если за второй частью идёт статья."""
+    — один блок, если за второй частью идёт статья. `parts` — заголовок
+    Части с ним не склеивается."""
     result = []
     for index, block in enumerate(blocks):
         previous = result[-1] if result else None
@@ -434,6 +480,7 @@ def join_broken_headings(blocks):
             and not is_history(previous.text)
             and not TOP_RE.match(previous.text)
             and not match_item(previous.text)[0]
+            and not (parts and is_part_heading(previous.text))
             and len(previous.text) + len(block.text) <= 3 * HEADING_MAX
         ):
             result[-1] = layout.Block(
@@ -496,6 +543,7 @@ class Parser:
         self.splits = list(splits)
         self.lone_schedule = lone_schedule
         self.earlier = act_uid in BEFORE_118_ACTS
+        self.part_letters = act_uid not in BEFORE_188_ACTS
         self.provisos = act_uid not in PROVISO_BY_INDENT_ACTS
         self.root = Node("act", token=act_uid)
         self.stack = []
@@ -518,6 +566,12 @@ class Parser:
         self.rate_lines = set()
         # приложение-бланк (см. feed_form)
         self.form = None
+        # строки «ΠΙΝΑΚΑΣ» таблиц внутри статьи; столбцы открытой таблицы
+        # (None — таблица не открыта); шапка ещё не прочитана
+        self.inline_tables = set()
+        self.table_leaves = None
+        self.table_header = False
+        self.lines = []
 
     def parse(self, lines):
         start = (
@@ -533,6 +587,7 @@ class Parser:
                 ends_table,
                 stacked=self.act_uid in STACKED_TABLE_ACTS,
             )
+        self.lines = lines
         all_blocks = layout.blocks(
             lines,
             skip=is_page_furniture,
@@ -556,12 +611,13 @@ class Parser:
             for block in all_blocks[start:]
             for part in split_history(block)
         ]
-        all_blocks = join_broken_headings(all_blocks)
+        all_blocks = join_broken_headings(all_blocks, self.part_letters)
         all_blocks = split_blocks(all_blocks, self.splits)
         # приложения — после «ΠΑΡΑΡΤΗΜΑΤΑ» или сразу с «ΠΙΝΑΚΑΣ Ι» без общего
         # заголовка
+        self.inline_tables = inline_table_lines(all_blocks)
         self.has_schedules = any(
-            block.text == "ΠΑΡΑΡΤΗΜΑΤΑ" or roman_schedule(block)
+            block.text == "ΠΑΡΑΡΤΗΜΑΤΑ" or self.schedule_number(block)
             for block in all_blocks
         )
         for index, block in enumerate(all_blocks):
@@ -604,6 +660,8 @@ class Parser:
         if block.line in self.table_lines:
             self.feed_text(block)
             return
+        if self.feed_inline_table(block):
+            return
         if is_history(text):
             article = self.current_top()
             if article is not None:
@@ -618,7 +676,7 @@ class Parser:
             and ANNEX_ANCHOR_RE.match(text)
         ):
             return
-        if roman_schedule(block) or self.is_lone_schedule(block):
+        if self.schedule_number(block) or self.is_lone_schedule(block):
             self.in_schedules = True
         if self.in_schedules and self.feed_schedule_heading(text, block):
             return
@@ -659,9 +717,50 @@ class Parser:
             for block in cell.blocks:
                 inner.feed_text(block)
 
+    def feed_inline_table(self, block):
+        """Таблица внутри статьи (188(Ι)/2007, ст. 9(1)) — абзацы текущего
+        пункта: «ΠΙΝΑΚΑΣ», шапка и ряды, столбцы через « — ». Кончается на
+        следующем номере или списке изменяющих законов."""
+        text = block.text
+        if block.line in self.inline_tables:
+            self.table_leaves = []
+            self.table_header = True
+        elif self.table_leaves is None:
+            return False
+        elif is_history(text) or TOP_RE.match(text) or match_item(text)[0]:
+            self.table_leaves = None
+            return False
+        elif self.table_header:
+            self.table_leaves = self.inline_table_header(block)
+            self.table_header = False
+        if self.table_leaves:
+            lines = self.block_lines(block)
+            texts = columns.column_texts(lines, self.table_leaves)
+            text = COLUMN_SEPARATOR.join(texts)
+        self.stack[-1].paragraphs.append(text)
+        return True
+
+    def inline_table_header(self, block):
+        """Названия столбцов шапки таблицы с первой строки блока или []."""
+        found = columns.stacked_header(
+            self.lines, block.line - 1, is_page_furniture, ends_table
+        )
+        if found is not None:
+            return columns.stacked_leaves(found[0])
+        return columns.header_segments(self.lines[block.line - 1]) or []
+
+    def block_lines(self, block):
+        """Строки блока в исходном тексте: до пустой строки или колонтитула."""
+        found = []
+        for line in self.lines[block.line - 1 :]:
+            if not line.strip() or is_page_furniture(line):
+                break
+            found.append(line)
+        return found
+
     def feed_schedule_heading(self, text, block):
         schedule = SCHEDULE_RE.match(text)
-        number = roman_schedule(block) or (
+        number = self.schedule_number(block) or (
             1 if self.is_lone_schedule(block) else None
         )
         if schedule and schedule.group("ord") in SCHEDULE_ORDINALS:
@@ -684,7 +783,11 @@ class Parser:
             return False
         part = PART_RE.match(text)
         if part and block.indent >= 14:
-            node = Node("prt", num=part_number(part), heading=text)
+            node = Node(
+                "prt",
+                num=part_number(part, self.part_letters),
+                heading=text,
+            )
             self.open_container(node, self.schedule)
             return True
         section = SECTION_RE.match(text)
@@ -704,7 +807,7 @@ class Parser:
             # глубокий отступ бывает и у пунктов четвёртого уровня («(ια) …·»)
             return False
         if not self.container_has_items() and not self.is_item_heading(text):
-            self.container.heading = "%s %s" % (self.container.heading, text)
+            self.container.heading = join_heading(self.container.heading, text)
             return True
         if len(text) <= HEADING_MAX and text[-1] not in ":;·∙˙,—-":
             self.pending_heading.append(text)
@@ -744,6 +847,13 @@ class Parser:
         self.stack = [node]
         self.pending_heading = []
 
+    def schedule_number(self, block):
+        """Номер приложения по заголовку «ΠΙΝΑΚΑΣ ΙΙ» или None; таблица
+        внутри статьи — не приложение."""
+        if block.line in self.inline_tables:
+            return None
+        return roman_schedule(block)
+
     def is_lone_schedule(self, block):
         """«ΠΑΡΑΡΤΗΜΑ» или «ΠΡΩΤΟ ΠΑΡΑΡΤΗΜΑ» по центру без общего «ΠΑΡΑΡΤΗΜΑΤΑ»
         (сводки
@@ -766,11 +876,19 @@ class Parser:
             return False
         if block.indent >= 14:
             return True
-        return block.indent > MARGIN and block.text.isupper()
+        if not is_part_heading(block.text):
+            return False
+        # «ΜΕΡΟΣ IVB …» во всю ширину начинается в колонке заголовков на
+        # полях (188(Ι)/2007)
+        return block.indent > MARGIN or len(block.text) > GROUP_LONG
 
     def open_part(self, text):
         part = PART_RE.match(text)
-        node = Node("prt", num=part_number(part), heading=text)
+        node = Node(
+            "prt",
+            num=part_number(part, self.part_letters),
+            heading=text,
+        )
         self.part_parent().add(node)
         self.container = node
         self.stack = [node]

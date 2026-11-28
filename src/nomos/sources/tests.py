@@ -795,6 +795,19 @@ class ConsolidatedTests(SimpleTestCase):
             )
         self.assertIsNone(consolidated.SCHEDULE_RE.match("ΠΙΝΑΚΑΣ"))
 
+    def test_schedule_ordinal_seventeenth(self):
+        """Κεφ. 113: «ΔΕΚΑΤΟ ΕΚΤΟ» и «ΔΕΚΑΤΟ ΕΒΔΟΜΟ ΠΑΡΑΡΤΗΜΑ» — sch_16 и
+        sch_17, не продолжение sch_15."""
+        for heading, number in (
+            ("ΔΕΚΑΤΟ ΕΚΤΟ ΠΑΡΑΡΤΗΜΑ", 16),
+            ("ΔΕΚΑΤΟ ΕΒΔΟΜΟ ΠΑΡΑΡΤΗΜΑ", 17),
+        ):
+            match = consolidated.SCHEDULE_RE.match(heading)
+            self.assertEqual(
+                consolidated.SCHEDULE_ORDINALS.index(match.group("ord")) + 1,
+                number,
+            )
+
     def test_schedule_heading_roman(self):
         """«ΠΙΝΑΚΑΣ ΙΙ» по центру (ΚΔΠ 289/2010) — приложение sch_2 без
         «ΠΑΡΑΡΤΗΜΑΤΑ»."""
@@ -1040,6 +1053,106 @@ class ConsolidatedTests(SimpleTestCase):
         block = layout.Block(1, 13, "ΜΕΡΟΣ ΙΙΙ ΠΑΡΟΧΕΣ")
         self.assertTrue(parser.is_part(block))
 
+    def test_table_inside_article(self):
+        """«ΠΙΝΑΚΑΣ» после «…με τον ακόλουθο:» (188(Ι)/2007, ст. 9(1)) —
+        абзацы εδάφιο, столбцы через « — »; следующее εδάφιο — снова у
+        статьи. Столбцы, слившиеся без промежутка, — одним абзацем."""
+        rows = column_lines(
+            [(12, "9. (1) Ο Πίνακας αντικαθίσταται με τον ακόλουθο:")],
+            [],
+            [(34, "ΠΙΝΑΚΑΣ")],
+            [],
+            [(57, "Δεύτερη")],
+            [(28, "Πρώτη στήλη")],
+            [(58, "Στήλη")],
+            [],
+            [(12, "Ποσό έως 100 ευρώ 7 ημέρες")],
+            [],
+            [(12, "Ποσό άνω των 100 ευρώ")],
+            [(53, "14 ημέρες")],
+            [(12, "αλλά όχι των 200 ευρώ")],
+            [],
+            [],
+            [(12, "(2) Οι διατάξεις εφαρμόζονται.")],
+            [],
+            [(12, "10. Άλλο.")],
+        )
+        root = consolidated.Parser("x").parse(
+            ["Προοίμιο", "", PAD + "Επειδή.", ""] + rows
+        )
+        texts = {node.eid: node.paragraphs for node in root.walk()}
+        self.assertEqual(
+            [eid for eid in texts if eid.startswith("art_")],
+            ["art_9", "art_9.par_1", "art_9.par_2", "art_10"],
+        )
+        self.assertFalse(any(node.kind == "sct" for node in root.walk()))
+        self.assertEqual(
+            texts["art_9.par_1"],
+            [
+                "Ο Πίνακας αντικαθίσταται με τον ακόλουθο:",
+                "ΠΙΝΑΚΑΣ",
+                "Πρώτη στήλη — Δεύτερη Στήλη",
+                "Ποσό έως 100 ευρώ 7 ημέρες",
+                "Ποσό άνω των 100 ευρώ αλλά όχι των 200 ευρώ — 14 ημέρες",
+            ],
+        )
+
+    def test_part_number_with_letter(self):
+        """«ΜΕΡΟΣ IVA», «ΜΕΡΟΣ IVB» (188(Ι)/2007) — prt_IVA, prt_IVB, как
+        art_2A; длинное заглавное «ΜΕΡΟΣ IVB …» в колонке полей — Часть, а не
+        начало заголовка статьи. В актах до 188(Ι) — по-прежнему «IV»."""
+        lines = column_lines(
+            [(30, "ΜΕΡΟΣ IV ΔΙΕΘΝΗΣ ΣΥΝΕΡΓΑΣΙΑ")],
+            [],
+            [(12, "40. Ένα.")],
+            [],
+            [(25, "ΜΕΡΟΣ IVA ΣΥΝΕΡΓΑΣΙΑ ΜΕ ΚΡΑΤΗ ΜΕΛΗ")],
+            [],
+            [(12, "41. Δύο.")],
+            [],
+            [(7, "ΜΕΡΟΣ IVB ΣΥΝΕΡΓΑΣΙΑ ΜΕ ΚΡΑΤΗ ΜΕΛΗ ΤΗΣ ΕΥΡΩΠΑΪΚΗΣ ΕΝΩΣΗΣ")],
+            [(30, "ΣΥΜΦΩΝΑ ΜΕ ΤΟΝ ΚΑΝΟΝΙΣΜΟ (ΕΕ) 2018/1805")],
+            [],
+            [(6, "Ερμηνεία")],
+            [],
+            [(12, "42. Τρία.")],
+        )
+        rows = ["Προοίμιο", "", PAD + "Επειδή.", ""] + lines
+        root = consolidated.Parser("x").parse(rows)
+        parts = [node for node in root.children if node.kind == "prt"]
+        self.assertEqual(
+            [(part.eid, part.num) for part in parts],
+            [("prt_IV", "IV"), ("prt_IVA", "IVA"), ("prt_IVB", "IVB")],
+        )
+        self.assertEqual(parts[2].children[0].heading, "Ερμηνεία")
+        earlier = consolidated.Parser("cy/law/cap/113").parse(rows)
+        self.assertEqual(
+            [node.num for node in earlier.children if node.kind == "prt"],
+            ["IV", "IV"],
+        )
+
+    def test_repeated_schedule_heading(self):
+        """«ΠΑΡΑΡΤΗΜΑ Ι» и ниже «ΠΑΡΑΡΤΗΜΑ Ι (Άρθρο 61(2))» (188(Ι)/2007) —
+        заголовок без повтора."""
+        lines = column_lines(
+            [(12, "1. Ένα.")],
+            [],
+            [(64, "ΠΑΡΑΡΤΗΜΑΤΑ")],
+            [],
+            [(65, "ΠΑΡΑΡΤΗΜΑ Ι")],
+            [],
+            [(65, "ΠΑΡΑΡΤΗΜΑ Ι")],
+            [(65, "(Άρθρο 61(2))")],
+            [],
+            [(7, "1. Ο σκοπός ενός λογαριασμού.")],
+        )
+        root = consolidated.Parser("x").parse(
+            ["Προοίμιο", "", PAD + "Επειδή.", ""] + lines
+        )
+        schedule = root.children[-1]
+        self.assertEqual(schedule.eid, "sch_1")
+        self.assertEqual(schedule.heading, "ΠΑΡΑΡΤΗΜΑ Ι (Άρθρο 61(2))")
+
 
 def column_lines(*rows):
     """Строки pdftotext -layout: каждая — [(позиция, текст), …]."""
@@ -1260,6 +1373,32 @@ class GazetteTests(SimpleTestCase):
         )
         self.assertEqual(
             [node.num for node in root.children[1:]], ["1", "2", "3"]
+        )
+
+    def test_unclosed_quote_before_next_point(self):
+        """Кавычка не закрыта в газете (118(Ι)/2024, ст. 2(α)): следующий
+        пункт акта с указанием «με …» — всё же пункт."""
+        root = self.parse(
+            (
+                "Συνοπτικός",
+                "1. Ο παρών Νόμος θα αναφέρεται ως ο περί Δοκιμής Νόμος του "
+                "2025.",
+            ),
+            ("τίτλος.", ""),
+            ("Τροποποίηση", "2. Το άρθρο 5 τροποποιείται ως ακολούθως:"),
+            ("του άρθρου 5.", ""),
+            (
+                "",
+                "(α) Με την προσθήκη του ορισμού: ««Οδηγία» σημαίνει την "
+                "Οδηγία (ΕΕ) 2021/2167·",
+            ),
+            ("", "και"),
+            ("", "(β) με τη διαγραφή του εδαφίου (3)·"),
+            ("", "(γ) με τη διαγραφή του εδαφίου (4)."),
+        )
+        article = root.children[2]
+        self.assertEqual(
+            [point.num for point in article.children], ["(α)", "(β)", "(γ)"]
         )
 
     def test_issue_masthead_is_not_preamble(self):
@@ -1754,12 +1893,44 @@ class RefsTests(SimpleTestCase):
             ("του άρθρου 25 του Νόμου του 1990", refs.EL),
             ("του άρθρου 10Α αυτού", refs.EL),
             ("статьи 33 Закона о подоходном налоге", refs.RU),
+            (
+                "статьёй 4 законов о торговом судоходстве 1963 года",
+                refs.RU,
+            ),
             ("на основании его статьи 10Α", refs.RU),
             ("настоящей статьи", refs.RU),
         ]
         for text, language in cases:
             with self.subTest(text=text):
                 self.assertEqual(self.marked(text, language)[1], [])
+
+    def test_russian_foreign_act_not_marked(self):
+        """Κεφ. 113, 162(Ι)/2025, 2(Ι)/2026: статьи актов ЕС и строк
+        отчёта не размечаются."""
+        cases = [
+            # пункт и подпункт, затем акт с заглавной
+            "в статье 5, пункт 1, подпункт 1 Регламента (ЕС) № 575/2013",
+            "со статьёй 8, пункт 2, подпункт в) Директивы Совета",
+            # затем «указанной директивы», «указанного регламента»
+            "в статье 9, пункт 5) указанной директивы, при условии",
+            "в статье 5, пункт 1, подпункт 1 указанного регламента и",
+            # абзац в цепочке
+            "на основании статьи 9, пункт 4, третий абзац Директивы",
+            "в значении статьи 9 второго абзаца Договора для защиты",
+            "в статье 8 делегированного регламента (ЕС) 2019/815",
+            "с положениями статей 5, 6, 8 и 9 акта Европейского союза",
+            "со статьями 5, 6, 9 и Приложением I акта Европейского союза",
+            "со статьёй 5 и пунктом 1 Приложения акта Европейского союза",
+            # строки отчёта о платежах, не статьи закона
+            "Прочие налоги, не включённые в статьи 5–9 выше.",
+        ]
+        for text in cases:
+            with self.subTest(text=text):
+                self.assertEqual(self.marked(text, refs.RU)[1], [])
+        self.assertEqual(
+            self.marked("в статье 5, пункт 2 настоящего Закона", refs.RU)[1],
+            ["art_5"],
+        )
 
     def test_self_reference_not_marked(self):
         _, found, skipped = self.marked("του άρθρου 5(2)", own="art_5.par_2")
@@ -2217,6 +2388,35 @@ class RefsTests(SimpleTestCase):
         self.assertIn('<ref id="r3" to="art_8">статье 8</ref>', result)
         self.assertIn(" и статье 7</p>", result)
         self.assertEqual(skipped["прежняя ссылка: цели нет"], 1)
+
+    def test_translation_stale_foreign_ref_removed(self):
+        """44(Ι)/2010: прежняя ссылка на место, где разбор видит другой акт,
+        снимается; есть в el — остаётся."""
+        text = (
+            '    <p>предусмотренный <ref id="r1" to="art_5">статьёй 5</ref>'
+            " законов о торговом судоходстве</p>\n"
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "ru.xml"
+            path.write_text(
+                '<texts>\n  <text fragment="u1" version="base">\n'
+                + text
+                + '  </text>\n  <text fragment="u2" version="base">\n'
+                + text
+                + "  </text>\n</texts>\n",
+                encoding="utf-8",
+            )
+            skipped, _, total = refs.mark_translation(
+                path,
+                refs.Targets(REF_EIDS),
+                {"u1": "art_2", "u2": "art_3"},
+                {("u1", "base"): [], ("u2", "base"): ["art_5"]},
+            )
+            result = path.read_text(encoding="utf-8")
+        self.assertEqual(total, 1)
+        self.assertEqual(result.count('to="art_5">статьёй 5</ref>'), 1)
+        self.assertIn("<p>предусмотренный статьёй 5 законов", result)
+        self.assertEqual(skipped["прежняя ссылка: другой акт"], 1)
 
     def test_translation_union_code_article_foreign(self):
         """«статье 5, пункт 17) Таможенного кодекса Союза» — статья другого

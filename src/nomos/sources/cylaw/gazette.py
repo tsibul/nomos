@@ -9,7 +9,7 @@
 
 import re
 
-from . import layout
+from . import layout, numbering
 from .tree import Node
 
 # дата в поле, бывает с пробелом вместо точки: «7.12.2007», «6.10 2017.»
@@ -77,6 +77,8 @@ LAW_CITATION = r"^\s*\d+\s*(?:\([ΙI]\))?\s+του\s*\d{4}\.?"
 LAW_CITATION_RE = re.compile(LAW_CITATION + r"\s*$")
 LAW_CITATION_PREFIX_RE = re.compile(LAW_CITATION + r"(?=\s{3,}\S)")
 TITLE_RE = re.compile(r"ως (?:ο|η|το|οι) (περί .+? (?:του|των) \d{4})")
+# пункт изменяющего акта начинается с указания: «(β) με την αντικατάσταση …»
+INSTRUCTION_RE = re.compile(r"^[Μμ]ε\s")
 
 
 def split_line(line, column, previous=""):
@@ -320,9 +322,16 @@ class GazetteParser:
         return self.root
 
     def feed(self, margin, body):
-        if body and self.quote_depth > 0 and self.unclosed_quote(margin, body):
+        if (
+            body
+            and self.quote_depth > 0
+            and (
+                self.unclosed_quote(margin, body) or self.unclosed_point(body)
+            )
+        ):
             # кавычка не закрыта в самой газете (242(Ι)/2025, ст. 3:
-            # «…(€450.000)·»)
+            # «…(€450.000)·»; 118(Ι)/2024, ст. 2(α): «“Οδηγία …” … «Οδηγία
+            # …»· και)
             self.quote_depth = 0
         if body and self.quote_depth == 0:
             match = ARTICLE_RE.match(body)
@@ -389,6 +398,21 @@ class GazetteParser:
             return False
         match = ARTICLE_RE.match(body)
         if not match or int(match.group("num")) != self.expected:
+            return False
+        return self.ends_sentence()
+
+    def unclosed_point(self, body):
+        """Внутри «цитаты» начинается следующий пункт самого акта: буква по
+        порядку, текст — указание «με …», прежняя фраза закончена."""
+        if self.legacy or self.point is None:
+            return False
+        match = POINT_RE.match(body)
+        if not match or not INSTRUCTION_RE.match(match.group("rest")):
+            return False
+        current = numbering.greek_value(self.point.num.strip("()"))
+        if current is None:
+            return False
+        if match.group("num") != numbering.greek_numeral(current + 1):
             return False
         return self.ends_sentence()
 
