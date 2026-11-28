@@ -167,8 +167,39 @@ def act_entry(act, changes="", lang=reading.READER_LANG):
         "title": title,
         "title_lang": title_lang,
         "changes": changes,
+        "publication": publication(act),
         "url": reading.build_url(act, lang=link_lang),
     }
+
+
+# место публикации в act.xml: «Ε.Ε. Παρ. Ι(Ι) Αρ. 4154»
+GAZETTE_RE = re.compile(r"^Ε\.Ε\. Παρ\. (?P<part>\S+) Αρ\. (?P<number>\S+)$")
+GREEK_RE = re.compile("[\u0370-\u03ff]")
+
+
+def publication(act):
+    """Где опубликован акт, для ссылки на источник: {'text', 'lang'}, текст —
+    «Επίσημη Εφημερίδα, Παράρτημα Ι(Ι), Αρ. 4154, 31.12.2007»; не указано —
+    None.
+
+    Ссылка на газету — по-гречески, как её цитируют; прочие места публикации
+    (OJ, сайты ведомств) — как в данных.
+    """
+    text = act.published_in
+    if not text:
+        return None
+    found = GAZETTE_RE.match(text)
+    if found is not None:
+        parts = [
+            "Επίσημη Εφημερίδα",
+            "Παράρτημα " + found["part"],
+            "Αρ. " + found["number"],
+        ]
+        if act.published_on is not None:
+            parts.append(act.published_on.strftime("%d.%m.%Y"))
+        text = ", ".join(parts)
+    lang = "el" if GREEK_RE.search(text) else "en"
+    return {"text": text, "lang": lang}
 
 
 def about(request):
@@ -377,11 +408,17 @@ def original_source(route):
     }
 
 
+# источники, по которым сводную редакцию составляет сам проект
+GAZETTE_SOURCES = ("cy-gazette",)
+
+
 def source_credit(act):
-    """Подпись об источнике текста — у акта, текст которого взят из сводной
-    редакции CyLaw."""
+    """Подпись об источнике текста: у акта из сводной редакции CyLaw — CyLaw,
+    у акта, сведённого проектом по газете, — оговорка Nomos."""
     if act.expressions.filter(source__code="cylaw").exists():
         return notices.CYLAW_CREDIT
+    if act.expressions.filter(source__code__in=GAZETTE_SOURCES).exists():
+        return notices.NOMOS_CREDIT
     return None
 
 
@@ -616,6 +653,11 @@ def act_page(request, route, structure):
             "short": reading.act_short_label(act, route.lang),
             "sources": text_sources(act),
             "cylaw_source": cylaw_source(act),
+            "publication": publication(act),
+            # в списках изменяющих и изменяемых актов — где опубликован
+            # каждый
+            "show_publication": True,
+            "translation": translation_expression(route),
         }
     )
     context.update(nav_context(route, toc))
@@ -626,9 +668,10 @@ def act_page(request, route, structure):
 
 
 # статусы текстов на языке интерфейса (в модели Expression.Status — русские
-# названия)
+# названия); сводный текст оригинала не официальный — «по Ε.Ε.» (отчёт
+# юриста)
 STATUS_NAMES = {
-    Expression.Status.OFFICIAL_TEXT: gettext_lazy("Официальный текст"),
+    Expression.Status.OFFICIAL_TEXT: gettext_lazy("Текст по Ε.Ε."),
     Expression.Status.OFFICIAL_TRANSLATION: gettext_lazy(
         "Официальный перевод"
     ),
@@ -684,6 +727,7 @@ def related_entry(act, route):
         "short": reading.act_short_label(act, route.lang),
         "title": title,
         "title_lang": title_lang,
+        "publication": publication(act),
         "url": reading.build_url(act),
     }
 

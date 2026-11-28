@@ -62,6 +62,12 @@
   font-size: 0.875rem;
 }
 
+// где опубликован изменяющий акт — на странице акта
+.acts__publication {
+  color: var(--color-neutral-500);
+  font-size: 0.875rem;
+}
+
 .acts__group {
   margin: 0 0 0.75rem;
   border: 1px solid var(--color-neutral-500);

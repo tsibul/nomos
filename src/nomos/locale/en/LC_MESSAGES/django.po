@@ -315,3 +315,19 @@ msgid ""
 msgstr ""
 "The community is not live yet: it will be switched on together with the "
 "public opening of the site, and this page will be updated."
+
+msgid "Публикация:"
+msgstr "Published in:"
+
+msgid "Текст по Ε.Ε."
+msgstr "Text as published in the Ε.Ε."
+
+msgid "Перевод готовится — показан греческий текст."
+msgstr "Translation in progress — the Greek text is shown."
+
+msgid ""
+"Сводная редакция и русский перевод — Nomos, неофициальные (CC BY 4.0); "
+"юридическую силу имеет только текст в Ε.Ε."
+msgstr ""
+"Consolidated text and Russian translation — Nomos, unofficial (CC BY 4.0); "
+"only the text in the Ε.Ε. has legal force."
